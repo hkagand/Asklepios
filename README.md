@@ -83,7 +83,16 @@ Follow-up that was planned in a note but never ordered, booked, resulted or reco
 2. Plain code does the rest. It works out due dates, matches each item against orders, results, reports, appointments, visits and medication orders, and gives it a status: `missing`, `overdue`, `not_ordered`, `no_trace` (a call or meeting the record cannot show), `pending`, `conditional` or `done`.
 3. Open orders that no current plan covers are added, for example a referral from an earlier visit.
 
-`GET /api/patients/{id}/loops` returns the items with their evidence ids. ASKlepios also gets them in its chart index as an OPEN LOOPS section, so it can answer "what was planned and not done?" with sources.
+In the chart viewer, the **Open loops** card at the top of the overview groups the items:
+- **Needs action:** not done, overdue, or not yet ordered.
+- **Cannot be confirmed from the record:** calls, meetings and similar steps the record has no entry for.
+- **In progress.**
+
+Done and conditional items are collapsed. Each item shows the note line it came from and buttons that open its sources. The worklist shows each patient's counts (late, to order, unconfirmed, pending).
+
+When the agent service is not running, both pages fall back to the plain open orders.
+
+`GET /api/patients/{id}/loops` returns the items with their evidence ids, and `GET /api/loops/summary?patients=…` returns the counts. ASKlepios also gets the items in its chart index as an OPEN LOOPS section, so it can answer "what was planned and not done?" with sources.
 
 Each note is read once. The extracted plan is cached in `agent/cache/plans/` (gitignored, or `AGENT_PLAN_CACHE`), keyed by the note text, the model and the prompt version. The note text is sent to the model in `agent/.env`, as chat questions are.
 

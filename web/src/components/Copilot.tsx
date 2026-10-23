@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { agentHealth, ask, type AgentEvent, type Answer, type Block, type Step } from '../agent.ts'
 import { read, type Resource } from '../fhir.ts'
-import type { Chart } from '../model.ts'
+import { resourceIndex, type Chart } from '../model.ts'
 import { useAsync } from '../useAsync.ts'
 import { useSource } from './source.tsx'
 
@@ -159,23 +159,6 @@ function apply(turn: Turn, event: AgentEvent): Turn {
   if (event.type === 'step') return { ...turn, steps: [...turn.steps, event.step] }
   if (event.type === 'answer') return { ...turn, answer: event.answer, running: false }
   return { ...turn, error: event.message, running: false }
-}
-
-function resourceIndex(chart: Chart): Map<string, Resource> {
-  const all: Resource[] = [
-    chart.patient,
-    ...chart.conditions,
-    ...chart.medications,
-    ...chart.allergies,
-    ...chart.encounters,
-    ...chart.notes,
-    ...chart.labReports,
-    ...chart.reports,
-    ...chart.orders,
-    ...chart.appointments,
-    ...chart.observations.values(),
-  ]
-  return new Map(all.map((resource) => [`${resource.resourceType}/${resource.id}`, resource]))
 }
 
 function Intro({ firstName, onPick }: { firstName: string; onPick: (question: string) => void }) {

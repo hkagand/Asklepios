@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { OpenLoops } from '../components/OpenLoops.tsx'
 import { SourceButton } from '../components/source.tsx'
 import { Badge, Card, Empty, FlagMark, valueTone, type Tone } from '../components/ui.tsx'
 import { code, refId, text } from '../fhir.ts'
@@ -22,8 +23,8 @@ export function Overview({ chart }: { chart: Chart }) {
   return (
     <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_24rem]">
       <div className="space-y-4">
+        <OpenLoops chart={chart} fallback={<OpenOrders chart={chart} />} />
         <SinceLastVisit chart={chart} />
-        <OpenOrders chart={chart} />
         <RecentVisits chart={chart} />
       </div>
       <div className="space-y-4">

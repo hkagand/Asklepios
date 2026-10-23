@@ -30,12 +30,65 @@ export interface Answer {
 
 export type AgentEvent = { type: 'step'; step: Step } | { type: 'answer'; answer: Answer } | { type: 'error'; message: string }
 
+/** Open loops (agent/loops.py), worst first. */
+export type LoopStatus = 'missing' | 'overdue' | 'not_ordered' | 'no_trace' | 'pending' | 'conditional' | 'done'
+
+export interface LoopPart {
+  name: string
+  status: LoopStatus
+  detail: string
+  evidence: string[]
+}
+
+export interface Loop {
+  source: 'plan' | 'order'
+  note: string | null
+  noteDate: string | null
+  author: string | null
+  quote: string
+  line: string
+  kind: string
+  status: LoopStatus
+  due: string | null
+  detail: string
+  evidence: string[]
+  parts: LoopPart[]
+}
+
+export interface PatientLoops {
+  patient: string
+  today: string
+  loops: Loop[]
+  unread: string[]
+}
+
+export type LoopCounts = { statuses?: Partial<Record<LoopStatus, number>>; unread?: number; error?: string }
+
 const NOT_RUNNING = 'The agent service is not reachable. Start it from the project folder with: python -m agent'
 
-export async function agentHealth(signal: AbortSignal): Promise<{ model: string }> {
-  const response = await fetch('/api/health', { signal })
-  if (!response.ok) throw new Error(NOT_RUNNING)
-  return (await response.json()) as { model: string }
+async function getJson<T>(url: string, signal: AbortSignal): Promise<T> {
+  let response: Response
+  try {
+    response = await fetch(url, { signal })
+  } catch (error) {
+    if (signal.aborted) throw error
+    throw new Error(NOT_RUNNING, { cause: error })
+  }
+  if (!response.ok) {
+    const detail = ((await response.json().catch(() => ({}))) as { detail?: string }).detail
+    throw new Error(response.status >= 500 && !detail ? NOT_RUNNING : (detail ?? `The agent service answered ${response.status}.`))
+  }
+  return (await response.json()) as T
+}
+
+export const agentHealth = (signal: AbortSignal) => getJson<{ model: string }>('/api/health', signal)
+
+export const patientLoops = (patientId: string, signal: AbortSignal) =>
+  getJson<PatientLoops>(`/api/patients/${encodeURIComponent(patientId)}/loops`, signal)
+
+export async function loopSummary(patientIds: string[], signal: AbortSignal): Promise<Record<string, LoopCounts>> {
+  const query = new URLSearchParams({ patients: patientIds.join(',') })
+  return (await getJson<{ patients: Record<string, LoopCounts> }>(`/api/loops/summary?${query}`, signal)).patients
 }
 
 /** Asks one question in a conversation and reports progress as server-sent events arrive. */

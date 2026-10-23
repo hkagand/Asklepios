@@ -1,11 +1,13 @@
-import { Badge, ErrorPanel, Loading } from '../components/ui.tsx'
+import { loopSummary, type LoopCounts } from '../agent.ts'
+import { LOOP_STATUS } from '../components/OpenLoops.tsx'
+import { Badge, ErrorPanel, Loading, type Tone } from '../components/ui.tsx'
 import { medicalRecordNumber, patientName } from '../fhir.ts'
 import { ageOn, formatTime, formatWeekday, isoDay, relativeDay, todayIso } from '../format.ts'
 import { loadWorklist, participant, type WorklistEntry } from '../model.ts'
 import { patientHref } from '../route.ts'
 import { useAsync } from '../useAsync.ts'
 
-const COLUMNS = 'grid grid-cols-[4rem_minmax(0,1.1fr)_minmax(0,1.5fr)_minmax(0,1.4fr)_8.5rem] items-center gap-4'
+const COLUMNS = 'grid grid-cols-[4rem_minmax(0,1.1fr)_minmax(0,1.5fr)_minmax(0,1.4fr)_11rem] items-center gap-4'
 
 export function Worklist() {
   const state = useAsync(loadWorklist, [])
@@ -13,7 +15,7 @@ export function Worklist() {
     <main className="mx-auto max-w-7xl px-6 pb-16 pt-6">
       <div className="mb-5">
         <h1 className="text-xl font-semibold tracking-tight text-slate-900">Clinic worklist</h1>
-        <p className="mt-0.5 text-sm text-slate-500">Upcoming appointments, with each patient&apos;s active problems and open orders.</p>
+        <p className="mt-0.5 text-sm text-slate-500">Upcoming appointments, with each patient&apos;s active problems and open loops.</p>
       </div>
       {state.status === 'loading' && <Loading label="Loading appointments from the FHIR server…" />}
       {state.status === 'error' && <ErrorPanel error={state.error} />}
@@ -24,6 +26,9 @@ export function Worklist() {
 
 function Days({ entries }: { entries: WorklistEntry[] }) {
   const today = todayIso()
+  const ids = entries.map((entry) => entry.patient.id ?? '').filter(Boolean)
+  const summary = useAsync((signal) => loopSummary(ids, signal), [ids.join(',')])
+  const loops = summary.status === 'ready' ? summary.data : undefined
   const days = new Map<string, WorklistEntry[]>()
   for (const entry of entries) {
     const day = entry.appointment?.start ? isoDay(entry.appointment.start) : ''
@@ -44,11 +49,13 @@ function Days({ entries }: { entries: WorklistEntry[] }) {
               <span>Patient</span>
               <span>Visit</span>
               <span>Active problems</span>
-              <span className="text-right">Open orders</span>
+              <span className="text-right" title={loops ? 'Plans in notes and open orders, checked against the record' : 'Open loops not available; showing open orders'}>
+                {loops ? 'Open loops' : 'Open orders'}
+              </span>
             </div>
             <ul className="divide-y divide-slate-100">
               {list.map((entry) => (
-                <Row key={entry.patient.id} entry={entry} today={today} />
+                <Row key={entry.patient.id} entry={entry} today={today} loops={loops?.[entry.patient.id ?? '']} />
               ))}
             </ul>
           </div>
@@ -58,7 +65,7 @@ function Days({ entries }: { entries: WorklistEntry[] }) {
   )
 }
 
-function Row({ entry, today }: { entry: WorklistEntry; today: string }) {
+function Row({ entry, today, loops }: { entry: WorklistEntry; today: string; loops?: LoopCounts }) {
   const { patient, appointment } = entry
   const sex = patient.gender === 'male' ? 'M' : patient.gender === 'female' ? 'F' : '?'
   const upcoming = entry.open - entry.overdue
@@ -89,11 +96,34 @@ function Row({ entry, today }: { entry: WorklistEntry; today: string }) {
           <span className="line-clamp-2">{entry.problems.join(' · ') || '—'}</span>
         </span>
         <span className="flex flex-wrap justify-end gap-1.5">
-          {entry.overdue > 0 && <Badge tone="rose">{entry.overdue} overdue</Badge>}
-          {upcoming > 0 && <Badge>{upcoming} pending</Badge>}
-          {entry.open === 0 && <span className="text-xs text-slate-400">None</span>}
+          {loops?.statuses ? (
+            <LoopBadges statuses={loops.statuses} />
+          ) : (
+            <>
+              {entry.overdue > 0 && <Badge tone="rose">{entry.overdue} overdue</Badge>}
+              {upcoming > 0 && <Badge>{upcoming} pending</Badge>}
+              {entry.open === 0 && <span className="text-xs text-slate-400">None</span>}
+            </>
+          )}
         </span>
       </a>
     </li>
   )
+}
+
+function LoopBadges({ statuses }: { statuses: NonNullable<LoopCounts['statuses']> }) {
+  const late = (statuses.missing ?? 0) + (statuses.overdue ?? 0)
+  const badges: [number, Tone, string, string][] = [
+    [late, 'rose', `${late} late`, 'Overdue, or due and never ordered'],
+    [statuses.not_ordered ?? 0, 'amber', `${statuses.not_ordered} to order`, LOOP_STATUS.not_ordered.hint],
+    [statuses.no_trace ?? 0, 'violet', `${statuses.no_trace} unconfirmed`, LOOP_STATUS.no_trace.hint],
+    [statuses.pending ?? 0, 'slate', `${statuses.pending} pending`, LOOP_STATUS.pending.hint],
+  ]
+  const shown = badges.filter(([count]) => count > 0)
+  if (shown.length === 0) return <span className="text-xs text-slate-400">None</span>
+  return shown.map(([, tone, label, hint]) => (
+    <Badge key={label} tone={tone} title={hint}>
+      {label}
+    </Badge>
+  ))
 }

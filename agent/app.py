@@ -6,10 +6,12 @@ POST /api/patients/{patient_id}/chat streams server-sent events:
   error   {"message"}
 
 GET /api/patients/{patient_id}/loops returns the open loops: each clinician's latest plan checked against the record.
+GET /api/loops/summary?patients=p-1,p-2 counts them by status for each patient, for the worklist.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from collections import Counter
@@ -26,7 +28,7 @@ from .chat import Sessions, run_turn
 from .config import load_settings
 from .fhir import FhirClient, FhirError, PatientNotFound
 from .llm import LlmClient, LlmError
-from .loops import open_loops
+from .loops import Loop, open_loops
 from .plans import PlanExtractor
 from .record import Record
 
@@ -76,10 +78,7 @@ async def chat(patient_id: str, request: ChatRequest) -> StreamingResponse:
     )
 
 
-@app.get("/api/patients/{patient_id}/loops")
-async def loops(patient_id: str) -> dict:
-    if not FHIR_ID.fullmatch(patient_id):
-        raise HTTPException(status_code=400, detail="Invalid patient id.")
+async def _loops(patient_id: str) -> tuple[Record, list[Loop], list[str]]:
     state = app.state
     try:
         patient, found = await state.fhir.patient_chart(patient_id)
@@ -92,7 +91,33 @@ async def loops(patient_id: str) -> dict:
     state.audit.write(
         session="-", patient=patient_id, event="loops", statuses=dict(Counter(item.status for item in items)), unread=unread
     )
+    return record, items, unread
+
+
+@app.get("/api/patients/{patient_id}/loops")
+async def loops(patient_id: str) -> dict:
+    if not FHIR_ID.fullmatch(patient_id):
+        raise HTTPException(status_code=400, detail="Invalid patient id.")
+    record, items, unread = await _loops(patient_id)
     return {"patient": patient_id, "today": record.today.isoformat(), "loops": [item.as_json() for item in items], "unread": unread}
+
+
+@app.get("/api/loops/summary")
+async def loop_summary(patients: str) -> dict:
+    ids = [patient for patient in patients.split(",") if patient]
+    if not ids or len(ids) > 100 or not all(FHIR_ID.fullmatch(patient) for patient in ids):
+        raise HTTPException(status_code=400, detail="Give up to 100 patient ids, separated by commas.")
+    gate = asyncio.Semaphore(5)
+
+    async def count(patient_id: str) -> dict:
+        async with gate:
+            try:
+                _, items, unread = await _loops(patient_id)
+            except HTTPException as error:
+                return {"error": error.detail}
+        return {"statuses": dict(Counter(item.status for item in items)), "unread": len(unread)}
+
+    return {"patients": dict(zip(ids, await asyncio.gather(*(count(patient) for patient in ids))))}
 
 
 async def _events(patient_id: str, request: ChatRequest) -> AsyncIterator[str]:

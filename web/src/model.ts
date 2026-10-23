@@ -1,4 +1,4 @@
-import { code, read, refId, search, text } from './fhir.ts'
+import { code, read, refId, search, text, type Resource } from './fhir.ts'
 import { isoDay, todayIso, toTime } from './format.ts'
 
 export type Flag = 'H' | 'L'
@@ -58,7 +58,25 @@ const newestFirst =
   (a: T, b: T) =>
     time(b) - time(a)
 
-export const encounterStart = (encounter: fhir4.Encounter): number => toTime(encounter.period?.start)
+/** Every resource of the chart by "Type/id", the form citations and open loops use. */
+export function resourceIndex(chart: Chart): Map<string, Resource> {
+  const all: Resource[] = [
+    chart.patient,
+    ...chart.conditions,
+    ...chart.medications,
+    ...chart.allergies,
+    ...chart.encounters,
+    ...chart.notes,
+    ...chart.labReports,
+    ...chart.reports,
+    ...chart.orders,
+    ...chart.appointments,
+    ...chart.observations.values(),
+  ]
+  return new Map(all.map((resource) => [`${resource.resourceType}/${resource.id}`, resource]))
+}
+
+export const encounterStart =(encounter: fhir4.Encounter): number => toTime(encounter.period?.start)
 export const reportTime = (report: fhir4.DiagnosticReport): number => toTime(report.effectiveDateTime ?? report.issued)
 
 export async function loadChart(id: string, signal: AbortSignal): Promise<Chart> {
