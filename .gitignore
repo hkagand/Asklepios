@@ -5,3 +5,4 @@ synthetic/output/
 .env
 agent/logs/
 evals/runs/
+agent/cache/

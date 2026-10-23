@@ -14,6 +14,8 @@ from .audit import AuditLog
 from .citations import Evidence, verify
 from .fhir import FhirClient
 from .llm import LlmClient, LlmError
+from .loops import index_section, open_loops
+from .plans import PlanExtractor
 from .record import Record, today_text
 
 SYSTEM_PROMPT = """\
@@ -30,6 +32,8 @@ does not contain unless you have read it.
 - Tools: read_documents for full notes and reports, lab_series for trends with computed changes, medication_history \
 for drug changes and their reasons, order_history for what was ordered and whether it was done, search_record to \
 find where something is mentioned.
+- OPEN LOOPS lists what each clinician's latest note planned and whether the record shows it was done. Report those \
+statuses as given. "No record to confirm it" means the record cannot show it either way, not that it was missed.
 - If the record does not answer the question, say so plainly, e.g. "No echocardiogram is on file."
 - For an open order write "no result on file". Do not say that the test was or was not drawn, performed or \
 scheduled unless the record says so.
@@ -102,8 +106,9 @@ class Session:
         return self.record.id
 
 
-def start_session(session_id: str, record: Record) -> Session:
-    index = record.index()
+def start_session(session_id: str, record: Record, loops: str | None = None) -> Session:
+    """`loops` is the OPEN LOOPS section of the index (loops.index_section), left out when not given."""
+    index = record.index() + (f"\n\n{loops}" if loops else "")
     evidence = Evidence()
     for line in index.splitlines():
         evidence.add(line)
@@ -114,8 +119,9 @@ def start_session(session_id: str, record: Record) -> Session:
 class Sessions:
     """Conversations in memory. A session is tied to one patient and reads the chart once, when it starts."""
 
-    def __init__(self, fhir: FhirClient, *, idle_seconds: float = 2 * 3600, limit: int = 200) -> None:
+    def __init__(self, fhir: FhirClient, plans: PlanExtractor, *, idle_seconds: float = 2 * 3600, limit: int = 200) -> None:
         self._fhir = fhir
+        self._plans = plans
         self._idle_seconds = idle_seconds
         self._limit = limit
         self._items: dict[str, Session] = {}
@@ -124,7 +130,8 @@ class Sessions:
         session = self._items.get(session_id)
         if session is None or session.patient_id != patient_id:
             patient, found = await self._fhir.patient_chart(patient_id)
-            session = self._items[session_id] = start_session(session_id, Record(patient, found))
+            record = Record(patient, found)
+            session = self._items[session_id] = start_session(session_id, record, index_section(*await open_loops(record, self._plans)))
             self._prune()
         session.used = time.monotonic()
         return session

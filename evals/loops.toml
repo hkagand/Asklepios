@@ -1,0 +1,122 @@
+# Expected open loops per patient. Check with: python -m evals --loops
+#
+# Uses the anchor and seed in gold.toml. For each patient:
+#   items  plan items or orders that must be found with this status. "match" is a phrase from the quoted plan line
+#          (or the order name), matched like gold.toml mentions.
+# Every open item (missing, overdue, not_ordered, no_trace) that no expectation matches counts as a false alarm, so a
+# patient listed with no open expectations must have no open items at all. Every cohort patient is listed.
+#
+# Statuses: missing, overdue, not_ordered, no_trace, pending, conditional, done (see agent/loops.py)
+
+[[patient]]
+id = "p-2041"
+items = [
+  { match = "restaging ct", status = "overdue" },
+  { match = "cea", status = "overdue" },
+  { match = "tumour board", status = "no_trace" },
+  { match = "hold maintenance chemotherapy", status = "done" },
+  { match = "clinic review", status = "pending" },
+  { match = "further imaging", status = "conditional" },
+  { match = "ferrous sulfate", status = "done" },
+  { match = "gastroenterology", status = "done" },
+]
+
+[[patient]]
+id = "p-1001"
+items = [
+  { match = "follow-up", status = "pending" },
+  { match = "hba1c", status = "done" },
+]
+
+[[patient]]
+id = "p-1002"
+items = [
+  { match = "follow-up", status = "pending" },
+  { match = "basic metabolic panel", status = "pending" },
+]
+
+[[patient]]
+id = "p-1003"
+items = [{ match = "follow-up", status = "pending" }]
+
+[[patient]]
+id = "p-1004"
+items = [
+  { match = "heart failure nurse", status = "no_trace" },
+  { match = "basic metabolic panel in 1 week", status = "done" },
+  { match = "furosemide", status = "done" },
+  { match = "nt-probnp", status = "done" },
+]
+
+[[patient]]
+id = "p-1005"
+items = [{ match = "tsh", status = "pending" }]
+
+[[patient]]
+id = "p-1006"
+items = [{ match = "tsh", status = "pending" }]
+
+[[patient]]
+id = "p-1007"
+items = [
+  { match = "heart failure nurse", status = "no_trace" },
+  { match = "furosemide", status = "done" },
+]
+
+[[patient]]
+id = "p-1008"
+items = []
+
+[[patient]]
+id = "p-1009"
+items = [
+  { match = "ophthalmology", status = "overdue" },
+  { match = "hba1c", status = "pending" },
+]
+
+[[patient]]
+id = "p-1010"
+items = []
+
+[[patient]]
+id = "p-1011"
+items = [{ match = "follow-up", status = "pending" }]
+
+[[patient]]
+id = "p-1012"
+items = [{ match = "ophthalmology", status = "overdue" }]
+
+[[patient]]
+id = "p-1013"
+items = []
+
+[[patient]]
+id = "p-1014"
+items = [{ match = "tsh", status = "pending" }]
+
+[[patient]]
+id = "p-1015"
+items = []
+
+[[patient]]
+id = "p-1016"
+items = [
+  { match = "stop", status = "missing" },
+  { match = "cbc and ferritin", status = "done" },
+]
+
+[[patient]]
+id = "p-1017"
+items = [{ match = "hba1c", status = "pending" }]
+
+[[patient]]
+id = "p-1018"
+items = [
+  { match = "stop", status = "missing" },
+  { match = "gynaecology", status = "overdue" },
+  { match = "cbc and ferritin", status = "overdue" },
+]
+
+[[patient]]
+id = "p-1019"
+items = []

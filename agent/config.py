@@ -30,6 +30,7 @@ class Settings:
     fhir_base_url: str
     max_steps: int
     audit_log: Path
+    plan_cache: Path
 
 
 def load_settings() -> Settings:
@@ -47,4 +48,5 @@ def load_settings() -> Settings:
         fhir_base_url=os.environ.get("FHIR_BASE_URL", "http://localhost:8080/fhir").rstrip("/"),
         max_steps=int(os.environ.get("AGENT_MAX_STEPS", "8")),
         audit_log=Path(os.environ.get("AGENT_AUDIT_LOG", HERE / "logs" / "audit.jsonl")),
+        plan_cache=Path(os.environ.get("AGENT_PLAN_CACHE", HERE / "cache" / "plans")),
     )

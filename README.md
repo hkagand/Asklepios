@@ -8,6 +8,7 @@ This repository is a synthetic demo. Every patient is invented. Do not load real
 
 - **Chart viewer** (`web/`): worklist, then a patient page with overview, labs, visits and reports. Built with React, Vite and Tailwind. Talks to HAPI FHIR through a Vite proxy.
 - **ASKlepios** (`agent/`): a FastAPI service that answers questions about the patient whose chart is open. The model never sees raw FHIR JSON. It gets a compact chart index plus five read-only tools (`read_documents`, `lab_series`, `medication_history`, `order_history`, `search_record`). Citations are checked before they reach the panel.
+- **Open loops** (`agent/plans.py`, `agent/loops.py`): what each clinician's latest note planned, checked against what the record shows happened since. See [Open loops](#open-loops).
 - **Synthetic cohort** (`synthetic/`): 20 seeded patients with labs, visit notes, imaging and pathology reports, medications, orders and appointments. Reloading overwrites the same resource ids.
 
 The model is any OpenAI-compatible chat-completions endpoint that supports tool calling (vLLM, a LiteLLM proxy, and similar). Point `agent/.env` at it.
@@ -74,6 +75,18 @@ To ask from the terminal instead of the browser:
 python -m agent.ask p-2041 "Why was oxaliplatin stopped?"
 ```
 
+## Open loops
+
+Follow-up that was planned in a note but never ordered, booked, resulted or recorded.
+
+1. The model reads each clinician's most recent note and lists its plan items: tests, imaging, referrals, follow-up visits, calls, meetings and medication changes, each with a due time. Every item must quote the note word for word. If a line of the note's PLAN section is not covered by any item, the model is asked again.
+2. Plain code does the rest. It works out due dates, matches each item against orders, results, reports, appointments, visits and medication orders, and gives it a status: `missing`, `overdue`, `not_ordered`, `no_trace` (a call or meeting the record cannot show), `pending`, `conditional` or `done`.
+3. Open orders that no current plan covers are added, for example a referral from an earlier visit.
+
+`GET /api/patients/{id}/loops` returns the items with their evidence ids. ASKlepios also gets them in its chart index as an OPEN LOOPS section, so it can answer "what was planned and not done?" with sources.
+
+Each note is read once. The extracted plan is cached in `agent/cache/plans/` (gitignored, or `AGENT_PLAN_CACHE`), keyed by the note text, the model and the prompt version. The note text is sent to the model in `agent/.env`, as chat questions are.
+
 ## Evaluate
 
 `evals/gold.toml` holds the gold questions: one case per question, with the reference answer, the facts the answer must state, the sources it must cite and anything it must not say. The cases cover lookups, medication history, lab trends, pending work, reading notes and reports, comparing reports, briefings, questions the record cannot answer, requests for advice, follow-up questions, other patients, and Turkish.
@@ -93,6 +106,8 @@ Other options:
 - `--judge`: also grades each answer against its reference with a model: correct, partial or incorrect, and whether it recommends anything. By default the judge is the agent's model; set `EVAL_JUDGE_BASE_URL`, `EVAL_JUDGE_MODEL` and `EVAL_JUDGE_API_KEY` to use another.
 - `--baseline evals/runs/<run>`: lists the cases that got better or worse since an earlier run.
 - `--rescore evals/runs/<run>`: scores that run's saved answers again with the current `gold.toml` (and `--judge`), without asking the agent. Use it after fixing a check that was too strict.
+- `--no-loops`: leaves the OPEN LOOPS section out of the chart index, to compare with and without it.
+- `--loops`: checks the open loops of every cohort patient against `evals/loops.toml` instead of asking questions. It reports expected items found with the right status, and open items nobody expected (false alarms). Add `--fresh --repeats 3` to extract every plan again each time and see how much extraction varies.
 
 Each run writes `results.jsonl` (every answer with its checks), `summary.json`, `report.md` and its own `audit.jsonl` to `evals/runs/` (gitignored). The model is not deterministic, so compare runs made with `--repeats 3` or more.
 

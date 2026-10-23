@@ -29,11 +29,13 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 
 from agent.audit import AuditLog
-from agent.chat import language_of, run_turn, start_session
+from agent.chat import ENGLISH_WORDS, TURKISH_WORDS, language_of, run_turn, start_session
 from agent.citations import PLAIN
 from agent.config import Settings, load_settings
 from agent.fhir import FhirClient
 from agent.llm import LlmClient, LlmError
+from agent.loops import index_section, open_loops
+from agent.plans import PlanExtractor
 from agent.record import Record
 from agent.tools import fold
 
@@ -42,7 +44,7 @@ ROOT = HERE.parent
 LANGUAGES = {"en": "English", "tr": "Turkish"}
 CATEGORIES = (
     "lookup", "medication", "labs", "pending", "documents", "compare", "briefing", "absent", "safety", "followup",
-    "isolation",
+    "isolation", "loops",
 )
 FLAGGED = ("check", "unsourced", "unsupported")
 
@@ -142,6 +144,16 @@ def visible(answer: dict) -> tuple[str, set[str]]:
     return "\n".join(line for line in lines if line), cited
 
 
+def answer_language(text: str) -> str | None:
+    """Like chat.language_of, but from common words only: answers are full of Turkish names ("Dr. Elif Aydın")."""
+    words = re.findall(r"[^\W\d_]+", text.lower())
+    turkish = sum(word in TURKISH_WORDS for word in words)
+    english = sum(word in ENGLISH_WORDS for word in words)
+    if turkish != english:
+        return "Turkish" if turkish > english else "English"
+    return None
+
+
 def score(case: Case, text: str, cited: set[str]) -> dict[str, list[str]]:
     """Failed checks by kind; empty when the answer passes."""
     failures: dict[str, list[str]] = {}
@@ -151,7 +163,7 @@ def score(case: Case, text: str, cited: set[str]) -> dict[str, list[str]]:
         failures["cites"] = uncited
     if said := [phrase for phrase in case.avoid if says(text, phrase)]:
         failures["avoid"] = said
-    expected, written = case.expected_language, language_of(text)
+    expected, written = case.expected_language, answer_language(text)
     if expected and written and written != expected:
         failures["language"] = [f"answered in {written}, expected {expected}"]
     return failures
@@ -181,8 +193,10 @@ async def ask(session, question: str, *, llm: LlmClient, audit: AuditLog, max_st
     return answer
 
 
-async def run_case(case: Case, repeat: int, record: Record, *, llm: LlmClient, audit: CapturingAudit, max_steps: int) -> dict:
-    session = start_session(f"eval-{case.id}-{repeat}-{uuid.uuid4().hex[:8]}", record)
+async def run_case(
+    case: Case, repeat: int, record: Record, loops: str | None, *, llm: LlmClient, audit: CapturingAudit, max_steps: int
+) -> dict:
+    session = start_session(f"eval-{case.id}-{repeat}-{uuid.uuid4().hex[:8]}", record, loops)
     row: dict = {"case": case.id, "repeat": repeat, "patient": case.patient, "category": case.category, "question": case.question}
     try:
         for question in case.history:
@@ -314,7 +328,7 @@ def report(summary: dict, rows: list[dict], meta: dict, baseline: dict | None) -
         f"# ASKlepios eval: {meta['started']}",
         "",
         f"Model `{meta['model']}` · cohort anchor {meta['anchor']}, seed {meta['seed']} · charts from {meta['source']} · "
-        f"{meta['cases']} cases × {meta['repeats']}",
+        f"open loops {'in' if meta.get('loops') else 'not in'} the index · {meta['cases']} cases × {meta['repeats']}",
         "",
         f"**Passed {share({'passed': summary['passed'], 'runs': summary['runs']})}**"
         + (f" · {summary['errors']} errors" if summary["errors"] else ""),
@@ -423,6 +437,10 @@ async def run(args: argparse.Namespace) -> int:
     if args.lint:
         print(f"{len(cases)} cases, {len({case.patient for case in cases})} patients: no problems.")
         return 0
+    if args.loops:
+        from .loops import run_loops
+
+        return await run_loops(load_settings(), records, HERE / "loops.toml", args.out, fresh=args.fresh, repeats=args.repeats)
     if not chosen:
         print("No case matches the filters.")
         return 1
@@ -434,6 +452,15 @@ async def run(args: argparse.Namespace) -> int:
     if args.fhir:
         records = await fhir_records(settings.fhir_base_url, sorted({case.patient for case in chosen}), anchor)
         source = settings.fhir_base_url
+    sections: dict[str, str | None] = defaultdict(lambda: None)
+    if not args.no_loops:
+        extraction = LlmClient(replace(settings, temperature=0.0))
+        try:
+            extractor = PlanExtractor(extraction, settings.plan_cache, concurrency=6)
+            for patient in sorted({case.patient for case in chosen}):
+                sections[patient] = index_section(*await open_loops(records[patient], extractor))
+        finally:
+            await extraction.close()
     started = datetime.now(timezone.utc)
     folder = args.out / f"{started:%Y%m%dT%H%M%SZ}-{re.sub(r'[^A-Za-z0-9.-]+', '-', settings.llm_model)}"
     folder.mkdir(parents=True)
@@ -442,13 +469,15 @@ async def run(args: argparse.Namespace) -> int:
     grader = LlmClient(judge_settings(settings)) if args.judge else None
     baseline = load_baseline(args.baseline) if args.baseline else None
     gate = asyncio.Semaphore(args.concurrency)
-    jobs =[(case, repeat) for repeat in range(args.repeats) for case in chosen]
+    jobs = [(case, repeat) for repeat in range(args.repeats) for case in chosen]
     rows: list[dict] = []
     print(f"{len(chosen)} cases × {args.repeats} against {settings.llm_model}, writing to {folder}")
 
     async def one(case: Case, repeat: int) -> None:
         async with gate:
-            row = await run_case(case, repeat, records[case.patient], llm=llm, audit=audit, max_steps=settings.max_steps)
+            row = await run_case(
+                case, repeat, records[case.patient], sections[case.patient], llm=llm, audit=audit, max_steps=settings.max_steps
+            )
             if grader and "answer" in row:
                 row["judge"] = await judge(case, row, grader)
         rows.append(row)
@@ -473,6 +502,7 @@ async def run(args: argparse.Namespace) -> int:
         "anchor": anchor.isoformat(),
         "seed": seed,
         "source": source,
+        "loops": not args.no_loops,
         "cases": len(chosen),
         "repeats": args.repeats,
     }
@@ -542,5 +572,8 @@ def main() -> None:
     parser.add_argument("--baseline", type=Path, help="an earlier run folder to compare with")
     parser.add_argument("--fhir", action="store_true", help="read charts from the FHIR server instead of the generator")
     parser.add_argument("--rescore", type=Path, help="score an earlier run's answers again instead of asking the agent")
+    parser.add_argument("--no-loops", action="store_true", help="leave the OPEN LOOPS section out of the chart index")
+    parser.add_argument("--loops", action="store_true", help="check open loops against loops.toml instead of the questions")
+    parser.add_argument("--fresh", action="store_true", help="with --loops: extract every plan again instead of using the cache")
     parser.add_argument("--out", type=Path, default=HERE / "runs")
     raise SystemExit(asyncio.run(run(parser.parse_args())))
