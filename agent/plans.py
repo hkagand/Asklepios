@@ -13,10 +13,13 @@ import json
 import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Generic, TypeVar
 
 from .citations import PLAIN
 from .llm import LlmClient, LlmError
 from .record import Document, day_text
+
+T = TypeVar("T")
 
 PROMPT_VERSION = 4
 KINDS = ("lab", "imaging", "procedure", "referral", "visit", "contact", "meeting", "medication", "conditional", "advice")
@@ -135,55 +138,97 @@ def parse(reply: str, note_text: str) -> list[PlanItem]:
     return items
 
 
-class PlanExtractor:
+class NoteReader(Generic[T]):
+    """Reads one structured result out of a clinical note with the model. Each note is read once: the result is cached
+    on disk per note text, model and prompt version. Subclasses give the prompt and how to parse and check a reply."""
+
+    prompt: str
+    version: int
+    what: str
+
     def __init__(self, llm: LlmClient, cache_dir: Path, *, concurrency: int = 4) -> None:
         self._llm = llm
         self._cache_dir = cache_dir
         self._gate = asyncio.Semaphore(concurrency)
-        self._running: dict[Path, asyncio.Task[list[PlanItem]]] = {}
+        self._running: dict[Path, asyncio.Task[T]] = {}
 
-    async def items(self, document: Document) -> list[PlanItem]:
-        """The plan items of one note, from the cache when this note text was read before."""
-        key = hashlib.sha256(f"{PROMPT_VERSION}\n{self._llm.model}\n{document.text}".encode()).hexdigest()[:16]
+    def parse(self, reply: str, note_text: str) -> T:
+        """The result in a model reply. Raises ValueError (or JSONDecodeError) when the reply is not usable."""
+        raise NotImplementedError
+
+    def missed(self, note_text: str, result: T) -> list[str]:
+        """Lines of the note the result should cover and does not; asked for again once."""
+        return []
+
+    def dump(self, result: T) -> object:
+        raise NotImplementedError
+
+    def load(self, data: object) -> T:
+        raise NotImplementedError
+
+    async def read(self, document: Document) -> T:
+        key = hashlib.sha256(f"{self.version}\n{self._llm.model}\n{document.text}".encode()).hexdigest()[:16]
         path = self._cache_dir / f"{document.ref.replace('/', '_')}-{key}.json"
         if path.exists():
-            return [PlanItem(**{**item, "tests": tuple(item["tests"])}) for item in json.loads(path.read_text(encoding="utf-8"))]
+            return self.load(json.loads(path.read_text(encoding="utf-8")))
         task = self._running.get(path)
         if task is None:
             task = self._running[path] = asyncio.create_task(self._extract(document, path))
             task.add_done_callback(lambda _: self._running.pop(path, None))
         return await asyncio.shield(task)
 
-    async def _extract(self, document: Document, path: Path) -> list[PlanItem]:
+    async def _extract(self, document: Document, path: Path) -> T:
         heading = f"Note written on {day_text(document.when)}" + (f" by {document.author}" if document.author else "")
         messages = [
-            {"role": "system", "content": PROMPT},
+            {"role": "system", "content": self.prompt},
             {"role": "user", "content": f"{heading}\n\n{document.text.strip()}"},
         ]
-        best: list[PlanItem] | None = None
+        best: T | None = None
         problem = ""
         async with self._gate:
             for attempt in range(3):
                 message, _ = await self._llm.chat(messages, tools=[], tool_choice="none")
                 reply = message.get("content") or ""
                 try:
-                    items = parse(reply, document.text)
+                    result = self.parse(reply, document.text)
                 except (ValueError, json.JSONDecodeError) as error:
                     problem = str(error)
                     continue
-                missed = uncovered(document.text, items)
-                if best is None or len(missed) < len(uncovered(document.text, best)):
-                    best = items
+                missed = self.missed(document.text, result)
+                if best is None or len(missed) < len(self.missed(document.text, best)):
+                    best = result
                 if not missed or attempt == 2:
                     break
-                # One more try, naming the plan lines no item quotes.
+                # One more try, naming the lines nothing quotes.
                 listed = "\n".join(f"- {line}" for line in missed)
                 messages += [
                     {"role": "assistant", "content": reply},
-                    {"role": "user", "content": f"These plan lines have no item:\n{listed}\nReturn the complete list again."},
+                    {"role": "user", "content": f"These lines have no item:\n{listed}\nReturn the complete list again."},
                 ]
         if best is None:
-            raise LlmError(f"Could not read the plan of {document.ref}: {problem}.")
+            raise LlmError(f"Could not read the {self.what} of {document.ref}: {problem}.")
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps([asdict(item) for item in best], ensure_ascii=False, indent=1), encoding="utf-8")
+        path.write_text(json.dumps(self.dump(best), ensure_ascii=False, indent=1), encoding="utf-8")
         return best
+
+
+class PlanExtractor(NoteReader[list[PlanItem]]):
+    prompt = PROMPT
+    version = PROMPT_VERSION
+    what = "plan"
+
+    async def items(self, document: Document) -> list[PlanItem]:
+        """The plan items of one note."""
+        return await self.read(document)
+
+    def parse(self, reply: str, note_text: str) -> list[PlanItem]:
+        return parse(reply, note_text)
+
+    def missed(self, note_text: str, result: list[PlanItem]) -> list[str]:
+        return uncovered(note_text, result)
+
+    def dump(self, result: list[PlanItem]) -> object:
+        return [asdict(item) for item in result]
+
+    def load(self, data: object) -> list[PlanItem]:
+        return [PlanItem(**{**item, "tests": tuple(item["tests"])}) for item in data]

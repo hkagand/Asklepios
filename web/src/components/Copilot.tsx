@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { agentHealth, ask, type AgentEvent, type Answer, type Block, type Step } from '../agent.ts'
+import { agentHealth, ask, patientBrief, type AgentEvent, type Answer, type Block, type PreparedBrief, type Step } from '../agent.ts'
+import { formatDate, formatTime } from '../format.ts'
 import { read, type Resource } from '../fhir.ts'
 import { resourceIndex, type Chart } from '../model.ts'
 import { useAsync } from '../useAsync.ts'
@@ -29,6 +30,7 @@ export function Copilot({ chart, onClose }: { chart: Chart; onClose: () => void 
   const controller = useRef<AbortController | null>(null)
   const scroller = useRef<HTMLDivElement>(null)
   const health = useAsync(agentHealth, [])
+  const prepared = useAsync((signal) => patientBrief(chart.patient.id ?? '', signal), [chart.patient.id])
   const resources = useMemo(() => resourceIndex(chart), [chart])
   const running = turns.at(-1)?.running ?? false
   const firstName = chart.patient.name?.[0]?.given?.[0] ?? 'this patient'
@@ -98,6 +100,9 @@ export function Copilot({ chart, onClose }: { chart: Chart; onClose: () => void 
       </header>
 
       <div ref={scroller} className="flex-1 space-y-6 overflow-y-auto px-4 py-4">
+        {prepared.status === 'ready' && prepared.data.brief && (
+          <PreparedBriefView brief={prepared.data.brief} resources={resources} />
+        )}
         {health.status === 'error' && (
           <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-800 ring-1 ring-rose-200">{health.error.message}</p>
         )}
@@ -152,6 +157,31 @@ export function Copilot({ chart, onClose }: { chart: Chart; onClose: () => void 
         </p>
       </form>
     </div>
+  )
+}
+
+/** The brief prepared before the clinic (agent/briefs.py), shown above the conversation. */
+function PreparedBriefView({ brief, resources }: { brief: NonNullable<PreparedBrief['brief']>; resources: Map<string, Resource> }) {
+  const [open, setOpen] = useState(true)
+  return (
+    <section className="rounded-xl bg-teal-50/60 p-3 ring-1 ring-teal-100">
+      <button type="button" onClick={() => setOpen(!open)} className="flex w-full items-baseline justify-between gap-2 text-left">
+        <span className="text-[11px] font-semibold uppercase tracking-wider text-teal-800">Prepared brief</span>
+        <span className="text-[11px] text-slate-500">
+          {formatDate(brief.preparedAt)} {formatTime(brief.preparedAt)} {open ? '▴' : '▾'}
+        </span>
+      </button>
+      {!brief.current && (
+        <p className="mt-1.5 rounded bg-amber-50 px-2 py-1 text-xs text-amber-800 ring-1 ring-amber-200">
+          The chart has changed since this brief was prepared. Prepare it again from My day, or ask below.
+        </p>
+      )}
+      {open && (
+        <div className="mt-2">
+          <AnswerView answer={brief.answer} resources={resources} />
+        </div>
+      )}
+    </section>
   )
 }
 

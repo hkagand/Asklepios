@@ -35,21 +35,38 @@ export type LoopStatus =
   | 'missing'
   | 'dose_mismatch'
   | 'overdue'
+  | 'to_review'
   | 'not_ordered'
   | 'no_trace'
+  | 'to_inform'
   | 'pending'
   | 'conditional'
   | 'done'
+
+/** One step of a test or scan: ordered, performed, resulted, reviewed, communicated. */
+export interface Stage {
+  stage: 'ordered' | 'performed' | 'resulted' | 'reviewed' | 'communicated'
+  done: boolean
+  at: string | null
+  by: string | null
+  refs: string[]
+  /** Taken from a later visit note that quotes the result, not from a mark. */
+  inferred: boolean
+  note: string | null
+}
 
 export interface LoopPart {
   name: string
   status: LoopStatus
   detail: string
   evidence: string[]
+  stages: Stage[]
+  /** The report a review or communication mark points at. */
+  target: string | null
 }
 
 export interface Loop {
-  source: 'plan' | 'order'
+  source: 'plan' | 'order' | 'result'
   note: string | null
   noteDate: string | null
   author: string | null
@@ -61,6 +78,8 @@ export interface Loop {
   detail: string
   evidence: string[]
   parts: LoopPart[]
+  stages: Stage[]
+  target: string | null
 }
 
 export interface PatientLoops {
@@ -72,27 +91,171 @@ export interface PatientLoops {
 
 export type LoopCounts = { statuses?: Partial<Record<LoopStatus, number>>; unread?: number; error?: string }
 
+/** A review (FHIR Task) or a communication to the patient (FHIR Communication) left by a clinician; agent/marks.py. */
+export interface Mark {
+  id: string
+  kind: 'review' | 'communication'
+  about: string[]
+  by: string
+  byName: string
+  at: string
+  medium: string | null
+  note: string | null
+}
+
+export type Medium = 'in_person' | 'phone' | 'video' | 'letter' | 'portal'
+
+/** Medication reconciliation (agent/meds.py): orders against what the notes say. */
+export interface MedicationOrder {
+  ref: string
+  name: string
+  dose: string
+  start: string | null
+  end: string | null
+  status: string
+  statusReason: string | null
+  reason: string | null
+  prescriber: string | null
+}
+
+export interface MedicationMention {
+  quote: string
+  dose: string | null
+  status: string
+  byPatient: boolean
+  note: string
+  date: string
+  author: string | null
+}
+
+export interface MedicationFinding {
+  kind: 'dose_differs' | 'stopped_in_note' | 'not_ordered' | 'plan' | 'not_mentioned'
+  text: string
+  refs: string[]
+}
+
+export interface MedicationDrug {
+  name: string
+  status: string
+  dose: string
+  orders: MedicationOrder[]
+  notes: MedicationMention[]
+  mentionedIn: { note: string; date: string; title: string }[]
+  findings: MedicationFinding[]
+}
+
+export interface MedicationPicture {
+  patient: string
+  today: string
+  uncertainty: string
+  drugs: MedicationDrug[]
+  unlisted: (MedicationMention & { drug: string; finding: MedicationFinding })[]
+  adherence: { quote: string; summary: string; note: string; date: string; author: string | null }[]
+  unread: string[]
+}
+
 const NOT_RUNNING = 'The agent service is not reachable. Start it from the project folder with: python -m agent'
 
-async function getJson<T>(url: string, signal: AbortSignal): Promise<T> {
+let acting: string | null = null
+
+/** The practitioner named on every request to the agent (X-Practitioner); set by the clinician picker. */
+export function setActingPractitioner(id: string | null): void {
+  acting = id
+}
+
+function headers(extra: Record<string, string> = {}): Record<string, string> {
+  return acting ? { 'X-Practitioner': acting, ...extra } : extra
+}
+
+async function send<T>(url: string, init: RequestInit, signal?: AbortSignal): Promise<T> {
   let response: Response
   try {
-    response = await fetch(url, { signal })
+    response = await fetch(url, { ...init, signal })
   } catch (error) {
-    if (signal.aborted) throw error
+    if (signal?.aborted) throw error
     throw new Error(NOT_RUNNING, { cause: error })
   }
   if (!response.ok) {
-    const detail = ((await response.json().catch(() => ({}))) as { detail?: string }).detail
-    throw new Error(response.status >= 500 && !detail ? NOT_RUNNING : (detail ?? `The agent service answered ${response.status}.`))
+    const detail = ((await response.json().catch(() => ({}))) as { detail?: unknown }).detail
+    const message = typeof detail === 'string' ? detail : undefined
+    throw new Error(response.status >= 500 && !message ? NOT_RUNNING : (message ?? `The agent service answered ${response.status}.`))
   }
   return (await response.json()) as T
 }
 
+const getJson = <T>(url: string, signal: AbortSignal) => send<T>(url, { headers: headers() }, signal)
+
+const postJson = <T>(url: string, body: unknown) =>
+  send<T>(url, { method: 'POST', headers: headers({ 'Content-Type': 'application/json' }), body: JSON.stringify(body) })
+
+const patientPath = (patientId: string) => `/api/patients/${encodeURIComponent(patientId)}`
+
 export const agentHealth = (signal: AbortSignal) => getJson<{ model: string }>('/api/health', signal)
 
+export type BriefState = 'missing' | 'ready' | 'outdated' | 'preparing'
+
+export interface DayPatient {
+  patient: string
+  name: string
+  mrn: string | null
+  appointment: { ref: string; start: string; description: string | null }
+  loops: Partial<Record<LoopStatus, number>>
+  medications: number
+  brief: { state: BriefState; preparedAt: string | null }
+}
+
+/** A clinician's day (agent/app.py, briefs.py). */
+export interface ClinicDay {
+  clinician: { id: string; name: string }
+  day: string
+  today: string
+  totals: { visits: number; toReview: number; followUps: number; medications: number; briefsReady: number }
+  patients: DayPatient[]
+}
+
+export interface PreparedBrief {
+  state: BriefState
+  brief: null | { question: string; preparedAt: string; visit: string | null; current: boolean; answer: Answer }
+}
+
+const dayQuery = (day?: string) => (day ? `?${new URLSearchParams({ day })}` : '')
+
+export const clinicDay = (clinicianId: string, day: string | undefined, signal: AbortSignal) =>
+  getJson<ClinicDay>(`/api/clinicians/${encodeURIComponent(clinicianId)}/day${dayQuery(day)}`, signal)
+
+export const prepareBriefs = (clinicianId: string, day?: string) =>
+  postJson<{ day: string; started: string[] }>(`/api/clinicians/${encodeURIComponent(clinicianId)}/briefs${dayQuery(day)}`, {})
+
+export const patientBrief = (patientId: string, signal: AbortSignal) => getJson<PreparedBrief>(`${patientPath(patientId)}/brief`, signal)
+
+export const patientMedications = (patientId: string, signal: AbortSignal) =>
+  getJson<MedicationPicture>(`${patientPath(patientId)}/medications`, signal)
+
+export async function patientMarks(patientId: string, signal: AbortSignal): Promise<Mark[]> {
+  return (await getJson<{ marks: Mark[] }>(`${patientPath(patientId)}/marks`, signal)).marks
+}
+
+export async function markReviewed(patientId: string, focus: string[], note?: string): Promise<Mark[]> {
+  return (await postJson<{ marks: Mark[] }>(`${patientPath(patientId)}/reviews`, { focus, note })).marks
+}
+
+export async function markCommunicated(
+  patientId: string,
+  about: string[],
+  medium: Medium,
+  sent?: string,
+  note?: string,
+): Promise<Mark[]> {
+  return (await postJson<{ marks: Mark[] }>(`${patientPath(patientId)}/communications`, { about, medium, sent, note })).marks
+}
+
+/** `markId` is "Task/123" or "Communication/456". */
+export async function withdrawMark(patientId: string, markId: string): Promise<void> {
+  await postJson(`${patientPath(patientId)}/marks/${markId}/withdraw`, {})
+}
+
 export const patientLoops = (patientId: string, signal: AbortSignal) =>
-  getJson<PatientLoops>(`/api/patients/${encodeURIComponent(patientId)}/loops`, signal)
+  getJson<PatientLoops>(`${patientPath(patientId)}/loops`, signal)
 
 export async function loopSummary(patientIds: string[], signal: AbortSignal): Promise<Record<string, LoopCounts>> {
   const query = new URLSearchParams({ patients: patientIds.join(',') })
@@ -109,9 +272,9 @@ export async function ask(
 ): Promise<void> {
   let response: Response
   try {
-    response = await fetch(`/api/patients/${encodeURIComponent(patientId)}/chat`, {
+    response = await fetch(`${patientPath(patientId)}/chat`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: headers({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ session_id: sessionId, question }),
       signal,
     })

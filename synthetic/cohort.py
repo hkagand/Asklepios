@@ -322,6 +322,9 @@ def diabetes_hypertension(s: Story) -> None:
         if "amlodipine" in changed:
             subjective.append("Mild ankle swelling in the evenings since starting amlodipine, not troublesome.")
         subjective += [rng.choice(DIABETES_REVIEW), rng.choice(LIFESTYLE)]
+        # Deliberate gap for medication reconciliation: a drug taken that no order lists.
+        if last and s.variant == 3:
+            subjective.append("Also takes ibuprofen 400 mg as needed for knee pain, bought over the counter.")
         changed = set()
         assessment: list[str] = []
         plan: list[str] = []
@@ -359,7 +362,9 @@ def diabetes_hypertension(s: Story) -> None:
             )
             plan.append("No change to diabetes medication today; diet and activity goals reviewed.")
 
-        bp_meds = f"ramipril {ramipril_dose} mg" + (" and amlodipine 5 mg" if amlodipine else "")
+        # Deliberate gap for medication reconciliation: the last note gives a ramipril dose other than the order's.
+        noted_dose = (5 if ramipril_dose == 10 else 10) if last and s.variant == 4 else ramipril_dose
+        bp_meds = f"ramipril {noted_dose} mg" + (" and amlodipine 5 mg" if amlodipine else "")
         if bp_s >= 140 or bp_d >= 90:
             assessment.append(f"Hypertension — clinic BP {bp_s}/{bp_d} mmHg on {bp_meds}; above target (< 130/80).")
             if amlodipine is None:
@@ -1496,7 +1501,13 @@ def dyslipidaemia(s: Story) -> None:
     c.note(
         when=start + timedelta(minutes=25), author=doc, title="Annual health check", encounter=visit,
         body=sections(
-            ("Subjective", "Well. Keeping up with walking." + (" Has not managed to stop smoking." if smoker else "")),
+            (
+                "Subjective",
+                "Well. Keeping up with walking."
+                + (" Has not managed to stop smoking." if smoker else "")
+                # Deliberate gap for medication reconciliation: the patient has stopped a drug the order list still has.
+                + (" Stopped rosuvastatin about six weeks ago because of aching legs; has not restarted." if s.variant == 2 else ""),
+            ),
             ("Objective", [vitals, c.labs_text(["ldl", "hdl", "tg", "a1c", "alt", "egfr", "hgb"], before=start, compare=("ldl", "a1c"))]),
             ("Assessment", numbered(assessment)),
             ("Plan", bullets(["Continue rosuvastatin 10 mg.", "Annual check with bloods in 12 months."])),

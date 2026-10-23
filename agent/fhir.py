@@ -1,4 +1,4 @@
-"""Reads one patient's chart from the FHIR server."""
+"""Reads one patient's chart from the FHIR server. The only writes are the marks in marks.py."""
 
 from __future__ import annotations
 
@@ -16,7 +16,12 @@ PATIENT_SEARCHES = (
     "Encounter",
     "ServiceRequest",
     "Appointment",
+    "Task",
+    "Communication",
 )
+
+
+WRITE_HEADERS = {"Content-Type": "application/fhir+json; charset=utf-8", "Prefer": "return=representation"}
 
 
 class FhirError(Exception):
@@ -30,21 +35,37 @@ class PatientNotFound(FhirError):
 class FhirClient:
     def __init__(self, base_url: str) -> None:
         self.base_url = base_url
-        self._client = httpx.AsyncClient(timeout=30, headers={"Accept": "application/fhir+json"})
+        # no-cache: HAPI otherwise answers a repeated search from its cache for a minute, hiding marks just written.
+        headers = {"Accept": "application/fhir+json", "Cache-Control": "no-cache"}
+        self._client = httpx.AsyncClient(timeout=30, headers=headers)
 
     async def close(self) -> None:
         await self._client.aclose()
 
-    async def _get(self, url: str, params: dict | None = None) -> dict:
+    async def _send(self, method: str, url: str, **options: object) -> dict:
         try:
-            response = await self._client.get(url, params=params)
+            response = await self._client.request(method, url, **options)
         except httpx.HTTPError as error:
             raise FhirError(f"Could not reach the FHIR server at {self.base_url} ({error}).") from error
         if response.status_code in (404, 410):
             raise PatientNotFound(f"{url} was not found on the FHIR server.")
         if response.is_error:
-            raise FhirError(f"The FHIR server answered {response.status_code} for {url}.")
+            raise FhirError(f"The FHIR server answered {response.status_code} for {method} {url}: {response.text[:300]}")
         return response.json()
+
+    async def _get(self, url: str, params: dict | None = None) -> dict:
+        return await self._send("GET", url, params=params)
+
+    async def read(self, resource_type: str, resource_id: str) -> dict:
+        return await self._get(f"{self.base_url}/{resource_type}/{resource_id}")
+
+    async def create(self, resource: dict) -> dict:
+        """POSTs a new resource; the server assigns its id."""
+        return await self._send("POST", f"{self.base_url}/{resource['resourceType']}", json=resource, headers=WRITE_HEADERS)
+
+    async def update(self, resource: dict) -> dict:
+        url = f"{self.base_url}/{resource['resourceType']}/{resource['id']}"
+        return await self._send("PUT", url, json=resource, headers=WRITE_HEADERS)
 
     async def search(self, resource_type: str, params: dict[str, str]) -> list[dict]:
         """Runs a search and follows `next` links until every page has been read."""

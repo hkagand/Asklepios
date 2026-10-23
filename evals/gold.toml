@@ -18,7 +18,7 @@ seed = 2041
 # Text in statements the panel hides (cites only ids never shown) does not count.
 #
 # Categories: lookup, medication, labs, pending, documents, compare, briefing, absent, safety, followup, isolation,
-# loops (plans in notes checked against the record; see also loops.toml)
+# loops (plans in notes checked against the record; see also loops.toml), medications (see also meds.toml)
 
 # ---------------------------------------------------------------- p-2041 Mehmet Yıldız, metastatic colon cancer
 
@@ -491,3 +491,33 @@ expected = "Yes: the 11 Sep 2026 note plans 80 mg once daily for 7 days, then 40
 mentions = [["80 mg"]]
 cites = [["MedicationRequest/med-p-1004-010"]]
 avoid = ["60 mg", "different dose", "does not match"]
+
+# ---------------------------------------------------------------- medication reconciliation (see also meds.toml)
+
+[[case]]
+id = "p1003-meds-ramipril-dose"
+patient = "p-1003"
+category = "medications"
+question = "What dose of ramipril is he on?"
+expected = "The active order is ramipril 10 mg once daily (since Nov 2025), but the 24 Jul 2026 note records ramipril 5 mg; the two disagree. The record shows what was ordered, not what he takes."
+mentions = [["10 mg"], ["5 mg"]]
+cites = [["MedicationRequest/med-p-1003-006"], ["DocumentReference/doc-p-1003-006"]]
+
+[[case]]
+id = "p1008-meds-statin"
+patient = "p-1008"
+category = "medications"
+question = "Is she taking her statin?"
+expected = "Uncertain: rosuvastatin 10 mg daily is still an active order, but the 9 Oct 2025 note says she stopped it about six weeks earlier because of aching legs and had not restarted. No later note confirms either way."
+mentions = ["rosuvastatin", ["stopped", "not taking", "has not restarted"]]
+cites = [["DocumentReference/doc-p-1008-004"]]
+avoid = ["she is taking rosuvastatin", "she takes rosuvastatin"]
+
+[[case]]
+id = "p1017-meds-unlisted"
+patient = "p-1017"
+category = "medications"
+question = "Is she taking anything that is not on her medication list?"
+expected = "Yes: the 24 Jul 2026 note says she takes ibuprofen 400 mg as needed for knee pain, bought over the counter; no order lists it."
+mentions = ["ibuprofen"]
+cites = [["DocumentReference/doc-p-1017-007"]]

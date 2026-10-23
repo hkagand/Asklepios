@@ -18,14 +18,32 @@ from pathlib import Path
 from agent.config import Settings
 from agent.llm import LlmClient
 from agent.loops import OPEN, Loop, loop_line, open_loops
+from agent.marks import Practitioner, communication, review_task
 from agent.plans import PlanExtractor
 from agent.record import Record
 
 from .run import says
 
 
-def load_expected(path: Path) -> dict[str, list[dict]]:
-    return {patient["id"]: patient.get("items", []) for patient in tomllib.loads(path.read_text(encoding="utf-8"))["patient"]}
+def load_expected(path: Path) -> dict[str, dict]:
+    patients = tomllib.loads(path.read_text(encoding="utf-8"))["patient"]
+    return {patient["id"]: {"items": patient.get("items", []), "marks": patient.get("marks", [])} for patient in patients}
+
+
+def add_marks(record: Record, marks: list[dict]) -> None:
+    """Puts review and communication marks on the record, as the panel would through the agent service."""
+    for number, mark in enumerate(marks, 1):
+        missing = [ref for ref in mark["about"] if ref not in record.resources]
+        if missing:
+            raise SystemExit(f"loops.toml: {record.id} has no {', '.join(missing)}")
+        by = Practitioner(mark["by"], mark["by"])
+        if mark["kind"] == "review":
+            made = [review_task(record, ref, by, None) for ref in mark["about"]]
+        else:
+            made = [communication(record, mark["about"], by, mark.get("medium", "phone"), None, None)]
+        for index, resource in enumerate(made):
+            resource["id"] = f"eval-{number}-{index}"
+            record.resources[f"{resource['resourceType']}/{resource['id']}"] = resource
 
 
 def allowed(item: dict) -> list[str]:
@@ -53,6 +71,8 @@ async def run_loops(settings: Settings, records: dict[str, Record], expected_pat
     if missing := sorted(set(records) - set(expected)):
         print(f"loops.toml does not list: {', '.join(missing)}")
         return 1
+    for patient, record in records.items():
+        add_marks(record, expected[patient]["marks"])
     llm = LlmClient(replace(settings, temperature=0.0))
     runs = []
     try:
@@ -60,7 +80,7 @@ async def run_loops(settings: Settings, records: dict[str, Record], expected_pat
             with tempfile.TemporaryDirectory() as scratch:
                 extractor = PlanExtractor(llm, Path(scratch) if fresh else settings.plan_cache, concurrency=6)
                 found = {patient: await open_loops(record, extractor) for patient, record in records.items()}
-            runs.append({patient: check(expected[patient], loops) | {"unread": unread} for patient, (loops, unread) in found.items()})
+            runs.append({patient: check(expected[patient]["items"], loops) | {"unread": unread} for patient, (loops, unread) in found.items()})
             print(f"run {repeat + 1}: {summary_line(runs[-1])}")
     finally:
         await llm.close()

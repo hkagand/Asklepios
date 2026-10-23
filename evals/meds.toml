@@ -1,0 +1,92 @@
+# Expected medication reconciliation findings per patient. Check with: python -m evals --meds
+#
+# Uses the anchor and seed in gold.toml. For each patient, "findings" lists the discrepancies that must be found:
+#   drug  a word of the drug's name, matched like gold.toml mentions
+#   kind  dose_differs, stopped_in_note, not_ordered (a drug the notes mention and no order lists) or plan
+# Any other discrepancy counts as a false alarm. not_mentioned (an active order no recent note names) is shown for
+# information and not checked. Every cohort patient is listed.
+
+[[patient]]
+id = "p-2041"
+findings = []
+
+[[patient]]
+id = "p-1001"
+findings = []
+
+[[patient]]
+id = "p-1002"
+findings = []
+
+[[patient]]
+id = "p-1003"
+# Seeded: the last note says ramipril 5 mg; the active order is 10 mg.
+findings = [{ drug = "ramipril", kind = "dose_differs" }]
+
+[[patient]]
+id = "p-1004"
+findings = []
+
+[[patient]]
+id = "p-1005"
+findings = []
+
+[[patient]]
+id = "p-1006"
+findings = []
+
+[[patient]]
+id = "p-1007"
+# Seeded for open loops: furosemide written at 60 mg where the note plans 80 mg.
+findings = [{ drug = "furosemide", kind = "plan" }]
+
+[[patient]]
+id = "p-1008"
+# Seeded: the patient stopped rosuvastatin; the order is still active.
+findings = [{ drug = "rosuvastatin", kind = "stopped_in_note" }]
+
+[[patient]]
+id = "p-1009"
+findings = []
+
+[[patient]]
+id = "p-1010"
+findings = []
+
+[[patient]]
+id = "p-1011"
+findings = []
+
+[[patient]]
+id = "p-1012"
+findings = []
+
+[[patient]]
+id = "p-1013"
+findings = []
+
+[[patient]]
+id = "p-1014"
+findings = []
+
+[[patient]]
+id = "p-1015"
+findings = []
+
+[[patient]]
+id = "p-1016"
+# The plan to stop iron after 3 months is not recorded.
+findings = [{ drug = "ferrous", kind = "plan" }]
+
+[[patient]]
+id = "p-1017"
+# Seeded: over-the-counter ibuprofen, which no order lists.
+findings = [{ drug = "ibuprofen", kind = "not_ordered" }]
+
+[[patient]]
+id = "p-1018"
+findings = [{ drug = "ferrous", kind = "plan" }]
+
+[[patient]]
+id = "p-1019"
+findings = []

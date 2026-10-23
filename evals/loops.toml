@@ -3,10 +3,14 @@
 # Uses the anchor and seed in gold.toml. For each patient:
 #   items  plan items or orders that must be found with this status, or with one of a list of statuses. "match" is a
 #          phrase from the quoted plan line (or the order name), matched like gold.toml mentions.
-# Every open item (missing, dose_mismatch, overdue, not_ordered, no_trace) that no expectation matches counts as a false
-# alarm, so a patient listed with no open expectations must have no open items at all. Every cohort patient is listed.
+#   marks  optional review or communication marks to add to the record first, as a clinician would through the panel:
+#          { kind = "review" | "communication", about = [refs], by = practitioner id, medium = "phone" | ... }
+# Every open item (missing, dose_mismatch, overdue, to_review, not_ordered, no_trace, to_inform) that no expectation
+# matches counts as a false alarm, so a patient listed with no open expectations must have no open items at all.
+# Every cohort patient is listed.
 #
-# Statuses: missing, dose_mismatch, overdue, not_ordered, no_trace, pending, conditional, done (see agent/loops.py)
+# Statuses: missing, dose_mismatch, overdue, to_review, not_ordered, no_trace, to_inform, pending, conditional, done
+# (see agent/loops.py). The cohort has no review marks, so a result no later note quotes is to_review.
 
 [[patient]]
 id = "p-2041"
@@ -23,9 +27,11 @@ items = [
 
 [[patient]]
 id = "p-1001"
+# Both results reviewed, the patient not yet told.
+marks = [{ kind = "review", about = ["DiagnosticReport/dr-p-1001-022", "DiagnosticReport/dr-p-1001-023"], by = "pr-aydin" }]
 items = [
   { match = "follow-up", status = "pending" },
-  { match = "hba1c", status = "done" },
+  { match = "hba1c", status = "to_inform" },
 ]
 
 [[patient]]
@@ -37,15 +43,24 @@ items = [
 
 [[patient]]
 id = "p-1003"
-items = [{ match = "follow-up", status = "pending" }]
+# Both results reviewed and the patient told by phone.
+marks = [
+  { kind = "review", about = ["DiagnosticReport/dr-p-1003-020", "DiagnosticReport/dr-p-1003-021"], by = "pr-aydin" },
+  { kind = "communication", about = ["DiagnosticReport/dr-p-1003-020", "DiagnosticReport/dr-p-1003-021"], by = "pr-aydin", medium = "phone" },
+]
+items = [
+  { match = "follow-up", status = "pending" },
+  { match = "hba1c", status = "done" },
+]
 
 [[patient]]
 id = "p-1004"
 items = [
   { match = "heart failure nurse", status = "no_trace" },
-  { match = "basic metabolic panel in 1 week", status = "done" },
+  { match = "basic metabolic panel in 1 week", status = "to_review" },
   { match = "furosemide", status = "done" },
-  { match = "nt-probnp", status = "done" },
+  { match = "nt-probnp", status = "to_review" },
+  { match = "19 oct 2026", status = "to_review" },
 ]
 
 [[patient]]
@@ -62,6 +77,9 @@ id = "p-1007"
 items = [
   { match = "heart failure nurse", status = "no_trace" },
   { match = "furosemide", status = "dose_mismatch" },
+  { match = "basic metabolic panel in 1 week", status = "to_review" },
+  { match = "nt-probnp", status = "to_review" },
+  { match = "20 oct 2026", status = "to_review" },
 ]
 
 [[patient]]
@@ -81,7 +99,10 @@ items = []
 
 [[patient]]
 id = "p-1011"
-items = [{ match = "follow-up", status = "pending" }]
+items = [
+  { match = "follow-up", status = "pending" },
+  { match = "basic metabolic panel", status = "to_review" },
+]
 
 [[patient]]
 id = "p-1012"
@@ -103,7 +124,7 @@ items = []
 id = "p-1016"
 items = [
   { match = "stop", status = "missing" },
-  { match = "cbc and ferritin", status = "done" },
+  { match = "cbc and ferritin", status = "to_review" },
 ]
 
 [[patient]]

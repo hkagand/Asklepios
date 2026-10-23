@@ -1,6 +1,6 @@
 import { loopSummary, type LoopCounts } from '../agent.ts'
-import { LOOP_STATUS } from '../components/OpenLoops.tsx'
-import { Badge, ErrorPanel, Loading, type Tone } from '../components/ui.tsx'
+import { LoopBadges } from '../components/OpenLoops.tsx'
+import { Badge, ErrorPanel, Loading } from '../components/ui.tsx'
 import { medicalRecordNumber, patientName } from '../fhir.ts'
 import { ageOn, formatTime, formatWeekday, isoDay, relativeDay, todayIso } from '../format.ts'
 import { loadWorklist, participant, type WorklistEntry } from '../model.ts'
@@ -109,22 +109,4 @@ function Row({ entry, today, loops }: { entry: WorklistEntry; today: string; loo
       </a>
     </li>
   )
-}
-
-function LoopBadges({ statuses }: { statuses: NonNullable<LoopCounts['statuses']> }) {
-  const late = (statuses.missing ?? 0) + (statuses.overdue ?? 0)
-  const badges: [number, Tone, string, string][] = [
-    [late, 'rose', `${late} late`, 'Overdue, or due and never ordered'],
-    [statuses.dose_mismatch ?? 0, 'rose', `${statuses.dose_mismatch} other dose`, LOOP_STATUS.dose_mismatch.hint],
-    [statuses.not_ordered ?? 0, 'amber', `${statuses.not_ordered} to order`, LOOP_STATUS.not_ordered.hint],
-    [statuses.no_trace ?? 0, 'violet', `${statuses.no_trace} unconfirmed`, LOOP_STATUS.no_trace.hint],
-    [statuses.pending ?? 0, 'slate', `${statuses.pending} pending`, LOOP_STATUS.pending.hint],
-  ]
-  const shown = badges.filter(([count]) => count > 0)
-  if (shown.length === 0) return <span className="text-xs text-slate-400">None</span>
-  return shown.map(([, tone, label, hint]) => (
-    <Badge key={label} tone={tone} title={hint}>
-      {label}
-    </Badge>
-  ))
 }

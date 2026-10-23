@@ -1,9 +1,11 @@
 import { useEffect } from 'react'
+import { ClinicianPicker, ClinicianProvider } from './components/clinician.tsx'
 import { SourceProvider } from './components/source.tsx'
 import { Badge } from './components/ui.tsx'
 import { formatWeekday } from './format.ts'
 import { useRoute } from './route.ts'
 import { PatientView } from './views/PatientView.tsx'
+import { MyDay } from './views/MyDay.tsx'
 import { Worklist } from './views/Worklist.tsx'
 
 export default function App() {
@@ -13,18 +15,31 @@ export default function App() {
     window.scrollTo(0, 0)
   }, [patientId])
   return (
-    <SourceProvider>
-      <TopBar />
-      {route.page === 'patient' ? (
-        <PatientView key={route.id} id={route.id} tab={route.tab} item={route.item} />
-      ) : (
-        <Worklist />
-      )}
-    </SourceProvider>
+    <ClinicianProvider>
+      <SourceProvider>
+        <TopBar page={route.page} />
+        {route.page === 'patient' ? (
+          <PatientView key={route.id} id={route.id} tab={route.tab} item={route.item} />
+        ) : route.page === 'day' ? (
+          <MyDay day={route.day} />
+        ) : (
+          <Worklist />
+        )}
+      </SourceProvider>
+    </ClinicianProvider>
   )
 }
 
-function TopBar() {
+function TopBar({ page }: { page: string }) {
+  const link = (href: string, label: string, active: boolean) => (
+    <a
+      href={href}
+      aria-current={active ? 'page' : undefined}
+      className={`rounded-md px-2 py-1 text-sm font-medium ${active ? 'bg-teal-50 text-teal-800' : 'text-slate-600 hover:bg-slate-100'}`}
+    >
+      {label}
+    </a>
+  )
   return (
     <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/95 backdrop-blur">
       <div className="mx-auto flex h-14 max-w-7xl items-center justify-between gap-4 px-6">
@@ -39,7 +54,14 @@ function TopBar() {
             Synthetic data
           </Badge>
         </a>
-        <p className="hidden text-sm text-slate-500 sm:block">{formatWeekday(Date.now())} · Demo General Hospital</p>
+        <nav className="mr-auto flex items-center gap-1" aria-label="Pages">
+          {link('#/day', 'My day', page === 'day')}
+          {link('#/', 'All appointments', page === 'worklist')}
+        </nav>
+        <div className="flex items-center gap-4">
+          <p className="hidden text-sm text-slate-500 xl:block">{formatWeekday(Date.now())} · Demo General Hospital</p>
+          <ClinicianPicker />
+        </div>
       </div>
     </header>
   )

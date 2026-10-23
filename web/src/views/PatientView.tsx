@@ -8,6 +8,7 @@ import { loadChart, nextAppointment, openOrders, participant, timeline, type Cha
 import { patientHref, type Tab } from '../route.ts'
 import { useAsync } from '../useAsync.ts'
 import { Labs } from './Labs.tsx'
+import { Medications } from './Medications.tsx'
 import { Overview } from './Overview.tsx'
 import { Reports } from './Reports.tsx'
 import { Visits } from './Visits.tsx'
@@ -32,6 +33,7 @@ export function PatientView({ id, tab, item }: { id: string; tab: Tab; item?: st
               {tab === 'labs' && <Labs chart={state.data} selected={item} />}
               {tab === 'visits' && <Visits chart={state.data} selected={item} />}
               {tab === 'reports' && <Reports chart={state.data} selected={item} />}
+              {tab === 'medications' && <Medications chart={state.data} />}
             </div>
           </>
         )}
@@ -106,6 +108,7 @@ function TabBar({ chart, tab, copilot, onCopilot }: { chart: Chart; tab: Tab; co
     ['labs', 'Labs & vitals', chart.labs.length],
     ['visits', 'Visits & notes', timeline(chart).length],
     ['reports', 'Reports', chart.reports.length],
+    ['medications', 'Medications', chart.medications.filter((medication) => medication.status === 'active').length],
   ]
   return (
     <nav className="mt-4 flex items-end gap-1 border-b border-slate-200" aria-label="Chart sections">

@@ -14,7 +14,10 @@ from .audit import AuditLog
 from .citations import Evidence, verify
 from .fhir import FhirClient
 from .llm import LlmClient, LlmError
-from .loops import index_section, open_loops
+from .loops import index_section as loops_section
+from .loops import open_loops
+from .meds import MedicationReader, reconcile
+from .meds import index_section as medication_section
 from .plans import PlanExtractor
 from .record import Record, today_text
 
@@ -34,6 +37,9 @@ for drug changes and their reasons, order_history for what was ordered and wheth
 find where something is mentioned.
 - OPEN LOOPS lists what each clinician's latest note planned and whether the record shows it was done. Report those \
 statuses as given. "No record to confirm it" means the record cannot show it either way, not that it was missed.
+- MEDICATION RECONCILIATION lists where the notes and the medication orders disagree. For any question about a \
+medicine or its dose, give the order and also every reconciliation line about that medicine. Orders show what was \
+prescribed, not what the patient takes: what the patient takes is known only from what a note says, as of its date.
 - If the record does not answer the question, say so plainly, e.g. "No echocardiogram is on file."
 - For an open order write "no result on file". Do not say that the test was or was not drawn, performed or \
 scheduled unless the record says so.
@@ -50,6 +56,8 @@ Style
 - Lead with the direct answer, then short "-" bullets. No tables. Write dates like "15 Oct 2026".
 - Do not recommend treatments, doses, tests or diagnoses, and do not predict what will happen. You may point out what \
 is abnormal, changed, pending, overdue or documented as planned.
+- If asked whether to do something (start, restart, stop, increase, order), do not answer yes or no: say that the \
+decision is the physician's, then report what the record documents that bears on it.
 - For a pre-visit briefing, read the most recent visit note first, then give at most 10 bullets under these bold \
 labels: Reason for visit, Background, Since last visit, Pending or overdue.
 - Reply in the language of the physician's question, even though the record may be in another language. Keep drug \
@@ -106,9 +114,16 @@ class Session:
         return self.record.id
 
 
-def start_session(session_id: str, record: Record, loops: str | None = None) -> Session:
-    """`loops` is the OPEN LOOPS section of the index (loops.index_section), left out when not given."""
-    index = record.index() + (f"\n\n{loops}" if loops else "")
+async def sections(record: Record, plans: PlanExtractor, medicines: MedicationReader) -> str:
+    """The index sections computed from the notes: open loops, then medication reconciliation."""
+    loops, unread = await open_loops(record, plans)
+    picture = await reconcile(record, medicines, loops)
+    return f"{loops_section(loops, unread)}\n\n{medication_section(picture)}"
+
+
+def start_session(session_id: str, record: Record, extra: str | None = None) -> Session:
+    """`extra` is appended to the chart index: the OPEN LOOPS and MEDICATION RECONCILIATION sections (sections())."""
+    index = record.index() + (f"\n\n{extra}" if extra else "")
     evidence = Evidence()
     for line in index.splitlines():
         evidence.add(line)
@@ -119,9 +134,18 @@ def start_session(session_id: str, record: Record, loops: str | None = None) -> 
 class Sessions:
     """Conversations in memory. A session is tied to one patient and reads the chart once, when it starts."""
 
-    def __init__(self, fhir: FhirClient, plans: PlanExtractor, *, idle_seconds: float = 2 * 3600, limit: int = 200) -> None:
+    def __init__(
+        self,
+        fhir: FhirClient,
+        plans: PlanExtractor,
+        medicines: MedicationReader,
+        *,
+        idle_seconds: float = 2 * 3600,
+        limit: int = 200,
+    ) -> None:
         self._fhir = fhir
         self._plans = plans
+        self._medicines = medicines
         self._idle_seconds = idle_seconds
         self._limit = limit
         self._items: dict[str, Session] = {}
@@ -131,7 +155,7 @@ class Sessions:
         if session is None or session.patient_id != patient_id:
             patient, found = await self._fhir.patient_chart(patient_id)
             record = Record(patient, found)
-            session = self._items[session_id] = start_session(session_id, record, index_section(*await open_loops(record, self._plans)))
+            session = self._items[session_id] = start_session(session_id, record, await sections(record, self._plans, self._medicines))
             self._prune()
         session.used = time.monotonic()
         return session
@@ -146,13 +170,13 @@ class Sessions:
 
 
 async def run_turn(
-    session: Session, question: str, *, llm: LlmClient, audit: AuditLog, max_steps: int
+    session: Session, question: str, *, llm: LlmClient, audit: AuditLog, max_steps: int, user: str | None = None
 ) -> AsyncIterator[tuple[str, dict]]:
     """Yields ("step", ...) for each tool call, then ("answer", ...). Raises LlmError if no answer comes back."""
     started = time.monotonic()
 
     def log(event: str, **fields: object) -> None:
-        audit.write(session=session.id, patient=session.patient_id, event=event, **fields)
+        audit.write(session=session.id, patient=session.patient_id, event=event, user=user, **fields)
 
     log("question", text=question)
     # A turn that does not finish is taken back out, so the next question starts from a clean history.

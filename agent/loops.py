@@ -7,11 +7,17 @@ Statuses, worst first
   missing        the due date has passed and nothing was ordered, booked or resulted
   dose_mismatch  a medication was ordered as planned, but at a different dose from the one in the plan
   overdue        ordered or booked, the due date has passed and there is no result
+  to_review      the result is on file but no clinician has reviewed it
   not_ordered    nothing ordered or booked yet, and the due date has not passed or none was given
   no_trace       a kind the record cannot show, such as a phone call or a meeting, and nothing was found
-  pending        ordered or booked and not yet due
+  to_inform      reviewed, but nothing records that the patient was told
+  pending        ordered or booked and not yet due (or the result is still preliminary)
   conditional    only to be done if something happens
-  done           the result, visit or change is on file
+  done           the visit or change is on file; for a test or scan, the result was reviewed and the patient told
+
+A test or scan is tracked through five stages: ordered (the order), performed (sample taken or scan done), resulted
+(final result issued), reviewed (a clinician's review mark, marks.py) and communicated (a mark that the patient was
+told). A later visit note that quotes the result by date counts for both of the last two, marked as inferred.
 """
 
 from __future__ import annotations
@@ -19,16 +25,21 @@ from __future__ import annotations
 import asyncio
 import calendar
 import re
-from dataclasses import dataclass, field
-from datetime import date, timedelta
+from dataclasses import dataclass, field, replace
+from datetime import date, datetime, timedelta
 
 from .llm import LlmError
+from .marks import marks_of
 from .plans import PlanExtractor, PlanItem, plain
 from .record import EARLIEST, Document, Record, code_of, day_text, moment, ref_of, text_of
 from .tools import fold
 
-STATUSES = ("missing", "dose_mismatch", "overdue", "not_ordered", "no_trace", "pending", "conditional", "done")
-OPEN = ("missing", "dose_mismatch", "overdue", "not_ordered", "no_trace")
+STATUSES = (
+    "missing", "dose_mismatch", "overdue", "to_review", "not_ordered", "no_trace", "to_inform", "pending", "conditional",
+    "done",
+)
+OPEN = ("missing", "dose_mismatch", "overdue", "to_review", "not_ordered", "no_trace", "to_inform")
+FINAL = ("final", "amended", "corrected", "appended")
 TRACKED = ("lab", "imaging", "procedure", "referral", "visit", "contact", "meeting", "medication", "conditional")
 
 # Test families: the words that name them in notes and order names, and the LOINC codes of the results that show
@@ -82,11 +93,16 @@ class Part:
     status: str
     detail: str
     evidence: list[str] = field(default_factory=list)
+    # For a test or scan: ordered, performed, resulted, reviewed, communicated (see Matcher.stages), and the report a
+    # review or communication mark should point at.
+    stages: list[dict] = field(default_factory=list)
+    target: str | None = None
 
 
 @dataclass
 class Loop:
-    """A plan item from a note, or (note None) an order still open that no current plan item covers."""
+    """A plan item from a note; an order still open that no current plan item covers (source "order"); or a result
+    since the last visit that no plan item covers (source "result")."""
 
     note: Document | None
     item: PlanItem
@@ -95,6 +111,9 @@ class Loop:
     detail: str
     evidence: list[str]
     parts: list[Part] = field(default_factory=list)
+    source: str = "plan"
+    stages: list[dict] = field(default_factory=list)
+    target: str | None = None
 
     @property
     def line(self) -> str:
@@ -109,7 +128,9 @@ class Loop:
 
     def as_json(self) -> dict:
         return {
-            "source": "plan" if self.note else "order",
+            "source": self.source,
+            "stages": self.stages,
+            "target": self.target,
             "note": self.note.ref if self.note else None,
             "noteDate": self.note.when.date().isoformat() if self.note else None,
             "author": self.note.author if self.note else None,
@@ -232,6 +253,121 @@ class Matcher:
     def __init__(self, record: Record) -> None:
         self.record = record
         self.today = record.today
+        self.marks = marks_of(record)
+        # Observation -> the report it belongs to, so a review of either counts for both.
+        self.report_for: dict[str, str] = {}
+        for resource in record.resources.values():
+            if resource["resourceType"] == "DiagnosticReport":
+                for result in resource.get("result", []):
+                    self.report_for[result.get("reference", "")] = ref_of(resource)
+
+    # ------------------------------------------------------------------ stages
+
+    def noted(self, performed: datetime | None, issued: datetime | None) -> Document | None:
+        """The first note written after the result that quotes its date ("Labs 15 Sep 2026: ..."), if any."""
+        if performed is None:
+            return None
+        day = day_text(performed.date())
+        notes = sorted((document for document in self.record.documents if document.kind == "note"), key=lambda document: document.when)
+        return next(
+            (note for note in notes if note.when > (issued or performed) and note.when.date() <= self.today and day in note.text),
+            None,
+        )
+
+    def stages(self, report_ref: str, order_ref: str | None = None) -> tuple[str, list[dict], str]:
+        """For a result on file: its status, its five stages and a one-line summary of where it stands."""
+        report = self.record.resources[report_ref]
+        performed = moment(report.get("effectiveDateTime"))
+        issued = moment(report.get("issued")) or performed
+        final = report.get("status", "final") in FINAL
+        if order_ref is None:
+            based = [item.get("reference") for item in report.get("basedOn", [])]
+            order_ref = next((ref for ref in based if ref in self.record.resources), None)
+        order = self.record.resources.get(order_ref) if order_ref else None
+        related = {report_ref, *(item.get("reference") for item in report.get("result", []))} | ({order_ref} if order_ref else set())
+        review = next((mark for mark in self.marks if mark.kind == "review" and related & set(mark.about)), None)
+        told = next((mark for mark in self.marks if mark.kind == "communication" and related & set(mark.about)), None)
+        noted = self.noted(performed, issued)
+        discussed = noted if noted and noted.encounter else None
+
+        def stage(name: str, done: bool, at: datetime | None, refs: list[str], by: str | None = None, *, inferred: bool = False, note: str | None = None) -> dict:
+            return {"stage": name, "done": done, "at": at.date().isoformat() if at else None, "by": by, "refs": refs, "inferred": inferred, "note": note}
+
+        ordered_at = moment(order.get("authoredOn")) if order else None
+        steps = [
+            stage("ordered", order is not None, ordered_at, [order_ref] if order else [], note=None if order else "no order on file"),
+            stage("performed", performed is not None, performed, [report_ref]),
+            stage("resulted", final, issued, [report_ref], note=None if final else f"result {report.get('status', 'not final')}"),
+        ]
+        if review:
+            steps.append(stage("reviewed", True, review.at, [review.id], review.by_name, note=review.note))
+        elif noted:
+            steps.append(stage("reviewed", True, noted.when, [noted.ref], noted.author, inferred=True, note=f"quoted in {noted.title}"))
+        else:
+            steps.append(stage("reviewed", False, None, []))
+        if told:
+            steps.append(stage("communicated", True, told.at, [told.id], told.by_name, note=told.medium))
+        elif discussed:
+            steps.append(stage("communicated", True, discussed.when, [discussed.ref], discussed.author, inferred=True, note="discussed at the visit"))
+        else:
+            steps.append(stage("communicated", False, None, []))
+
+        def said(step: dict, verb: str) -> str:
+            when = day_text(date.fromisoformat(step["at"])) if step["at"] else ""
+            if step["inferred"]:
+                return f"{verb} at the visit on {when} (from the note)"
+            how = f" by {step['note']}" if step["stage"] == "communicated" and step["note"] else ""
+            return f"{verb}{how} by {step['by']} {when}"
+
+        resulted = f"resulted {day_text(issued.date())}" if issued else "resulted"
+        review_step, told_step = steps[3], steps[4]
+        if not final:
+            return "pending", steps, f"performed, result {report.get('status', 'not final')}"
+        if not review_step["done"]:
+            return "to_review", steps, f"{resulted}, not yet reviewed"
+        if not told_step["done"]:
+            return "to_inform", steps, f"{resulted}; {said(review_step, 'reviewed')}; nothing records that the patient was told"
+        if review_step["inferred"] and told_step["inferred"]:
+            return "done", steps, f"{resulted}; discussed at the visit on {told_step['at'] and day_text(date.fromisoformat(told_step['at']))}"
+        return "done", steps, f"{resulted}; {said(review_step, 'reviewed')}; {said(told_step, 'patient told')}"
+
+    def order_steps(self, order: dict) -> list[dict]:
+        """The stages of an order with no result yet: only "ordered" is done."""
+        ordered = moment(order.get("authoredOn"))
+        first = {"stage": "ordered", "done": True, "at": ordered.date().isoformat() if ordered else None, "by": order.get("requester", {}).get("display"), "refs": [ref_of(order)], "inferred": False, "note": None}
+        rest = [{"stage": name, "done": False, "at": None, "by": None, "refs": [], "inferred": False, "note": None} for name in ("performed", "resulted", "reviewed", "communicated")]
+        return [first, *rest]
+
+    def result_part(self, name: str, result_ref: str, order_ref: str | None = None) -> Part:
+        report = self.report_for.get(result_ref, result_ref)
+        status, steps, summary = self.stages(report, order_ref)
+        return Part(name, status, summary, [result_ref], steps, report)
+
+    def order_part(self, name: str, order: dict, due: date | None) -> Part:
+        """An order matched to a plan item: through its result if it has one, else where the order stands."""
+        results = self.record.results_for.get(ref_of(order), [])
+        if results:
+            return self.result_part(name, results[0], ref_of(order))
+        status, detail, _ = self.order_state(order, due)
+        steps = self.order_steps(order) if order_kind(order) in ("lab", "imaging", "procedure") else []
+        return Part(name, status, detail, [ref_of(order)], steps)
+
+    def new_results(self, covered: set[str]) -> list[Loop]:
+        """Reports issued since the last visit that no plan item or order covers."""
+        visits = [start.date() for encounter in self.record.encounters if (start := self.record.encounter_start(encounter)) and start.date() <= self.today]
+        since = max(visits, default=None)
+        found = []
+        for ref, resource in self.record.resources.items():
+            if resource["resourceType"] != "DiagnosticReport" or ref in covered:
+                continue
+            issued = moment(resource.get("issued") or resource.get("effectiveDateTime"))
+            if issued is None or issued.date() > self.today or (since and issued.date() <= since):
+                continue
+            part = self.result_part(self.record.label(ref), ref)
+            kind = "lab" if ref not in self.record.document_by_ref else "imaging"
+            item = PlanItem(self.record.label(ref), kind, (), None, None, None, "none", None)
+            found.append(Loop(None, item, part.status, None, part.detail, [ref], [], "result", part.stages, ref))
+        return found
 
     def orders_after(self, written: date) -> list[dict]:
         return [order for order in self.record.orders if (moment(order.get("authoredOn")) or EARLIEST).date() >= written]
@@ -262,14 +398,10 @@ class Matcher:
         """A plan for "bloods" that names no test: the lab orders placed with or after the note, else any result."""
         orders = [order for order in self.orders_after(written) if order_kind(order) == "lab"]
         if orders:
-            parts = []
-            for order in orders:
-                status, detail, _ = self.order_state(order, due)
-                parts.append(Part(text_of(order.get("code")), status, detail, [ref_of(order)]))
-            return parts
+            return [self.order_part(text_of(order.get("code")), order, due) for order in orders]
         results = sorted((point.when, ref) for ref, points in self.record.points.items() for _, point in points if written < point.when.date() <= self.today)
         if results:
-            return [Part("bloods", "done", f"resulted {day_text(results[0][0].date())}", [results[0][1]])]
+            return [self.result_part("bloods", results[0][1])]
         status, detail = self.not_found("lab order or result", due)
         return [Part("bloods", status, detail)]
 
@@ -285,12 +417,10 @@ class Matcher:
             if series.code in codes and written < point.when.date() <= self.today
         )
         if results:
-            when, ref = results[0]
-            return Part(name, "done", f"resulted {day_text(when.date())}", [ref])
+            return self.result_part(name, results[0][1])
         orders = [order for order in self.orders_after(written) if set(families) & covered_by(text_of(order.get("code")))]
         if orders:
-            status, detail, _ = self.order_state(orders[0], due)
-            return Part(name, status, detail, [ref_of(orders[0])])
+            return self.order_part(name, orders[0], due)
         status, detail = self.not_found("order or result", due)
         return Part(name, status, detail)
 
@@ -309,12 +439,10 @@ class Matcher:
             if document.kind == "report" and written < document.when.date() <= self.today and same(document.title)
         ]
         if reports:
-            report = min(reports, key=lambda document: document.when)
-            return Part(name, "done", f"reported {day_text(report.when.date())}", [report.ref])
+            return self.result_part(name, min(reports, key=lambda document: document.when).ref)
         orders = [order for order in self.orders_after(written) if same(text_of(order.get("code")))]
         if orders:
-            status, detail, _ = self.order_state(orders[0], due)
-            return Part(name, status, detail, [ref_of(orders[0])])
+            return self.order_part(name, orders[0], due)
         status, detail = self.not_found("order or report", due)
         return Part(name, status, detail)
 
@@ -428,7 +556,9 @@ class Matcher:
             detail += ", no due date"
         requester = order.get("requester", {}).get("display")
         item = PlanItem(text_of(order.get("code")), order_kind(order), (), None, None, None, "none", None)
-        return Loop(None, item, status, due, detail + (f" by {requester}" if requester else ""), [ref_of(order)])
+        steps = self.order_steps(order) if order_kind(order) in ("lab", "imaging", "procedure") else []
+        detail += f" by {requester}" if requester else ""
+        return Loop(None, item, status, due, detail, [ref_of(order)], [], "order", steps)
 
     # ------------------------------------------------------------------- items
 
@@ -456,7 +586,9 @@ class Matcher:
         status = worst([part.status for part in parts])
         detail = "; ".join(f"{part.name}: {part.detail}" if len(parts) > 1 else part.detail for part in parts)
         evidence = list(dict.fromkeys(ref for part in parts for ref in part.evidence))
-        return Loop(note, item, status, due, detail, evidence, parts if len(parts) > 1 else [])
+        if len(parts) > 1:
+            return Loop(note, item, status, due, detail, evidence, parts)
+        return Loop(note, item, status, due, detail, evidence, [], "plan", parts[0].stages, parts[0].target)
 
 
 DOSE = re.compile(
@@ -497,7 +629,7 @@ def merge(parts: list[Part]) -> list[Part]:
         if same:
             same.name += f", {part.name}"
         else:
-            merged.append(Part(part.name, part.status, part.detail, list(part.evidence)))
+            merged.append(replace(part, evidence=list(part.evidence)))
     return merged
 
 
@@ -517,6 +649,9 @@ async def open_loops(record: Record, extractor: PlanExtractor) -> tuple[list[Loo
         loops += [loop for item in items if (loop := matcher.loop(note, item))]
     covered = {ref for loop in loops for ref in loop.evidence}
     loops += [matcher.open_order(order) for order in record.open_orders() if ref_of(order) not in covered]
+    covered |= {matcher.report_for.get(ref, ref) for ref in covered}
+    covered |= {loop.target for loop in loops if loop.target} | {part.target for loop in loops for part in loop.parts if part.target}
+    loops += matcher.new_results(covered)
     loops.sort(key=lambda loop: (STATUSES.index(loop.status), loop.due or date.max))
     return loops, unread
 
@@ -525,8 +660,10 @@ STATUS_TEXT = {
     "missing": "NOT DONE, due date passed",
     "dose_mismatch": "ORDERED AT A DIFFERENT DOSE from the plan",
     "overdue": "OVERDUE",
+    "to_review": "RESULTED, NOT YET REVIEWED",
     "not_ordered": "Planned, nothing ordered yet",
     "no_trace": "Planned, no record to confirm it",
+    "to_inform": "Reviewed, nothing records that the patient was told",
     "pending": "Ordered or booked",
     "conditional": "Only if needed",
     "done": "Done",
@@ -535,9 +672,11 @@ STATUS_TEXT = {
 
 def loop_line(loop: Loop) -> str:
     if loop.note:
-        about = f' ("{loop.item.quote}")' if loop.item.quote != loop.line else ""
+        about = f' ("{loop.item.quote}")' if loop.item.quote.rstrip(" .;,") != loop.line.rstrip(" .;,") else ""
         source = f'"{loop.line}"{about} ({loop.item.kind}), planned {day_text(loop.note.when.date())}'
         source += f" by {loop.note.author}" if loop.note.author else ""
+    elif loop.source == "result":
+        source = f"{loop.item.quote} (new result since the last visit)"
     else:
         source = f"{loop.item.quote} ({loop.item.kind} order not in a current plan)"
     refs = ", ".join([*([loop.note.ref] if loop.note else []), *loop.evidence])
@@ -546,7 +685,10 @@ def loop_line(loop: Loop) -> str:
 
 def index_section(loops: list[Loop], unread: list[str]) -> str:
     """The OPEN LOOPS section of the chart index: every item, worst first, so "was it done?" has dated sources too."""
-    title = "OPEN LOOPS: plan items from each clinician's latest note, checked against the record"
+    title = (
+        "OPEN LOOPS: plan items from each clinician's latest note, open orders and new results, checked against the "
+        "record (tests are tracked from order to result, review and telling the patient)"
+    )
     lines = [loop_line(loop) for loop in loops]
     lines += [f"The plan in {ref} could not be read" for ref in unread]
     return title + "\n" + "\n".join(f"- {line}" for line in lines or ["no plan items found"])
