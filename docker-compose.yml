@@ -1,0 +1,6 @@
+services:
+  fhir:
+    image: hapiproject/hapi:v8.12.0-2
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
