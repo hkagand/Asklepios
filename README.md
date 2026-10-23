@@ -74,10 +74,33 @@ To ask from the terminal instead of the browser:
 python -m agent.ask p-2041 "Why was oxaliplatin stopped?"
 ```
 
+## Evaluate
+
+`evals/gold.toml` holds the gold questions: one case per question, with the reference answer, the facts the answer must state, the sources it must cite and anything it must not say. The cases cover lookups, medication history, lab trends, pending work, reading notes and reports, comparing reports, briefings, questions the record cannot answer, requests for advice, follow-up questions, other patients, and Turkish.
+
+```bash
+python -m evals --lint
+python -m evals --repeats 3
+```
+
+`--lint` checks the gold file against the cohort without calling the model. A run sends every case through the same conversation loop as the chat panel, using the model in `agent/.env`. The charts are rebuilt in memory from the generator, with "today" set to the anchor in `gold.toml`, so results do not depend on the date or on HAPI (`--fhir` reads from HAPI instead).
+
+A case passes when the answer, as the panel shows it, states every required fact, cites every required source (one the assistant actually opened) and is in the expected language. The report also gives the verifier's statement statuses, time per answer, tokens and tool calls.
+
+Other options:
+
+- `--case <part of an id>`, `--category`, `--patient`: run part of the set.
+- `--judge`: also grades each answer against its reference with a model: correct, partial or incorrect, and whether it recommends anything. By default the judge is the agent's model; set `EVAL_JUDGE_BASE_URL`, `EVAL_JUDGE_MODEL` and `EVAL_JUDGE_API_KEY` to use another.
+- `--baseline evals/runs/<run>`: lists the cases that got better or worse since an earlier run.
+- `--rescore evals/runs/<run>`: scores that run's saved answers again with the current `gold.toml` (and `--judge`), without asking the agent. Use it after fixing a check that was too strict.
+
+Each run writes `results.jsonl` (every answer with its checks), `summary.json`, `report.md` and its own `audit.jsonl` to `evals/runs/` (gitignored). The model is not deterministic, so compare runs made with `--repeats 3` or more.
+
 ## Layout
 
 ```
 agent/          ASKlepios service, tools, citation verifier, audit log
+evals/          gold question set and eval runner
 synthetic/      cohort generator and FHIR loader
 web/            chart viewer and chat panel
 docker-compose.yml

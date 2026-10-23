@@ -4,3 +4,4 @@ __pycache__/
 synthetic/output/
 .env
 agent/logs/
+evals/runs/

@@ -32,7 +32,9 @@ class LlmClient:
 
     async def chat(self, messages: list[dict], *, tools: list[dict], tool_choice: str) -> tuple[dict, dict]:
         """Returns the assistant message and the token usage."""
-        body = {"model": self.model, "messages": messages, "tools": tools, "tool_choice": tool_choice, **self._options}
+        body = {"model": self.model, "messages": messages, **self._options}
+        if tools:
+            body |= {"tools": tools, "tool_choice": tool_choice}
         for attempt in (1, 2):
             try:
                 response = await self._client.post(self._url, json=body)
