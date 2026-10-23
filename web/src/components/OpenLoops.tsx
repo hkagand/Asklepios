@@ -9,6 +9,11 @@ import { Badge, Card, Empty, type Tone } from './ui.tsx'
 
 export const LOOP_STATUS: Record<LoopStatus, { label: string; tone: Tone; hint: string }> = {
   missing: { label: 'Not done', tone: 'rose', hint: 'The due date has passed and nothing was ordered, booked or resulted.' },
+  dose_mismatch: {
+    label: 'Other dose',
+    tone: 'rose',
+    hint: 'A medication order was written as planned, but at a different dose from the one in the plan.',
+  },
   overdue: { label: 'Overdue', tone: 'rose', hint: 'Ordered or booked, but the due date has passed with no result.' },
   not_ordered: { label: 'Not ordered', tone: 'amber', hint: 'Planned, but nothing is ordered or booked yet.' },
   no_trace: { label: 'No record', tone: 'violet', hint: 'A call, meeting or step the record has no entry for. Check it another way.' },
@@ -18,7 +23,7 @@ export const LOOP_STATUS: Record<LoopStatus, { label: string; tone: Tone; hint: 
 }
 
 const SECTIONS: { title: string; statuses: LoopStatus[] }[] = [
-  { title: 'Needs action', statuses: ['missing', 'overdue', 'not_ordered'] },
+  { title: 'Needs action', statuses: ['missing', 'dose_mismatch', 'overdue', 'not_ordered'] },
   { title: 'Cannot be confirmed from the record', statuses: ['no_trace'] },
   { title: 'In progress', statuses: ['pending'] },
 ]

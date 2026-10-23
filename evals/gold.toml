@@ -239,7 +239,7 @@ patient = "p-1004"
 category = "medication"
 question = "Why was his furosemide dose increased?"
 expected = "On 11 Sep 2026 for mild congestion (about 2.5 kg weight gain, ankle oedema, breathlessness, NT-proBNP up to 1974 pg/mL), likely from dietary salt: 80 mg once daily for 7 days, then back to 40 mg."
-mentions = [["congest*", "fluid overload", "edema", "weight gain"], ["80 mg"]]
+mentions = [["congest*", "fluid overload", "edema", "weight gain"]]
 cites = [["MedicationRequest/med-p-1004-010", "DocumentReference/doc-p-1004-006"]]
 
 [[case]]
@@ -301,7 +301,7 @@ category = "medication"
 language = "tr"
 question = "Furosemid dozu neden artırıldı?"
 expected = "11 Eylül 2026'da hafif konjesyon (yaklaşık 2,5 kg kilo artışı, ayak bileği ödemi, nefes darlığı) nedeniyle 7 gün süreyle 80 mg'a çıkarıldı, sonra 40 mg'a dönülecek."
-mentions = [["80 mg"]]
+mentions = [["konjesyon*", "sivi*", "odem*", "kilo*", "congest*"]]
 cites = [["MedicationRequest/med-p-1004-010", "DocumentReference/doc-p-1004-006"]]
 
 # ---------------------------------------------------------------- p-1018 Esra Sarı, iron deficiency
@@ -472,3 +472,22 @@ question = "Was her iron stopped as planned?"
 expected = "The 29 May 2026 plan was to continue iron for 3 more months and then stop (due 29 Aug 2026), but no stop is recorded: ferrous sulfate is still listed as active."
 mentions = [["no stop", "not recorded", "still active", "still listed", "remains active", "is active", "not been stopped", "no record"]]
 cites = [["MedicationRequest/med-p-1016-001"], ["DocumentReference/doc-p-1016-003"]]
+
+[[case]]
+id = "p1007-loops-furosemide-dose"
+patient = "p-1007"
+category = "loops"
+question = "Was his furosemide increase ordered as planned?"
+expected = "Not at the planned dose: the 15 Sep 2026 note plans furosemide 80 mg once daily for 7 days, then back to 40 mg, but the order written that day is 60 mg once daily for 7 days, then 40 mg."
+mentions = [["80 mg"], ["60 mg"]]
+cites = [["MedicationRequest/med-p-1007-010"], ["DocumentReference/doc-p-1007-006"]]
+
+[[case]]
+id = "p1004-loops-furosemide-dose"
+patient = "p-1004"
+category = "loops"
+question = "Was his furosemide increase ordered at the planned dose?"
+expected = "Yes: the 11 Sep 2026 note plans 80 mg once daily for 7 days, then 40 mg, and the order written that day matches."
+mentions = [["80 mg"]]
+cites = [["MedicationRequest/med-p-1004-010"]]
+avoid = ["60 mg", "different dose", "does not match"]

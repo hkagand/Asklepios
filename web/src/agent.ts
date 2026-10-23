@@ -31,7 +31,15 @@ export interface Answer {
 export type AgentEvent = { type: 'step'; step: Step } | { type: 'answer'; answer: Answer } | { type: 'error'; message: string }
 
 /** Open loops (agent/loops.py), worst first. */
-export type LoopStatus = 'missing' | 'overdue' | 'not_ordered' | 'no_trace' | 'pending' | 'conditional' | 'done'
+export type LoopStatus =
+  | 'missing'
+  | 'dose_mismatch'
+  | 'overdue'
+  | 'not_ordered'
+  | 'no_trace'
+  | 'pending'
+  | 'conditional'
+  | 'done'
 
 export interface LoopPart {
   name: string

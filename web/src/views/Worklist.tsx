@@ -115,6 +115,7 @@ function LoopBadges({ statuses }: { statuses: NonNullable<LoopCounts['statuses']
   const late = (statuses.missing ?? 0) + (statuses.overdue ?? 0)
   const badges: [number, Tone, string, string][] = [
     [late, 'rose', `${late} late`, 'Overdue, or due and never ordered'],
+    [statuses.dose_mismatch ?? 0, 'rose', `${statuses.dose_mismatch} other dose`, LOOP_STATUS.dose_mismatch.hint],
     [statuses.not_ordered ?? 0, 'amber', `${statuses.not_ordered} to order`, LOOP_STATUS.not_ordered.hint],
     [statuses.no_trace ?? 0, 'violet', `${statuses.no_trace} unconfirmed`, LOOP_STATUS.no_trace.hint],
     [statuses.pending ?? 0, 'slate', `${statuses.pending} pending`, LOOP_STATUS.pending.hint],

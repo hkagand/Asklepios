@@ -1173,9 +1173,12 @@ def heart_failure(s: Story) -> None:
                 "NT-proBNP higher than at the last visit.",
                 "Likely precipitated by dietary salt; no evidence of infection or arrhythmia.",
             ]
+            # A deliberate gap for open-loop tracking: in one of the two stories (p-1007 with seed 2041) the order is
+            # written at a different dose from the one the note plans.
+            first_week = "60 mg" if s.variant == 0 else "80 mg"
             furosemide = c.change_med(
                 furosemide, when=start, text="Furosemide 40 mg tablet",
-                dosage="80 mg orally once daily for 7 days, then 40 mg once daily", prescriber=doc,
+                dosage=f"{first_week} orally once daily for 7 days, then 40 mg once daily", prescriber=doc,
                 reason="Dose temporarily increased; congestion",
             )
             week_check = s.morning_draw(day + timedelta(days=7))

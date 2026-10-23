@@ -4,13 +4,14 @@ The model has only extracted the plan items (plans.py). Everything here is plain
 orders, results, appointments, visits and medication orders, and the status of each item.
 
 Statuses, worst first
-  missing      the due date has passed and nothing was ordered, booked or resulted
-  overdue      ordered or booked, the due date has passed and there is no result
-  not_ordered  nothing ordered or booked yet, and the due date has not passed or none was given
-  no_trace     a kind the record cannot show, such as a phone call or a meeting, and nothing was found
-  pending      ordered or booked and not yet due
-  conditional  only to be done if something happens
-  done         the result, visit or change is on file
+  missing        the due date has passed and nothing was ordered, booked or resulted
+  dose_mismatch  a medication was ordered as planned, but at a different dose from the one in the plan
+  overdue        ordered or booked, the due date has passed and there is no result
+  not_ordered    nothing ordered or booked yet, and the due date has not passed or none was given
+  no_trace       a kind the record cannot show, such as a phone call or a meeting, and nothing was found
+  pending        ordered or booked and not yet due
+  conditional    only to be done if something happens
+  done           the result, visit or change is on file
 """
 
 from __future__ import annotations
@@ -26,8 +27,8 @@ from .plans import PlanExtractor, PlanItem, plain
 from .record import EARLIEST, Document, Record, code_of, day_text, moment, ref_of, text_of
 from .tools import fold
 
-STATUSES = ("missing", "overdue", "not_ordered", "no_trace", "pending", "conditional", "done")
-OPEN = ("missing", "overdue", "not_ordered", "no_trace")
+STATUSES = ("missing", "dose_mismatch", "overdue", "not_ordered", "no_trace", "pending", "conditional", "done")
+OPEN = ("missing", "dose_mismatch", "overdue", "not_ordered", "no_trace")
 TRACKED = ("lab", "imaging", "procedure", "referral", "visit", "contact", "meeting", "medication", "conditional")
 
 # Test families: the words that name them in notes and order names, and the LOINC codes of the results that show
@@ -62,7 +63,12 @@ STUDIES: dict[str, tuple[str, ...]] = {
 }
 NUMBERS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "eight": 8, "ten": 10, "twelve": 12, "a": 1}
 # Words notes use for a drug, besides its name on the order.
-DRUG_WORDS = {"iron": ("ferrous", "iron"), "leucovorin": ("folinate", "leucovorin"), "folinic": ("folinate",)}
+DRUG_WORDS = {
+    "iron": ("ferrous", "iron"),
+    "leucovorin": ("folinate", "leucovorin"),
+    "folinic": ("folinate",),
+    "folfox": ("oxaliplatin", "fluorouracil", "folinate"),
+}
 # A medication change counts as made if the order changes between these offsets from the note and the due date.
 MEDICATION_WINDOW = (timedelta(days=-2), timedelta(days=14))
 # A call or meeting is matched only by a visit or appointment this close to its due date.
@@ -369,7 +375,9 @@ class Matcher:
             # A class rather than a drug ("hold maintenance chemotherapy"): the drugs held or stopped around then.
             changed = self.changed_medications(item.action, written, due)
             if changed:
-                names = ", ".join(text_of(medication.get("medicationCodeableConcept")).split(" ")[0] for medication in changed)
+                names = ", ".join(
+                    re.split(r"\s+(?=[\d(])", text_of(medication.get("medicationCodeableConcept")))[0] for medication in changed
+                )
                 return Part(drug, "done", f"{item.action} recorded for {names}", [ref_of(medication) for medication in changed])
         if not orders:
             return Part(drug, "no_trace", f"no medication order for {drug} on file")
@@ -380,10 +388,21 @@ class Matcher:
                 _, end = self.record.medication_period(medication)
                 return Part(drug, "done", f"{medication['status'].replace('-', ' ')}" + (f" {day_text(end)}" if end else ""), [ref_of(medication)])
         else:
-            for medication in orders:
-                start, _ = self.record.medication_period(medication)
-                if start and low <= start <= high:
+            started = [
+                (start, medication)
+                for medication in orders
+                if (start := self.record.medication_period(medication)[0]) and low <= start <= high
+            ]
+            planned = doses(item.dose or "")
+            # A new order counts if it carries the planned dose; with no dose in the plan, any new order does.
+            for start, medication in started:
+                if not planned or planned[0] in ordered_doses(medication):
                     return Part(drug, "done", f"ordered from {day_text(start)}", [ref_of(medication)])
+            if started:
+                start, medication = started[0]
+                written_as = first_dosage(medication) or text_of(medication.get("medicationCodeableConcept"))
+                detail = f"ordered from {day_text(start)} as {written_as}; the plan says {item.dose}"
+                return Part(drug, "dose_mismatch", detail, [ref_of(medication)])
         late = self.today > high
         verb = {"stop": "stop", "hold": "hold"}.get(item.action or "", "new order")
         detail = f"no {verb} recorded for {drug}" + (f"; was due {day_text(due)}" if due else f" around {day_text(written)}")
@@ -440,6 +459,32 @@ class Matcher:
         return Loop(note, item, status, due, detail, evidence, parts if len(parts) > 1 else [])
 
 
+DOSE = re.compile(
+    r"(\d+(?:[.,]\d+)?(?:\s*/\s*\d+(?:[.,]\d+)?)?)\s*(mg/m²|mg/m2|mg/kg|micrograms?|mcg|µg|ug|mg|g|units?|iu|ml)(?![a-z])",
+    re.IGNORECASE,
+)
+DOSE_UNITS = {"mg/m2": "mg/m²", "microgram": "mcg", "micrograms": "mcg", "µg": "mcg", "ug": "mcg", "unit": "units", "iu": "units"}
+
+
+def doses(text: str) -> list[str]:
+    """Doses in the order written, one way: "80 mg", "49/51 mg", "75 mcg", "65 mg/m²"."""
+    found = []
+    for amount, unit in DOSE.findall(text):
+        numbers = [f"{float(part.replace(',', '.')):g}" for part in re.split(r"\s*/\s*", amount)]
+        unit = unit.lower()
+        found.append(f"{'/'.join(numbers)} {DOSE_UNITS.get(unit, unit)}")
+    return found
+
+
+def first_dosage(medication: dict) -> str:
+    return ((medication.get("dosageInstruction") or [{}])[0].get("text") or "").strip()
+
+
+def ordered_doses(medication: dict) -> list[str]:
+    """The doses an order's instructions give; the tablet strength in its name only when the instructions give none."""
+    return doses(first_dosage(medication)) or doses(text_of(medication.get("medicationCodeableConcept")))
+
+
 def order_kind(order: dict) -> str:
     return ORDER_KINDS.get(code_of((order.get("category") or [{}])[0]) or "", "procedure")
 
@@ -478,6 +523,7 @@ async def open_loops(record: Record, extractor: PlanExtractor) -> tuple[list[Loo
 
 STATUS_TEXT = {
     "missing": "NOT DONE, due date passed",
+    "dose_mismatch": "ORDERED AT A DIFFERENT DOSE from the plan",
     "overdue": "OVERDUE",
     "not_ordered": "Planned, nothing ordered yet",
     "no_trace": "Planned, no record to confirm it",

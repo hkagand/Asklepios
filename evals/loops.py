@@ -28,20 +28,22 @@ def load_expected(path: Path) -> dict[str, list[dict]]:
     return {patient["id"]: patient.get("items", []) for patient in tomllib.loads(path.read_text(encoding="utf-8"))["patient"]}
 
 
+def allowed(item: dict) -> list[str]:
+    """An expected item's status, or the list of statuses that are all acceptable."""
+    return item["status"] if isinstance(item["status"], list) else [item["status"]]
+
+
 def check(expected: list[dict], loops: list[Loop]) -> dict:
     used: set[int] = set()
     results = []
     for item in expected:
         candidates = [index for index, loop in enumerate(loops) if index not in used and says(loop.line, item["match"])]
-        right = [index for index in candidates if loops[index].status == item["status"]]
-        if right:
-            used.add(right[0])
-            results.append({**item, "found": item["status"]})
-        elif candidates:
-            used.add(candidates[0])
-            results.append({**item, "found": loops[candidates[0]].status})
-        else:
-            results.append({**item, "found": None})
+        right = [index for index in candidates if loops[index].status in allowed(item)]
+        chosen = right[0] if right else candidates[0] if candidates else None
+        if chosen is not None:
+            used.add(chosen)
+        found = loops[chosen].status if chosen is not None else None
+        results.append({**item, "found": found, "ok": found in allowed(item)})
     alarms = [loop_line(loop) for index, loop in enumerate(loops) if index not in used and loop.status in OPEN]
     return {"expected": results, "false_alarms": alarms}
 
@@ -75,12 +77,12 @@ async def run_loops(settings: Settings, records: dict[str, Record], expected_pat
 
 def tally(run: dict) -> dict:
     expected = [item for patient in run.values() for item in patient["expected"]]
-    opened = [item for item in expected if item["status"] in OPEN]
+    opened = [item for item in expected if set(allowed(item)) & set(OPEN)]
     return {
         "items": len(expected),
-        "right": sum(item["found"] == item["status"] for item in expected),
+        "right": sum(item["ok"] for item in expected),
         "open": len(opened),
-        "open_right": sum(item["found"] == item["status"] for item in opened),
+        "open_right": sum(item["ok"] for item in opened),
         "false_alarms": sum(len(patient["false_alarms"]) for patient in run.values()),
         "unread": sum(len(patient["unread"]) for patient in run.values()),
     }
@@ -107,8 +109,9 @@ def report(runs: list[dict], model: str, fresh: bool) -> str:
     for run in runs:
         for patient, result in run.items():
             for item in result["expected"]:
-                if item["found"] != item["status"]:
-                    misses[f"{patient}: \"{item['match']}\" expected {item['status']}, found {item['found'] or 'nothing'}"] += 1
+                if not item["ok"]:
+                    expected = " or ".join(allowed(item))
+                    misses[f"{patient}: \"{item['match']}\" expected {expected}, found {item['found'] or 'nothing'}"] += 1
             for alarm in result["false_alarms"]:
                 alarms[f"{patient}: {alarm}"] += 1
     if misses:

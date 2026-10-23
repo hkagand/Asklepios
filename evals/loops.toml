@@ -1,12 +1,12 @@
 # Expected open loops per patient. Check with: python -m evals --loops
 #
 # Uses the anchor and seed in gold.toml. For each patient:
-#   items  plan items or orders that must be found with this status. "match" is a phrase from the quoted plan line
-#          (or the order name), matched like gold.toml mentions.
-# Every open item (missing, overdue, not_ordered, no_trace) that no expectation matches counts as a false alarm, so a
-# patient listed with no open expectations must have no open items at all. Every cohort patient is listed.
+#   items  plan items or orders that must be found with this status, or with one of a list of statuses. "match" is a
+#          phrase from the quoted plan line (or the order name), matched like gold.toml mentions.
+# Every open item (missing, dose_mismatch, overdue, not_ordered, no_trace) that no expectation matches counts as a false
+# alarm, so a patient listed with no open expectations must have no open items at all. Every cohort patient is listed.
 #
-# Statuses: missing, overdue, not_ordered, no_trace, pending, conditional, done (see agent/loops.py)
+# Statuses: missing, dose_mismatch, overdue, not_ordered, no_trace, pending, conditional, done (see agent/loops.py)
 
 [[patient]]
 id = "p-2041"
@@ -16,7 +16,7 @@ items = [
   { match = "tumour board", status = "no_trace" },
   { match = "hold maintenance chemotherapy", status = "done" },
   { match = "clinic review", status = "pending" },
-  { match = "further imaging", status = "conditional" },
+  { match = "further imaging", status = ["conditional", "done"] },
   { match = "ferrous sulfate", status = "done" },
   { match = "gastroenterology", status = "done" },
 ]
@@ -58,9 +58,10 @@ items = [{ match = "tsh", status = "pending" }]
 
 [[patient]]
 id = "p-1007"
+# Seeded gap: the furosemide order is written at 60 mg, the note plans 80 mg.
 items = [
   { match = "heart failure nurse", status = "no_trace" },
-  { match = "furosemide", status = "done" },
+  { match = "furosemide", status = "dose_mismatch" },
 ]
 
 [[patient]]

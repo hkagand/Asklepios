@@ -18,7 +18,7 @@ from .citations import PLAIN
 from .llm import LlmClient, LlmError
 from .record import Document, day_text
 
-PROMPT_VERSION = 3
+PROMPT_VERSION = 4
 KINDS = ("lab", "imaging", "procedure", "referral", "visit", "contact", "meeting", "medication", "conditional", "advice")
 ACTIONS = ("start", "increase", "decrease", "stop", "hold", "continue")
 DUE_TYPES = ("date", "within", "before_next_visit", "with_next_bloods", "none")
@@ -45,6 +45,8 @@ otherwise [].
 "heart failure nurse", "tumour board"; otherwise null.
 - "drug" and "action": for medication, the drug name and one of "start", "increase", "decrease", "stop", "hold", \
 "continue"; otherwise null.
+- "dose": for medication started or changed, the new dose as written, e.g. "80 mg once daily for 7 days, then 40 mg" \
+or "75 micrograms once daily"; otherwise null.
 - "due": when it should happen, as the note says:
   {"type": "date", "value": "YYYY-MM-DD"} for a calendar date;
   {"type": "within", "value": "3 months"} for a period from the note date, e.g. "in 1 week", "in 6-8 weeks";
@@ -69,6 +71,7 @@ class PlanItem:
     action: str | None
     due_type: str
     due_value: str | None
+    dose: str | None = None
 
 
 def plain(text: str) -> str:
@@ -126,6 +129,7 @@ def parse(reply: str, note_text: str) -> list[PlanItem]:
                 action=raw.get("action") if raw.get("action") in ACTIONS else None,
                 due_type=due_type,
                 due_value=_text(due.get("value")) if due_type in ("date", "within") else None,
+                dose=_text(raw.get("dose")) if kind == "medication" else None,
             )
         )
     return items

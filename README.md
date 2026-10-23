@@ -80,15 +80,15 @@ python -m agent.ask p-2041 "Why was oxaliplatin stopped?"
 Follow-up that was planned in a note but never ordered, booked, resulted or recorded.
 
 1. The model reads each clinician's most recent note and lists its plan items: tests, imaging, referrals, follow-up visits, calls, meetings and medication changes, each with a due time. Every item must quote the note word for word. If a line of the note's PLAN section is not covered by any item, the model is asked again.
-2. Plain code does the rest. It works out due dates, matches each item against orders, results, reports, appointments, visits and medication orders, and gives it a status: `missing`, `overdue`, `not_ordered`, `no_trace` (a call or meeting the record cannot show), `pending`, `conditional` or `done`.
+2. Plain code does the rest. It works out due dates, matches each item against orders, results, reports, appointments, visits and medication orders, and gives it a status: `missing`, `dose_mismatch`, `overdue`, `not_ordered`, `no_trace` (a call or meeting the record cannot show), `pending`, `conditional` or `done`. For a medication started or changed, the planned dose ("80 mg once daily for 7 days, then 40 mg") is compared with the dosage of the order written for it. An order at another dose is `dose_mismatch`. The cohort seeds one such case (p-1007, furosemide written at 60 mg).
 3. Open orders that no current plan covers are added, for example a referral from an earlier visit.
 
 In the chart viewer, the **Open loops** card at the top of the overview groups the items:
-- **Needs action:** not done, overdue, or not yet ordered.
+- **Needs action:** not done, ordered at another dose, overdue, or not yet ordered.
 - **Cannot be confirmed from the record:** calls, meetings and similar steps the record has no entry for.
 - **In progress.**
 
-Done and conditional items are collapsed. Each item shows the note line it came from and buttons that open its sources. The worklist shows each patient's counts (late, to order, unconfirmed, pending).
+Done and conditional items are collapsed. Each item shows the note line it came from and buttons that open its sources. The worklist shows each patient's counts (late, other dose, to order, unconfirmed, pending).
 
 When the agent service is not running, both pages fall back to the plain open orders.
 
