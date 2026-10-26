@@ -21,7 +21,7 @@ import { patientHref } from '../route.ts'
 
 export function Overview({ chart }: { chart: Chart }) {
   return (
-    <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_24rem]">
+    <div className="grid items-start gap-4 @4xl:grid-cols-[minmax(0,1fr)_24rem]">
       <div className="space-y-4">
         <OpenLoops chart={chart} fallback={<OpenOrders chart={chart} />} />
         <SinceLastVisit chart={chart} />
@@ -94,7 +94,7 @@ function SinceLastVisit({ chart }: { chart: Chart }) {
           {shown.length > 0 ? (
             <table className="mt-1 w-full text-sm">
               <thead>
-                <tr className="text-left text-[11px] uppercase tracking-wide text-slate-400">
+                <tr className="text-left text-[11px] text-slate-400">
                   <th className="px-4 py-1.5 font-medium">Test</th>
                   <th className="px-3 py-1.5 text-right font-medium">Now</th>
                   <th className="px-3 py-1.5 text-right font-medium">Before</th>

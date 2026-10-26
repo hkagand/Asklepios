@@ -57,41 +57,47 @@ export function MyDay({ day }: { day?: string }) {
 
   return (
     <Page>
-      <div className="flex flex-wrap items-end justify-between gap-4">
+      <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight text-slate-900">
+          <h1 className="text-[32px] font-extrabold leading-[1.1] tracking-[-0.025em] text-slate-900">
             {greeting}, {data.clinician.name}
           </h1>
-          <p className="mt-0.5 text-sm text-slate-500">
-            Demo General Hospital · {formatWeekday(data.day)} ({relativeDay(data.day, data.today)})
-            {data.day !== data.today && !day && ' · your next clinic day'}
+          <p className="mt-1.5 text-[15px] text-slate-600">
+            {formatWeekday(data.day)}, {relativeDay(data.day, data.today)}
+            {data.day !== data.today && !day && ' (your next clinic day)'}. Demo General Hospital.
           </p>
         </div>
-        <div className="flex items-center gap-1">
-          <button type="button" onClick={() => step(-1)} className="rounded-md px-2 py-1 text-sm text-slate-600 hover:bg-slate-100">
+        <div className="flex items-center gap-1 text-[14px] font-semibold">
+          <button type="button" onClick={() => step(-1)} className="rounded-md px-2 py-1 text-slate-600 hover:bg-slate-200/60 hover:text-slate-900">
             ← Day before
           </button>
-          <a href="#/day" className="rounded-md px-2 py-1 text-sm text-teal-700 hover:bg-teal-50">
+          <a href="#/day" className="rounded-md px-2 py-1 text-slate-900 underline decoration-mark decoration-[3px] underline-offset-4 hover:bg-slate-200/60">
             Next clinic day
           </a>
-          <button type="button" onClick={() => step(1)} className="rounded-md px-2 py-1 text-sm text-slate-600 hover:bg-slate-100">
+          <button type="button" onClick={() => step(1)} className="rounded-md px-2 py-1 text-slate-600 hover:bg-slate-200/60 hover:text-slate-900">
             Day after →
           </button>
         </div>
       </div>
 
-      <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-5">
-        <Tile value={totals.visits} label="Visits" />
-        <Tile value={totals.toReview} label="Results to review" tone={totals.toReview ? 'amber' : undefined} />
-        <Tile value={totals.followUps} label="Open follow-ups" tone={totals.followUps ? 'rose' : undefined} />
-        <Tile value={totals.medications} label="Medication discrepancies" tone={totals.medications ? 'rose' : undefined} />
-        <Tile value={`${totals.briefsReady}/${totals.visits}`} label="Briefs ready" />
-      </div>
-      <p className="mt-2 text-xs text-slate-500">Counts are for the patients booked with you on this day.</p>
+      <p className="mt-6 max-w-[62ch] text-[18px] leading-relaxed text-slate-800">
+        {totals.visits === 0 ? (
+          'Nobody is booked with you on this day.'
+        ) : (
+          <>
+            <Count value={totals.visits} one="patient is" many="patients are" /> booked.{' '}
+            <Count value={totals.toReview} one="result is" many="results are" act /> waiting for your review,{' '}
+            <Count value={totals.followUps} one="follow-up is" many="follow-ups are" act /> open and{' '}
+            <Count value={totals.medications} one="medication list disagrees" many="medication lists disagree" act /> with
+            the notes. Briefs are ready for {totals.briefsReady} of {totals.visits}.
+          </>
+        )}
+      </p>
+      <p className="mt-1 text-[12.5px] text-slate-500">These counts cover the patients booked with you on this day.</p>
 
-      <section className="mt-6">
-        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-          <h2 className="text-sm font-semibold text-slate-700">Appointments</h2>
+      <section className="mt-8">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2 border-b border-slate-300 pb-2">
+          <h2 className="text-[17px] font-bold text-slate-900">Clinic list</h2>
           {data.patients.length > 0 && (
             <button
               type="button"
@@ -105,7 +111,7 @@ export function MyDay({ day }: { day?: string }) {
                   setError(problem instanceof Error ? problem.message : String(problem))
                 }
               }}
-              className="rounded-md bg-teal-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-teal-800 disabled:bg-slate-200 disabled:text-slate-500"
+              className="rounded-md bg-slate-900 px-3 py-1.5 text-[14px] font-bold text-white hover:bg-slate-800 disabled:bg-slate-200 disabled:text-slate-500"
             >
               {preparing ? 'Preparing briefs…' : toPrepare === 0 ? 'All briefs ready' : `Prepare ${toPrepare} brief${toPrepare === 1 ? '' : 's'}`}
             </button>
@@ -113,13 +119,15 @@ export function MyDay({ day }: { day?: string }) {
         </div>
         {error && <p className="mb-2 text-sm text-rose-700">{error}</p>}
         {data.patients.length === 0 ? (
-          <p className="rounded-xl border border-slate-200 bg-white px-4 py-6 text-sm text-slate-500">No appointments on {formatDate(data.day)}.</p>
+          <p className="py-6 text-[15px] text-slate-500">
+            No appointments on {formatDate(data.day)}. Step to another day, or go to your next clinic day.
+          </p>
         ) : (
-          <ul className="divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-            {data.patients.map((row) => (
-              <Row key={row.patient} row={row} />
+          <ol className="relative">
+            {data.patients.map((row, index) => (
+              <Row key={row.patient} row={row} last={index === data.patients.length - 1} />
             ))}
-          </ul>
+          </ol>
         )}
       </section>
     </Page>
@@ -127,23 +135,26 @@ export function MyDay({ day }: { day?: string }) {
 }
 
 function Page({ children }: { children: ReactNode }) {
-  return <main className="mx-auto max-w-7xl px-6 pb-16 pt-6">{children}</main>
+  return <main className="mx-auto max-w-7xl px-4 pb-16 pt-8 sm:px-6">{children}</main>
 }
 
-function Tile({ value, label, tone }: { value: number | string; label: string; tone?: Tone }) {
-  const color = tone === 'rose' ? 'text-rose-700' : tone === 'amber' ? 'text-amber-700' : 'text-slate-900'
+/** A number in the day's summary; numbers that need the clinician's action are highlighted when above zero. */
+function Count({ value, one, many, act = false }: { value: number; one: string; many: string; act?: boolean }) {
   return (
-    <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
-      <p className={`text-2xl font-semibold tabular-nums ${color}`}>{value}</p>
-      <p className="text-xs text-slate-500">{label}</p>
-    </div>
+    <span className={`font-bold ${act && value > 0 ? 'mark' : ''}`}>
+      {value} {value === 1 ? one : many}
+    </span>
   )
 }
 
-function Row({ row }: { row: DayPatient }) {
+function Row({ row, last }: { row: DayPatient; last: boolean }) {
   const brief = BRIEFS[row.brief.state]
   return (
-    <li>
+    <li className="relative grid grid-cols-[4.5rem_minmax(0,1fr)] gap-x-4">
+      <span className="pt-3.5 text-right font-mono text-[15px] font-semibold text-slate-900">{formatTime(row.appointment.start)}</span>
+      {/* The time rail: one dot per visit, joined in clinic order. */}
+      <span className="absolute left-[5.1rem] top-[1.35rem] h-2.5 w-2.5 rounded-full border-2 border-slate-900 bg-paper" aria-hidden />
+      {!last && <span className="absolute bottom-0 left-[5.38rem] top-[2.1rem] w-px bg-slate-300" aria-hidden />}
       <a
         href={patientHref(row.patient)}
         onClick={() => {
@@ -154,16 +165,20 @@ function Row({ row }: { row: DayPatient }) {
             // Storage may be refused; the chart still opens.
           }
         }}
-        className="grid grid-cols-[4rem_minmax(0,1fr)] items-center gap-x-4 gap-y-1.5 px-4 py-3 hover:bg-teal-50/50 md:grid-cols-[4rem_minmax(0,1.2fr)_minmax(0,1.5fr)_auto]"
+        className="mb-2 ml-5 grid gap-x-4 gap-y-1.5 rounded-lg border border-slate-200 bg-sheet px-4 py-3 hover:border-slate-900 md:grid-cols-[minmax(0,1fr)_auto]"
       >
-        <span className="text-sm font-semibold tabular-nums text-slate-900">{formatTime(row.appointment.start)}</span>
         <span className="min-w-0">
-          <span className="block truncate font-medium text-slate-900">{row.name}</span>
-          <span className="block text-xs text-slate-500">{row.mrn}</span>
+          <span className="block truncate text-[16px] font-bold text-slate-900">{row.name}</span>
+          <span className="block truncate text-[14px] text-slate-600">
+            {row.appointment.description ?? 'No reason given'}
+            <span className="ml-2 font-mono text-[12.5px] text-slate-400">{row.mrn}</span>
+          </span>
         </span>
-        <span className="col-start-2 min-w-0 truncate text-sm text-slate-700 md:col-start-auto">{row.appointment.description ?? '—'}</span>
-        <span className="col-start-2 flex flex-wrap gap-1.5 md:col-start-auto md:justify-end">
-          <Badge tone={brief.tone} title={`${brief.hint}${row.brief.preparedAt ? ` · ${formatDate(row.brief.preparedAt)} ${formatTime(row.brief.preparedAt)}` : ''}`}>
+        <span className="flex flex-wrap content-start gap-1.5 md:justify-end">
+          <Badge
+            tone={brief.tone}
+            title={`${brief.hint}${row.brief.preparedAt ? `, ${formatDate(row.brief.preparedAt)} ${formatTime(row.brief.preparedAt)}` : ''}`}
+          >
             {brief.label}
           </Badge>
           {row.medications > 0 && (

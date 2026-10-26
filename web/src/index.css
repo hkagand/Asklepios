@@ -1,11 +1,141 @@
 @import 'tailwindcss';
 
+/*
+ * Asklepios design tokens: blue-black ink on cool chart paper, with a highlighter for whatever the
+ * record is cited for. The Tailwind colour families the components use are redefined here, so the
+ * whole app takes the palette at once:
+ *   slate  neutrals from paper to ink
+ *   teal   action ink (buttons, links, current tab, done)
+ *   amber  orange: waiting for a person (to review, not ordered, outdated); kept clear of the highlighter
+ *   rose   red: high, late, discrepancies
+ *   blue   low values, things in progress
+ *   violet cannot be confirmed from the record; synthetic data
+ * Clinical meaning never rides on colour alone: every status also has a word.
+ */
 @theme {
-  --font-mono: 'Cascadia Mono', Consolas, ui-monospace, monospace;
+  --font-sans: 'Atkinson Hyperlegible Next', 'Atkinson Hyperlegible', 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'Atkinson Hyperlegible Mono', 'Cascadia Mono', Consolas, ui-monospace, monospace;
+
+  --color-paper: #f4f6f3;
+  --color-sheet: #ffffff;
+  --color-ink: #1b2533;
+  --color-mark: #ffe76a;
+  --color-mark-soft: #fff4b8;
+
+  --color-slate-50: #f4f6f3;
+  --color-slate-100: #eaeee8;
+  --color-slate-200: #dde2db;
+  --color-slate-300: #c3cac2;
+  --color-slate-400: #8e9891;
+  --color-slate-500: #66706b;
+  --color-slate-600: #4c5755;
+  --color-slate-700: #364147;
+  --color-slate-800: #243039;
+  --color-slate-900: #1b2533;
+  --color-slate-950: #121a26;
+
+  --color-teal-50: #eef2f8;
+  --color-teal-100: #dde5f0;
+  --color-teal-200: #bccadf;
+  --color-teal-300: #93a8c8;
+  --color-teal-400: #6882ab;
+  --color-teal-500: #48638e;
+  --color-teal-600: #334d76;
+  --color-teal-700: #223a5e;
+  --color-teal-800: #1a2d4a;
+  --color-teal-900: #14233a;
+
+  --color-amber-50: #fff3e8;
+  --color-amber-100: #ffe2c6;
+  --color-amber-200: #fbc890;
+  --color-amber-300: #f5a75c;
+  --color-amber-400: #ec8633;
+  --color-amber-500: #d96a14;
+  --color-amber-600: #b8540c;
+  --color-amber-700: #93420c;
+  --color-amber-800: #75350f;
+  --color-amber-900: #5f2c10;
+
+  --color-rose-50: #fdf0ee;
+  --color-rose-100: #fbdcd7;
+  --color-rose-200: #f5b8ae;
+  --color-rose-300: #ec8c7d;
+  --color-rose-400: #df5f4c;
+  --color-rose-500: #c9402c;
+  --color-rose-600: #b23221;
+  --color-rose-700: #93281b;
+  --color-rose-800: #75221a;
+  --color-rose-900: #5e1f19;
+
+  --radius-sm: 3px;
+  --radius-md: 4px;
+  --radius-lg: 6px;
+  --radius-xl: 8px;
+  --radius-2xl: 12px;
+
+  --shadow-sm: 0 1px 0 rgb(27 37 51 / 0.04);
+  --shadow-md: 0 2px 8px rgb(27 37 51 / 0.08);
+  --shadow-xl: 0 12px 32px rgb(27 37 51 / 0.14);
+  --shadow-2xl: 0 20px 48px rgb(27 37 51 / 0.2);
 }
 
 @layer base {
   html {
-    @apply bg-slate-100 text-slate-900 antialiased;
+    @apply bg-paper text-ink antialiased;
+  }
+
+  body {
+    @apply bg-paper;
+  }
+
+  /* Lab values, doses and dates line up in columns. */
+  .tabular-nums,
+  td,
+  th {
+    font-variant-numeric: tabular-nums;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-teal-700);
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background: var(--color-mark);
+    color: var(--color-ink);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+@layer components {
+  /* The highlighter: what the record is cited for. Used on citations and quoted note lines. */
+  .mark {
+    background: linear-gradient(transparent 12%, var(--color-mark) 12%, var(--color-mark) 88%, transparent 88%);
+    box-decoration-break: clone;
+    -webkit-box-decoration-break: clone;
+    padding: 0 0.15em;
+    border-radius: 2px;
+  }
+
+  .mark-soft {
+    background: linear-gradient(transparent 12%, var(--color-mark-soft) 12%, var(--color-mark-soft) 88%, transparent 88%);
+    box-decoration-break: clone;
+    -webkit-box-decoration-break: clone;
+    padding: 0 0.15em;
+    border-radius: 2px;
+  }
+
+  /* Small section and column labels: sentence case, weight instead of capitals. */
+  .label {
+    @apply text-[12px] font-semibold text-slate-500;
   }
 }

@@ -7,7 +7,8 @@ import { percentChange, type Chart, type Point, type Series } from '../model.ts'
 import { select } from '../route.ts'
 
 const DAY_MS = 86_400_000
-const FLAG_COLOURS = { H: '#e11d48', L: '#2563eb' }
+// Matches the theme in index.css: red high, blue low, action ink for the series, chart-paper grid.
+const FLAG_COLOURS = { H: '#b23221', L: '#2563eb' }
 
 export function Labs({ chart, selected }: { chart: Chart; selected?: string }) {
   const id = chart.patient.id ?? ''
@@ -21,7 +22,7 @@ export function Labs({ chart, selected }: { chart: Chart; selected?: string }) {
   }
   const current = all.find((series) => series.key === selected) ?? chart.labs.find((series) => series.points.at(-1)?.flag) ?? all[0]
   return (
-    <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,30rem)]">
+    <div className="grid items-start gap-4 @4xl:grid-cols-[minmax(0,1fr)_minmax(0,30rem)]">
       <ResultsTable series={all} selected={current.key} onSelect={(key) => select(id, 'labs', key)} />
       <div className="lg:sticky lg:top-18">
         <Trend key={current.key} series={current} />
@@ -41,7 +42,7 @@ function ResultsTable({ series, selected, onSelect }: { series: Series[]; select
     <Card flush>
       <table className="w-full text-sm">
         <thead>
-          <tr className="text-left text-[11px] uppercase tracking-wide text-slate-400">
+          <tr className="text-left text-[11px] text-slate-400">
             <th className="px-4 py-2 font-medium">Test</th>
             <th className="px-3 py-2 text-right font-medium">Latest</th>
             <th className="px-3 py-2 text-right font-medium">Previous</th>
@@ -179,12 +180,12 @@ function Trend({ series }: { series: Series }) {
             }}
             className="cursor-pointer"
           >
-            <CartesianGrid stroke="#e2e8f0" strokeDasharray="3 3" vertical={false} />
+            <CartesianGrid stroke="#dde2db" strokeDasharray="2 4" vertical={false} />
             {hasRange && (
               <ReferenceArea
                 y1={series.low ?? yDomain[0]}
                 y2={series.high ?? yDomain[1]}
-                fill="#10b981"
+                fill="#7fae8c"
                 fillOpacity={0.1}
                 strokeOpacity={0}
                 ifOverflow="hidden"
@@ -197,22 +198,22 @@ function Trend({ series }: { series: Series }) {
               domain={xDomain}
               ticks={short ? undefined : monthTicks(xDomain)}
               tickFormatter={(value: number) => (short ? formatDayMonth(value) : formatMonthYear(value))}
-              tick={{ fontSize: 11, fill: '#64748b' }}
-              axisLine={{ stroke: '#cbd5e1' }}
+              tick={{ fontSize: 11, fill: '#66706b' }}
+              axisLine={{ stroke: '#c3cac2' }}
               tickLine={false}
             />
             <YAxis
               domain={yDomain}
               ticks={yTicks}
               tickFormatter={(value: number) => String(value)}
-              tick={{ fontSize: 11, fill: '#64748b' }}
+              tick={{ fontSize: 11, fill: '#66706b' }}
               axisLine={false}
               tickLine={false}
               width={44}
             />
             <Tooltip
               isAnimationActive={false}
-              cursor={{ stroke: '#94a3b8', strokeDasharray: '3 3' }}
+              cursor={{ stroke: '#1b2533', strokeDasharray: '2 3' }}
               content={({ active, payload }) => {
                 const point = active ? (payload?.[0]?.payload as Point | undefined) : undefined
                 if (!point) return null
@@ -231,7 +232,7 @@ function Trend({ series }: { series: Series }) {
             <Line
               type="linear"
               dataKey="value"
-              stroke="#0f766e"
+              stroke="#223a5e"
               strokeWidth={2}
               isAnimationActive={false}
               dot={({ cx, cy, index, payload }) => (
@@ -240,12 +241,12 @@ function Trend({ series }: { series: Series }) {
                   cx={cx}
                   cy={cy}
                   r={3.5}
-                  fill={(payload as Point).flag ? FLAG_COLOURS[(payload as Point).flag!] : '#0f766e'}
+                  fill={(payload as Point).flag ? FLAG_COLOURS[(payload as Point).flag!] : '#223a5e'}
                   stroke="#fff"
                   strokeWidth={1.5}
                 />
               )}
-              activeDot={{ r: 6, stroke: '#0f766e', strokeWidth: 2, fill: '#fff' }}
+              activeDot={{ r: 6, stroke: '#223a5e', strokeWidth: 2, fill: '#fff' }}
             />
           </LineChart>
         </ResponsiveContainer>

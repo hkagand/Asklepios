@@ -78,7 +78,7 @@ export function ClinicianPicker() {
         value={current?.id ?? ''}
         onChange={(event) => choose(event.target.value || null)}
         title="Demo stand-in for sign-in: names you on review marks and in the audit log"
-        className="max-w-[13rem] rounded-md border border-slate-300 bg-white px-2 py-1 text-sm text-slate-800 focus:border-teal-600 focus:outline-none focus:ring-1 focus:ring-teal-600"
+        className="max-w-[13rem] rounded-md border border-slate-300 bg-sheet px-2 py-1 text-[14px] font-semibold text-slate-900 focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900"
       >
         <option value="">Choose clinician…</option>
         {clinicians.map((clinician) => (

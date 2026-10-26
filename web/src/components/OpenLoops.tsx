@@ -97,11 +97,12 @@ export function OpenLoops({ chart, fallback }: { chart: Chart; fallback: ReactNo
     <Card
       title="Open loops"
       subtitle="Plans in each clinician's latest note, open orders and new results, checked against the record"
+      className="@container"
       flush
     >
       {loops === undefined && (
         <div className="flex items-center gap-2 px-4 py-3 text-sm text-slate-500">
-          <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-slate-300 border-t-teal-700" />
+          <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-slate-300 border-t-slate-900" />
           Checking the plans against the record…
         </div>
       )}
@@ -114,7 +115,7 @@ export function OpenLoops({ chart, fallback }: { chart: Chart; fallback: ReactNo
         const items = shown.filter((loop) => statuses.includes(loop.status))
         return items.length === 0 ? null : (
           <section key={title} className="border-b border-slate-100 last:border-b-0">
-            <h3 className="px-4 pt-3 text-[11px] font-semibold uppercase tracking-wider text-slate-500">{title}</h3>
+            <h3 className="px-4 pt-3 text-[13px] font-bold text-slate-700">{title}</h3>
             <ul className="divide-y divide-slate-100">
               {items.map((loop) => (
                 <LoopRow key={loopKey(loop)} patientId={id} loop={loop} resources={resources} onChange={refresh} />
@@ -174,7 +175,7 @@ function LoopRow({
       ? 'New result since the last visit'
       : `Open ${loop.kind} order`
   return (
-    <li className="grid grid-cols-[5.5rem_minmax(0,1fr)] items-start gap-x-3 gap-y-1 px-4 py-2.5 sm:grid-cols-[6rem_minmax(0,1fr)_auto]">
+    <li className="grid grid-cols-[5.5rem_minmax(0,1fr)] items-start gap-x-3 gap-y-1 px-4 py-2.5 @xl:grid-cols-[6rem_minmax(0,1fr)_auto]">
       <div className="pt-0.5">
         <Badge tone={status.tone} title={status.hint}>
           {status.label}
@@ -210,7 +211,7 @@ function LoopRow({
         )}
         <Actions patientId={patientId} loop={loop} onChange={onChange} />
       </div>
-      <div className="col-start-2 -ml-1 flex flex-wrap gap-0.5 sm:col-start-auto sm:ml-0 sm:max-w-[16rem] sm:justify-end">
+      <div className="col-start-2 -ml-1 flex flex-wrap gap-0.5 @xl:col-start-auto @xl:ml-0 @xl:max-w-[16rem] @xl:justify-end">
         {refs.map((ref) => {
           const resource = resources.get(ref)
           return resource ? <SourceButton key={ref} resource={resource} label={SOURCE_LABELS[resource.resourceType]} /> : null
@@ -389,7 +390,7 @@ function Highlighted({ line, quote }: { line: string; quote: string }) {
   return (
     <>
       <span className="font-normal text-slate-500">{line.slice(0, at)}</span>
-      {line.slice(at, end)}
+      <span className="mark">{line.slice(at, end)}</span>
       <span className="font-normal text-slate-500">{line.slice(end)}</span>
     </>
   )
