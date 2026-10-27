@@ -34,6 +34,7 @@ export interface Chart {
   reports: fhir4.DiagnosticReport[]
   orders: fhir4.ServiceRequest[]
   appointments: fhir4.Appointment[]
+  procedures: fhir4.Procedure[]
   observations: Map<string, fhir4.Observation>
   labs: Series[]
   vitals: Series[]
@@ -71,17 +72,21 @@ export function resourceIndex(chart: Chart): Map<string, Resource> {
     ...chart.reports,
     ...chart.orders,
     ...chart.appointments,
+    ...chart.procedures,
     ...chart.observations.values(),
   ]
   return new Map(all.map((resource) => [`${resource.resourceType}/${resource.id}`, resource]))
 }
 
 export const encounterStart =(encounter: fhir4.Encounter): number => toTime(encounter.period?.start)
+/** When a procedure was done; a reported year such as "1996" counts as its first day. */
+export const procedureTime = (procedure: fhir4.Procedure): number =>
+  toTime(procedure.performedDateTime ?? procedure.performedPeriod?.start ?? procedure.performedString?.slice(0, 4))
 export const reportTime = (report: fhir4.DiagnosticReport): number => toTime(report.effectiveDateTime ?? report.issued)
 
 export async function loadChart(id: string, signal: AbortSignal): Promise<Chart> {
   const byPatient = { patient: id }
-  const [patient, conditions, medications, allergies, observations, diagnosticReports, notes, encounters, orders, appointments] =
+  const [patient, conditions, medications, allergies, observations, diagnosticReports, notes, encounters, orders, appointments, procedures] =
     await Promise.all([
       read<fhir4.Patient>('Patient', id, signal),
       search<fhir4.Condition>('Condition', byPatient, signal),
@@ -93,6 +98,7 @@ export async function loadChart(id: string, signal: AbortSignal): Promise<Chart>
       search<fhir4.Encounter>('Encounter', byPatient, signal),
       search<fhir4.ServiceRequest>('ServiceRequest', byPatient, signal),
       search<fhir4.Appointment>('Appointment', byPatient, signal),
+      search<fhir4.Procedure>('Procedure', byPatient, signal),
     ])
   const isLab = (report: fhir4.DiagnosticReport) => report.category?.some((category) => code(category) === 'LAB') ?? false
   const labs = new Map<string, Series>()
@@ -121,6 +127,7 @@ export async function loadChart(id: string, signal: AbortSignal): Promise<Chart>
     reports: diagnosticReports.filter((report) => !isLab(report)).sort(newestFirst(reportTime)),
     orders,
     appointments: appointments.sort((a, b) => toTime(a.start) - toTime(b.start)),
+    procedures: procedures.sort(newestFirst(procedureTime)),
     observations: new Map(observations.map((observation) => [observation.id ?? '', observation])),
     labs: finish(labs),
     vitals: finish(vitals),

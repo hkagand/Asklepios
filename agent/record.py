@@ -173,6 +173,11 @@ class Record:
         self.encounters = sorted(found.get("Encounter", []), key=lambda item: self.encounter_start(item) or EARLIEST, reverse=True)
         self.orders = sorted(found.get("ServiceRequest", []), key=lambda item: moment(item.get("authoredOn")) or EARLIEST, reverse=True)
         self.appointments = sorted(found.get("Appointment", []), key=lambda item: moment(item.get("start")) or EARLIEST)
+        self.procedures = sorted(
+            (item for item in found.get("Procedure", []) if item.get("status") == "completed"),
+            key=lambda item: self.procedure_date(item) or EARLIEST.date(),
+            reverse=True,
+        )
 
         reports = found.get("DiagnosticReport", [])
         self.lab_reports = [report for report in reports if self._is_lab(report)]
@@ -204,6 +209,15 @@ class Record:
         start = moment(bounds.get("start") or medication.get("authoredOn"))
         end = moment(bounds.get("end"))
         return (start.date() if start else None, end.date() if end else None)
+
+    @staticmethod
+    def procedure_date(procedure: dict) -> date | None:
+        """When it was done; a reported year ("1996") counts as 1 January of that year."""
+        performed = moment(procedure.get("performedDateTime") or procedure.get("performedPeriod", {}).get("start"))
+        if performed:
+            return performed.date()
+        year = (procedure.get("performedString") or "")[:4]
+        return date(int(year), 1, 1) if year.isdigit() else None
 
     def _note(self, note: dict) -> Document:
         attachment = first(note.get("content")).get("attachment", {})
@@ -399,6 +413,37 @@ class Record:
             parts.append(status.replace("-", " ") + (f": {why}" if why else ""))
         return "; ".join(parts) + f" [{ref_of(medication)}]"
 
+    def procedure_when(self, procedure: dict) -> str:
+        performed = moment(procedure.get("performedDateTime") or procedure.get("performedPeriod", {}).get("start"))
+        return day_text(performed) if performed else procedure.get("performedString") or "date not recorded"
+
+    def procedure_line(self, procedure: dict) -> str:
+        parts = [f"{text_of(procedure.get('code')) or 'Procedure'}, {self.procedure_when(procedure)}"]
+        site = ", ".join(text_of(item) for item in procedure.get("bodySite", []) if text_of(item))
+        if site:
+            parts.append(f"site: {site}")
+        if procedure.get("asserter", {}).get("reference", "").startswith("Patient/"):
+            parts.append("reported by the patient, not performed here")
+        performers = [item.get("actor", {}).get("display") for item in procedure.get("performer", [])]
+        if any(performers):
+            parts.append("performed by " + ", ".join(name for name in performers if name))
+        outcome = text_of(procedure.get("outcome"))
+        if outcome:
+            parts.append(f"outcome: {outcome}")
+        complications = [text_of(item) for item in procedure.get("complication", []) if text_of(item)]
+        if complications:
+            parts.append("complications: " + ", ".join(complications))
+        devices = [item.get("manipulated", {}).get("display") for item in procedure.get("focalDevice", [])]
+        if any(devices):
+            parts.append("implant: " + ", ".join(device for device in devices if device))
+        note = first(procedure.get("note")).get("text")
+        if note:
+            parts.append(note.rstrip("."))
+        reports = [item.get("reference") for item in procedure.get("report", []) if item.get("reference")]
+        if reports:
+            parts.append("report " + ", ".join(f"[{ref}]" for ref in reports))
+        return "; ".join(parts) + f" [{ref_of(procedure)}]"
+
     def due_text(self, due: date) -> str:
         days = (due - self.today).days
         if days < 0:
@@ -508,6 +553,7 @@ class Record:
             "ServiceRequest": self.order_line,
             "Appointment": self.appointment_line,
             "Encounter": self.encounter_line,
+            "Procedure": self.procedure_line,
             "DiagnosticReport": self.lab_report_text,
         }.get(resource["resourceType"])
         if render:
@@ -549,6 +595,8 @@ class Record:
             return text_of(resource.get("code")) or "Allergy"
         if kind == "Appointment":
             return f"Appointment · {day_text(moment(resource.get('start')) or EARLIEST)}"
+        if kind == "Procedure":
+            return f"{text_of(resource.get('code')) or 'Procedure'} · {self.procedure_when(resource)}"
         return "Patient details"
 
     # --------------------------------------------------------------- index

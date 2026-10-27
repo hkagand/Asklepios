@@ -16,6 +16,7 @@ PATIENT_SEARCHES = (
     "Encounter",
     "ServiceRequest",
     "Appointment",
+    "Procedure",
     "Task",
     "Communication",
 )

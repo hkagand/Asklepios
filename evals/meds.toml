@@ -90,3 +90,8 @@ findings = [{ drug = "ferrous", kind = "plan" }]
 [[patient]]
 id = "p-1019"
 findings = []
+
+[[patient]]
+id = "p-2042"
+# No medication orders and none taken per the notes.
+findings = []

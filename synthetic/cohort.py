@@ -24,6 +24,7 @@ ARSLAN = CLINICIANS["pr-arslan"]
 KOC = CLINICIANS["pr-koc"]
 CELIK = CLINICIANS["pr-celik"]
 KILIC = CLINICIANS["pr-kilic"]
+YALCIN = CLINICIANS["pr-yalcin"]
 
 METFORMIN = ("A10BA02", "metformin")
 EMPAGLIFLOZIN = ("A10BK03", "empagliflozin")
@@ -48,6 +49,10 @@ PANITUMUMAB = ("L01FE02", "panitumumab")
 ONDANSETRON = ("A04AA01", "ondansetron")
 DOXYCYCLINE = ("J01AA02", "doxycycline")
 MAGNESIUM_OXIDE = ("A12CC10", "magnesium oxide")
+
+APPENDICECTOMY = ("80146002", "Appendectomy")
+HYSTERECTOMY = ("236886002", "Hysterectomy")
+KNEE_REPLACEMENT = ("609588000", "Total knee replacement")
 
 CLINIC_TIMES = (
     (9, 0), (9, 20), (9, 40), (10, 0), (10, 20), (10, 40), (11, 0),
@@ -1765,6 +1770,7 @@ def colorectal_cancer(s: Story) -> None:
                     "Fatigue, otherwise independent; works part-time. ECOG performance status 1.",
                     "Comorbidities: hypertension. Medications: amlodipine 5 mg daily, ferrous sulfate 325 mg every other day. "
                     "No known allergies.",
+                    "Past surgical history: laparoscopic cholecystectomy in 2012 at another hospital.",
                     "Social: married, retired teacher. Ex-smoker (20 pack-years, stopped 2010). No alcohol.",
                     "Family history: father had colon cancer at 70.",
                 ],
@@ -2133,6 +2139,301 @@ def colorectal_cancer(s: Story) -> None:
     c.appointment(s.appointment, SAHIN, "Review restaging CT and blood results; decide on resuming treatment")
 
 
+# ------------------------------------------------------- gallstones, P-2042
+
+def gallstone_disease(s: Story) -> None:
+    """Patient P-2042: earlier abdominal surgery before a planned laparoscopic cholecystectomy.
+
+    Three earlier operations, each recorded differently: an appendicectomy the
+    patient reported (a Procedure marked as reported), a caesarean section at
+    another hospital that only notes mention, and an umbilical hernia repair
+    with mesh done here (a Procedure with an operation note). The bile duct
+    stone was cleared at ERCP and the surgical clinic visit is booked.
+    """
+    c, rng = s.chart, s.rng
+
+    def day(offset: int) -> date:
+        return workday(s.anchor + timedelta(days=offset), forward=False)
+
+    def liver(collected: datetime, *, alt: float, ast: float, alp: float, tbil: float, cbc: bool = False) -> None:
+        panels = {"cmp": chemistry(rng, cr=0.72, hepatic=True, alt=alt) | {"ast": ast, "alp": alp, "tbil": tbil}}
+        if cbc:
+            panels["cbc"] = {"hgb": 13.4, "hct": 40.6, "mcv": 88, "wbc": 8.6, "plt": 254}
+        c.draw(collected, panels, requester=AYDIN)
+
+    c.set_height(164)
+
+    # 2015: umbilical hernia repair with mesh, here.
+    repair_day = workday(date(2015, 6, 10), forward=True)
+    stay = c.visit(at(repair_day, 7, 30), YALCIN, "Day surgery", "Umbilical hernia", inpatient_until=at(repair_day, 17, 0))
+    operation_note = c.note(
+        when=at(repair_day, 11, 30), author=YALCIN, kind="operative", title="Operation note", encounter=stay,
+        body=sections(
+            ("Operation", "Open umbilical hernia repair with onlay polypropylene mesh."),
+            ("Indication", "Symptomatic reducible umbilical hernia, enlarging over two years."),
+            ("Anaesthesia", "General anaesthesia."),
+            ("Findings", "2 cm fascial defect at the umbilicus containing preperitoneal fat. No bowel in the sac."),
+            (
+                "Procedure",
+                "Curved infraumbilical incision. Sac reduced. Defect closed with non-absorbable sutures and reinforced "
+                "with a 6 × 6 cm polypropylene mesh in the onlay position, fixed with sutures. Skin closed with "
+                "absorbable subcuticular sutures.",
+            ),
+            ("Complications", "None."),
+        ),
+    )
+    c.procedure(
+        "Open umbilical hernia repair with mesh", performed=at(repair_day, 10, 5), body_site="Umbilicus",
+        performer=YALCIN, encounter=stay, outcome="Uncomplicated", device="Polypropylene mesh 6 × 6 cm, onlay",
+        report=operation_note,
+    )
+
+    # Presentation: biliary pain and jaundice.
+    first = day(-76)
+    liver(at(first, 9, 10), alt=212, ast=168, alp=318, tbil=3.6, cbc=True)
+    start = at(first, 14, 0)
+    visit = c.visit(start, AYDIN, "Problem visit", "Right upper quadrant pain; jaundice")
+    vitals = c.vitals(visit, sbp=128, dbp=78, hr=84, weight=74.2)
+    c.no_known_allergies(first)
+    c.condition(
+        "K80.2", "Calculus of gallbladder without cholecystitis", onset=first, clinician=AYDIN,
+        text="Symptomatic gallstones",
+    )
+    c.procedure(
+        "Open appendicectomy", performed="1996", body_site="Appendix", snomed=APPENDICECTOMY, recorder=AYDIN,
+        reported=True, note="At another hospital, as reported by the patient.",
+    )
+    ultrasound = c.order_service(
+        "Ultrasound abdomen — liver, gallbladder and bile ducts", category="imaging", ordered=start + timedelta(minutes=20),
+        due=day(-75), requester=AYDIN, encounter=visit, priority="urgent", reason="Right upper quadrant pain, jaundice",
+    )
+    c.note(
+        when=start + timedelta(minutes=30), author=AYDIN, title="Internal medicine progress note", encounter=visit,
+        body=sections(
+            (
+                "Subjective",
+                f"{c.age_sex(start)} with three months of episodic right upper quadrant pain after fatty meals, "
+                "each lasting one to three hours. Two days of dark urine and pale stools; her family noticed yellow eyes. "
+                "No fever or rigors. No alcohol. No regular medication.",
+            ),
+            (
+                "Past surgical history",
+                [
+                    "Open appendicectomy in 1996, aged 22, at another hospital (right iliac fossa incision).",
+                    "Caesarean section in 2008 at another hospital (Pfannenstiel incision).",
+                    "Umbilical hernia repair with mesh at this hospital in June 2015 (Dr. Kerem Yalçın).",
+                ],
+            ),
+            (
+                "Objective",
+                [
+                    vitals,
+                    "Scleral icterus. Tender in the right upper quadrant, Murphy's sign negative. Healed scars in the right "
+                    "iliac fossa, suprapubic region and below the umbilicus. No hepatomegaly.",
+                    c.labs_text(["alt", "ast", "alp", "tbil", "alb", "wbc", "hgb"], before=start),
+                ],
+            ),
+            (
+                "Assessment",
+                numbered(["Obstructive jaundice with biliary-type pain — gallstones with a bile duct stone likely."]),
+            ),
+            (
+                "Plan",
+                bullets(
+                    [
+                        "Urgent ultrasound of the liver, gallbladder and bile ducts.",
+                        "Return the same day with fever, rigors or worsening pain.",
+                    ]
+                ),
+            ),
+        ),
+    )
+    performed = at(day(-75), 10, 20)
+    c.report(
+        "imaging", "Ultrasound abdomen", performed=performed, issued=performed + timedelta(hours=1), interpreter=CELIK,
+        order=ultrasound,
+        findings=(
+            "Gallbladder contains multiple mobile calculi up to 14 mm; wall 2 mm, no pericholecystic fluid.\n"
+            "Common bile duct dilated to 9 mm; the distal duct is obscured by bowel gas. Mild intrahepatic duct "
+            "dilatation.\nLiver of normal size and echotexture. Pancreas head unremarkable."
+        ),
+        conclusion="Cholelithiasis with a dilated common bile duct; a distal duct stone is not excluded. MRCP suggested.",
+    )
+    mrcp = c.order_service(
+        "MRCP", category="imaging", ordered=performed + timedelta(hours=3), due=day(-71), requester=AYDIN,
+        priority="urgent", reason="Dilated common bile duct on ultrasound",
+    )
+    performed = at(day(-71), 15, 0)
+    c.report(
+        "imaging", "MRCP", performed=performed, issued=performed + timedelta(hours=20), interpreter=CELIK, order=mrcp,
+        findings=(
+            "A 7 mm calculus in the distal common bile duct with upstream dilatation to 9 mm and mild intrahepatic "
+            "duct dilatation.\nMultiple gallbladder calculi. Pancreatic duct normal.\nPost-surgical change and "
+            "susceptibility artefact in the anterior abdominal wall at the umbilicus, in keeping with a previous "
+            "hernia repair."
+        ),
+        conclusion="Choledocholithiasis (7 mm distal common bile duct stone) and cholelithiasis.",
+    )
+    referral = c.order_service(
+        "Gastroenterology referral — ERCP for common bile duct stone", category="referral",
+        ordered=performed + timedelta(hours=22), due=day(-63), requester=AYDIN, priority="urgent",
+        reason="Choledocholithiasis on MRCP",
+    )
+
+    # Gastroenterology: ERCP.
+    start = at(day(-64), 11, 0)
+    visit = c.visit(start, KOC, "New patient", "Common bile duct stone", minutes=30)
+    c.complete(referral)
+    vitals = c.vitals(visit, sbp=124, dbp=76, hr=78, weight=73.6)
+    ercp = c.order_service(
+        "ERCP with sphincterotomy and stone extraction", category="procedure", ordered=start + timedelta(minutes=25),
+        due=day(-57), requester=KOC, encounter=visit, priority="urgent", reason="Choledocholithiasis",
+    )
+    c.note(
+        when=start + timedelta(minutes=30), author=KOC, kind="consult", title="Gastroenterology consultation",
+        encounter=visit,
+        body=sections(
+            ("Reason for referral", "Common bile duct stone on MRCP; referred by Dr. Elif Aydın."),
+            (
+                "History",
+                [
+                    "Biliary-type pain for three months; obstructive jaundice two weeks ago, now settling.",
+                    "Previous abdominal surgery: appendicectomy, caesarean section and an umbilical hernia repair with mesh.",
+                ],
+            ),
+            ("Examination", [vitals, "Mild scleral icterus. Abdomen soft, mildly tender in the right upper quadrant."]),
+            ("Assessment", "Choledocholithiasis with cholelithiasis."),
+            ("Plan", bullets(["ERCP with sphincterotomy and stone extraction next week.", "Consent obtained."])),
+        ),
+    )
+    performed = at(day(-57), 9, 40)
+    day_case = c.visit(performed - timedelta(hours=1), KOC, "Day case", "ERCP", inpatient_until=performed + timedelta(hours=6))
+    ercp_report = c.report(
+        "endoscopy", "ERCP", performed=performed, issued=performed + timedelta(hours=2), interpreter=KOC, order=ercp,
+        findings=(
+            "INDICATION\nCommon bile duct stone on MRCP.\n\nFINDINGS\n"
+            "Normal papilla. Selective biliary cannulation. Cholangiogram: 7 mm filling defect in the distal common "
+            "bile duct, duct diameter 9 mm.\nBiliary sphincterotomy. Stone extracted with a balloon; the occlusion "
+            "cholangiogram shows a clear duct.\nNo pancreatic duct cannulation. No immediate bleeding."
+        ),
+        conclusion=(
+            "Choledocholithiasis cleared after biliary sphincterotomy and balloon extraction. "
+            "Cholecystectomy recommended to prevent recurrence."
+        ),
+    )
+    c.procedure(
+        "ERCP with biliary sphincterotomy and balloon stone extraction", performed=performed,
+        body_site="Common bile duct", surgical=False, performer=KOC, encounter=day_case, outcome="Bile duct cleared",
+        report=ercp_report,
+    )
+    c.order_service(
+        "General surgery referral — laparoscopic cholecystectomy", category="referral",
+        ordered=performed + timedelta(hours=4), due=s.appointment.date(), requester=KOC, encounter=day_case,
+        reason="Cholelithiasis after ERCP clearance of a common bile duct stone",
+    )
+    c.note(
+        when=performed + timedelta(hours=4), author=KOC, title="Gastroenterology note after ERCP", encounter=day_case,
+        body=sections(
+            ("Procedure", "ERCP today: sphincterotomy and balloon extraction of a 7 mm distal bile duct stone; duct clear."),
+            ("Recovery", "Comfortable, tolerating fluids, no abdominal pain."),
+            (
+                "Plan",
+                bullets(
+                    [
+                        "Home this evening.",
+                        "General surgery referral for laparoscopic cholecystectomy, ideally within 6–8 weeks.",
+                    ]
+                ),
+            ),
+        ),
+    )
+
+    # Internal medicine follow-up.
+    liver(at(day(-33), 8, 25), alt=52, ast=38, alp=162, tbil=1.0)
+    start = at(day(-30), 10, 0)
+    visit = c.visit(start, AYDIN, "Follow-up", "Gallstones after ERCP")
+    vitals = c.vitals(visit, sbp=122, dbp=76, hr=72, weight=73.9)
+    pre_clinic = workday(s.appointment.date() - timedelta(days=7), forward=False)
+    liver_order = c.order(
+        "cmp", ordered=start + timedelta(minutes=20), due=pre_clinic, requester=AYDIN, encounter=visit,
+        reason="Liver tests after ERCP",
+    )
+    c.note(
+        when=start + timedelta(minutes=30), author=AYDIN, title="Internal medicine progress note", encounter=visit,
+        body=sections(
+            ("Subjective", "No pain since the ERCP. Jaundice has resolved; urine and stools normal."),
+            (
+                "Objective",
+                [vitals, "No icterus. Abdomen soft, non-tender.", c.labs_text(["alt", "ast", "alp", "tbil"], before=start)],
+            ),
+            ("Assessment", numbered(["Gallstones; bile duct stone cleared at ERCP; liver tests improving."])),
+            (
+                "Plan",
+                bullets(
+                    [
+                        f"Surgical clinic with Dr. Kerem Yalçın on {day_text(s.appointment)} to discuss laparoscopic "
+                        "cholecystectomy.",
+                        "Repeat liver tests a week before the surgical clinic.",
+                        "Low-fat diet meanwhile; return with pain, fever or jaundice.",
+                    ]
+                ),
+            ),
+        ),
+    )
+    c.draw(
+        at(pre_clinic, 8, 15),
+        {"cmp": chemistry(rng, cr=0.70, hepatic=True, alt=27) | {"ast": 24, "alp": 104, "tbil": 0.6}},
+        requester=AYDIN, orders={"cmp": liver_order},
+    )
+    c.appointment(s.appointment, YALCIN, "Laparoscopic cholecystectomy assessment", minutes=30)
+
+
+# ---------------------------------------------------- past surgery additions
+
+
+@dataclass(frozen=True)
+class PastSurgery:
+    """History a story does not write itself: sections for the first note and Procedure records."""
+
+    sections: tuple[tuple[str, str], ...]
+    procedures: tuple[dict, ...] = ()
+
+
+# Keyed by story and variant. Nothing here draws a random number, so every chart keeps its ids and values.
+PAST_SURGERY = {
+    ("diabetes_hypertension", 2): PastSurgery(
+        (("Past surgical history", "Right total knee replacement in March 2019 at this hospital for osteoarthritis."),),
+        (
+            dict(
+                text="Right total knee replacement", performed=date(2019, 3, 12), body_site="Right knee",
+                snomed=KNEE_REPLACEMENT, outcome="Uncomplicated", device="Cemented total knee prosthesis",
+            ),
+        ),
+    ),
+    ("chronic_kidney_disease", 1): PastSurgery(
+        (
+            (
+                "Past surgical history",
+                "Total abdominal hysterectomy and bilateral salpingo-oophorectomy in 2011 for atypical endometrial "
+                "hyperplasia.",
+            ),
+        ),
+        (
+            dict(
+                text="Total abdominal hysterectomy with bilateral salpingo-oophorectomy", performed=date(2012, 5, 14),
+                body_site="Uterus and both ovaries", snomed=HYSTERECTOMY, note="Atypical endometrial hyperplasia",
+            ),
+        ),
+    ),
+    ("hypothyroidism", 0): PastSurgery(
+        (
+            ("Past surgical history", "No previous operations."),
+            ("Family history", "Mother had a thyroidectomy for a multinodular goitre in her forties."),
+        ),
+    ),
+}
+
+
 # ------------------------------------------------------------------- cohort
 
 
@@ -2192,6 +2493,19 @@ def build_cohort(anchor: date, seed: int = 2041) -> list[PatientChart]:
         )
         hour, minute = CLINIC_TIMES[(index * 5) % len(CLINIC_TIMES)]
         appointment = at(add_workdays(anchor, APPOINTMENT_OFFSETS[index % len(APPOINTMENT_OFFSETS)]), hour, minute)
+        past = PAST_SURGERY.get((template.story.__name__, variant))
+        if past:
+            chart.past_history = list(past.sections)
         template.story(Story(rng, anchor, chart, appointment, variant))
+        for procedure in past.procedures if past else ():
+            chart.procedure(**procedure)
         charts.append(chart)
+
+    # A second fixed story with its own random numbers, so adding it changes no other chart.
+    second = PatientChart(
+        number=2042, given="Nermin", family="Aktaş", gender="female", birth_date=date(anchor.year - 52, 9, 3),
+        city="Ankara", gp=AYDIN,
+    )
+    gallstone_disease(Story(random.Random(seed + 1), anchor, second, at(add_workdays(anchor, 1), 11, 0)))
+    charts.append(second)
     return charts

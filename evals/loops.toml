@@ -142,3 +142,12 @@ items = [
 [[patient]]
 id = "p-1019"
 items = []
+
+[[patient]]
+id = "p-2042"
+# Gallstones after ERCP; surgical clinic booked. The pre-clinic liver tests came back after the last note.
+items = [
+  { match = "surgical clinic", status = "pending" },
+  { match = "liver tests", status = "to_review" },
+  { match = "general surgery referral", status = ["pending", "done"] },
+]

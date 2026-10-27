@@ -34,6 +34,7 @@ NOTE_TYPES = {
     "progress": ("11506-3", "Progress note"),
     "consult": ("11488-4", "Consult note"),
     "discharge": ("18842-5", "Discharge summary"),
+    "operative": ("11504-8", "Surgical operation note"),
 }
 
 REPORT_CATEGORIES = {
@@ -105,6 +106,12 @@ def _ref(resource: dict, display: str | None = None) -> dict:
     if display:
         reference["display"] = display
     return reference
+
+
+def _insert_sections(body: str, extra: list[tuple[str, str]]) -> str:
+    blocks = body.strip().split("\n\n")
+    added = [f"{heading.upper()}\n{text.strip()}" for heading, text in extra]
+    return "\n\n".join(blocks[:1] + added + blocks[1:])
 
 
 def clinician_ref(clinician: Clinician) -> dict:
@@ -190,6 +197,8 @@ class PatientChart:
         self.birth_date = birth_date
         self.gp = gp
         self.height_cm: float | None = None
+        # Sections the first note adds after its opening section: history a story does not write itself.
+        self.past_history: list[tuple[str, str]] = []
         self.resources: list[dict] = []
         self._counters: dict[str, int] = defaultdict(int)
         self._history: dict[str, list[tuple[datetime, float]]] = defaultdict(list)
@@ -757,6 +766,60 @@ class PatientChart:
         self._add(report)
         return report
 
+    # -------------------------------------------------------------- procedures
+
+    def procedure(
+        self,
+        text: str,
+        *,
+        performed: datetime | date | str,
+        body_site: str,
+        snomed: tuple[str, str] | None = None,
+        surgical: bool = True,
+        performer: Clinician | None = None,
+        recorder: Clinician | None = None,
+        reported: bool = False,
+        encounter: dict | None = None,
+        outcome: str | None = None,
+        device: str | None = None,
+        report: dict | None = None,
+        note: str | None = None,
+    ) -> dict:
+        """A completed procedure. `performed` as text ("1996") for history the patient reports."""
+        code: dict = {"text": text}
+        if snomed:
+            code["coding"] = [{"system": SNOMED, "code": snomed[0], "display": snomed[1]}]
+        procedure = self._base("Procedure", "proc") | {"status": "completed"}
+        if surgical:
+            procedure["category"] = {"coding": [{"system": SNOMED, "code": "387713003", "display": "Surgical procedure"}]}
+        procedure |= {"code": code, "subject": self.ref}
+        if isinstance(performed, datetime):
+            procedure["performedDateTime"] = instant(performed)
+        elif isinstance(performed, date):
+            procedure["performedDateTime"] = performed.isoformat()
+        else:
+            procedure["performedString"] = performed
+        if recorder:
+            procedure["recorder"] = clinician_ref(recorder)
+        if reported:
+            # R4 has no Procedure.reported[x]; the patient as asserter marks history the patient gave.
+            procedure["asserter"] = self.ref
+        if performer:
+            procedure["performer"] = [{"actor": clinician_ref(performer)}]
+        if encounter:
+            procedure["encounter"] = _ref(encounter)
+        procedure["bodySite"] = [{"text": body_site}]
+        if outcome:
+            procedure["outcome"] = {"text": outcome}
+        if report:
+            procedure["report"] = [_ref(report)]
+        if device:
+            procedure["focalDevice"] = [{"action": {"text": "Implanted"}, "manipulated": {"display": device}}]
+        if note:
+            procedure["note"] = [{"text": note}]
+        self._add(procedure)
+        return procedure
+
     # ------------------------------------------------------------------- notes
 
     def note(
@@ -770,6 +833,8 @@ class PatientChart:
         encounter: dict | None = None,
     ) -> dict:
         loinc, type_display = NOTE_TYPES[kind]
+        if self.past_history:
+            body, self.past_history = _insert_sections(body, self.past_history), []
         header = (
             f"{title.upper()}\n"
             f"{self.name} · MRN {self.mrn} · {self.age_on(when.date())} y, {self.gender}\n"

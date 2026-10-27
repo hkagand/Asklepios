@@ -50,7 +50,13 @@ LAB_TESTS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
         ("basic metabolic panel", "bmp", "electrolytes", "renal function", "kidney function", "urea and electrolytes", "potassium", "creatinine", "egfr"),
         ("2160-0", "2823-3", "2951-2"),
     ),
-    "cmp": (("comprehensive metabolic panel", "cmp", "liver function", "liver enzymes", "lfts", "lft"), ("1742-6", "1920-8", "6768-6")),
+    "cmp": (
+        (
+            "comprehensive metabolic panel", "cmp", "liver function", "liver enzymes", "liver tests", "liver blood tests", "lfts", "lft",
+            "alt", "ast", "alp", "alkaline phosphatase", "transaminases", "bilirubin",
+        ),
+        ("1742-6", "1920-8", "6768-6"),
+    ),
     "a1c": (("hba1c", "a1c", "hemoglobin a1c", "glycated hemoglobin"), ("4548-4",)),
     "lipids": (("lipid panel", "lipid profile", "lipids", "cholesterol", "ldl"), ("2093-3", "13457-7", "2085-9", "2571-8")),
     "thyroid": (("thyroid function", "tsh", "free t4", "ft4"), ("3016-3", "3024-7")),
@@ -460,17 +466,30 @@ class Matcher:
         status, detail = self.not_found("referral", due)
         return Part(service, status, detail)
 
-    def visit(self, note: Document, written: date, due: date | None) -> Part:
-        name = f"visit with {note.author}" if note.author else "follow-up visit"
-        for encounter in sorted(self.record.encounters, key=lambda item: self.record.encounter_start(item) or EARLIEST):
+    def named_clinician(self, quote: str) -> str | None:
+        """A clinician the plan line names by family name ("clinic with Dr. Kerem Yalçın"), from the record's visits."""
+        names = {
+            reference.get("display", "")
+            for reference in [
+                *(participant.get("individual", {}) for encounter in self.record.encounters for participant in encounter.get("participant", [])),
+                *(participant.get("actor", {}) for appointment in self.record.appointments for participant in appointment.get("participant", [])),
+            ]
+            if reference.get("reference", "").startswith("Practitioner/") and reference.get("display")
+        }
+        return next((name for name in sorted(names) if len(name.split()[-1]) >= 3 and says(quote, name.split()[-1])), None)
+
+    def visit(self, note: Document, item: PlanItem, written: date, due: date | None) -> Part:
+        clinician = self.named_clinician(item.quote) or note.author
+        name = f"visit with {clinician}" if clinician else "follow-up visit"
+        for encounter in sorted(self.record.encounters, key=lambda entry: self.record.encounter_start(entry) or EARLIEST):
             start = self.record.encounter_start(encounter)
-            clinician = (encounter.get("participant") or [{}])[0].get("individual", {}).get("display", "")
-            if start and written < start.date() <= self.today and (not note.author or clinician == note.author):
+            seen_by = (encounter.get("participant") or [{}])[0].get("individual", {}).get("display", "")
+            if start and written < start.date() <= self.today and (not clinician or seen_by == clinician):
                 return Part(name, "done", f"seen {day_text(start.date())}", [ref_of(encounter)])
         for appointment in self.record.appointments:
             start = moment(appointment.get("start"))
             clinicians = [participant.get("actor", {}).get("display", "") for participant in appointment.get("participant", [])]
-            if start and start.date() > written and appointment.get("status") == "booked" and (not note.author or note.author in clinicians):
+            if start and start.date() > written and appointment.get("status") == "booked" and (not clinician or clinician in clinicians):
                 if start.date() < self.today:
                     return Part(name, "overdue", f"booked for {day_text(start.date())}, no visit on file", [ref_of(appointment)])
                 return Part(name, "pending", f"booked for {day_text(start.date())}", [ref_of(appointment)])
@@ -577,7 +596,7 @@ class Matcher:
         elif item.kind == "referral":
             parts = [self.referral(item, written, due)]
         elif item.kind == "visit":
-            parts = [self.visit(note, written, due)]
+            parts = [self.visit(note, item, written, due)]
         elif item.kind == "medication":
             parts = [self.medication(item, written, due)]
         else:
