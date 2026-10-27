@@ -1,12 +1,14 @@
 import { useState, type ReactNode } from 'react'
+import { patientSurgery, type SurgicalHistory } from '../agent.ts'
 import { Copilot, SparkIcon } from '../components/Copilot.tsx'
 import { SourceButton } from '../components/source.tsx'
+import { operationsFact } from '../components/SurgicalHistory.tsx'
 import { ErrorPanel, Loading } from '../components/ui.tsx'
 import { isSynthetic, medicalRecordNumber, patientName, text } from '../fhir.ts'
 import { ageOn, formatDate, formatTime, isoDay, relativeDay, sexLabel, todayIso } from '../format.ts'
 import { loadChart, nextAppointment, openOrders, participant, timeline, type Chart } from '../model.ts'
 import { patientHref, type Tab } from '../route.ts'
-import { useAsync } from '../useAsync.ts'
+import { useAsync, type AsyncState } from '../useAsync.ts'
 import { Labs } from './Labs.tsx'
 import { Medications } from './Medications.tsx'
 import { Overview } from './Overview.tsx'
@@ -15,6 +17,8 @@ import { Visits } from './Visits.tsx'
 
 export function PatientView({ id, tab, item }: { id: string; tab: Tab; item?: string }) {
   const state = useAsync((signal) => loadChart(id, signal), [id])
+  // Read once for the band and the overview card.
+  const surgery = useAsync((signal) => patientSurgery(id, signal), [id])
   const [copilot, setCopilot] = useStoredFlag('copilot-open')
   return (
     <div className="flex items-start">
@@ -26,10 +30,10 @@ export function PatientView({ id, tab, item }: { id: string; tab: Tab; item?: st
         {state.status === 'error' && <ErrorPanel error={state.error} />}
         {state.status === 'ready' && (
           <>
-            <PatientHeader chart={state.data} />
+            <PatientHeader chart={state.data} surgery={surgery} />
             <TabBar chart={state.data} tab={tab} copilot={copilot} onCopilot={() => setCopilot(!copilot)} />
             <div className="@container mt-4">
-              {tab === 'overview' && <Overview chart={state.data} />}
+              {tab === 'overview' && <Overview chart={state.data} surgery={surgery} />}
               {tab === 'labs' && <Labs chart={state.data} selected={item} />}
               {tab === 'visits' && <Visits chart={state.data} selected={item} />}
               {tab === 'reports' && <Reports chart={state.data} selected={item} />}
@@ -59,13 +63,14 @@ function useStoredFlag(key: string): [boolean, (value: boolean) => void] {
   return [value, update]
 }
 
-function PatientHeader({ chart }: { chart: Chart }) {
+function PatientHeader({ chart, surgery }: { chart: Chart; surgery: AsyncState<SurgicalHistory> }) {
   const { patient } = chart
   const today = todayIso()
   const next = nextAppointment(chart.appointments, today)
   const when = next?.start ? relativeDay(isoDay(next.start), today) : ''
   const allergies = chart.allergies.map((allergy) => text(allergy.code)).filter(Boolean)
   const known = allergies.filter((name) => !/no known/i.test(name))
+  const operations = operationsFact(chart, surgery)
   return (
     <header className="mt-3 overflow-hidden rounded-lg bg-slate-900 text-white">
       <div className="flex flex-wrap items-start justify-between gap-x-8 gap-y-3 px-5 py-4">
@@ -91,6 +96,7 @@ function PatientHeader({ chart }: { chart: Chart }) {
             <Fact label="Born">{formatDate(patient.birthDate)}</Fact>
             {patient.address?.[0]?.city && <Fact label="Lives in">{patient.address[0].city}</Fact>}
             {patient.generalPractitioner?.[0]?.display && <Fact label="GP">{patient.generalPractitioner[0].display}</Fact>}
+            {operations && <Fact label="Previous operations">{operations}</Fact>}
           </dl>
         </div>
         {next?.start && (

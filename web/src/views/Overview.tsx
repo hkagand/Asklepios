@@ -1,5 +1,7 @@
 import { useState } from 'react'
+import type { SurgicalHistory as History } from '../agent.ts'
 import { OpenLoops } from '../components/OpenLoops.tsx'
+import { SurgicalHistory } from '../components/SurgicalHistory.tsx'
 import { SourceButton } from '../components/source.tsx'
 import { Badge, Card, Empty, FlagMark, valueTone, type Tone } from '../components/ui.tsx'
 import { code, refId, text } from '../fhir.ts'
@@ -18,8 +20,9 @@ import {
   type Chart,
 } from '../model.ts'
 import { patientHref } from '../route.ts'
+import type { AsyncState } from '../useAsync.ts'
 
-export function Overview({ chart }: { chart: Chart }) {
+export function Overview({ chart, surgery }: { chart: Chart; surgery: AsyncState<History> }) {
   return (
     <div className="grid items-start gap-4 @4xl:grid-cols-[minmax(0,1fr)_24rem]">
       <div className="space-y-4">
@@ -29,6 +32,7 @@ export function Overview({ chart }: { chart: Chart }) {
       </div>
       <div className="space-y-4">
         <Problems chart={chart} />
+        <SurgicalHistory chart={chart} state={surgery} />
         <Medications chart={chart} />
         <Allergies chart={chart} />
       </div>

@@ -231,6 +231,57 @@ export const patientBrief = (patientId: string, signal: AbortSignal) => getJson<
 export const patientMedications = (patientId: string, signal: AbortSignal) =>
   getJson<MedicationPicture>(`${patientPath(patientId)}/medications`, signal)
 
+export type SurgeryRegion = 'abdomen' | 'chest' | 'head_neck' | 'spine_limbs' | 'other'
+
+export interface SurgerySource {
+  ref: string
+  kind: 'procedure' | 'note' | 'report'
+  label: string
+  quote: string | null
+  date?: string
+}
+
+/** One earlier operation, merged from Procedure records, notes and reports (agent/surgery.py). */
+export interface Operation {
+  name: string
+  date: string | null
+  precision: 'day' | 'month' | 'year' | 'none'
+  when: string
+  year: number | null
+  yearsDiffer: number[]
+  approach: string | null
+  side: string | null
+  region: SurgeryRegion
+  regionLabel: string
+  complications: string[]
+  implants: string[]
+  doneHere: boolean
+  elsewhere: boolean
+  onlyInNotes: boolean
+  sources: SurgerySource[]
+}
+
+export interface SurgeryStatement {
+  ref: string
+  label: string
+  date: string
+  quote: string
+}
+
+export interface SurgicalHistory {
+  patient: string
+  today: string
+  operations: Operation[]
+  clues: (SurgeryStatement & { finding: string })[]
+  noneStated: SurgeryStatement[]
+  regions: Record<SurgeryRegion, string>
+  searched: { procedures: number; notes: number; reports: number; documentsRead: number; earliest: string | null }
+  unread: string[]
+}
+
+export const patientSurgery = (patientId: string, signal: AbortSignal) =>
+  getJson<SurgicalHistory>(`${patientPath(patientId)}/surgery`, signal)
+
 export async function patientMarks(patientId: string, signal: AbortSignal): Promise<Mark[]> {
   return (await getJson<{ marks: Mark[] }>(`${patientPath(patientId)}/marks`, signal)).marks
 }
