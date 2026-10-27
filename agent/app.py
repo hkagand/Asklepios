@@ -63,17 +63,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     extraction = LlmClient(replace(settings, temperature=0.0))
     plans = PlanExtractor(extraction, settings.plan_cache)
     medicines = MedicationReader(extraction, settings.plan_cache.parent / "medications")
+    surgery = SurgeryReader(extraction, settings.plan_cache.parent / "surgery")
     app.state.settings = settings
     app.state.llm = llm
     app.state.fhir = fhir
     app.state.plans = plans
     app.state.medicines = medicines
-    app.state.surgery = SurgeryReader(extraction, settings.plan_cache.parent / "surgery")
+    app.state.surgery = surgery
     app.state.audit = AuditLog(settings.audit_log)
-    app.state.sessions = Sessions(fhir, plans, medicines)
+    app.state.sessions = Sessions(fhir, plans, medicines, surgery)
     app.state.practitioners = {}
     app.state.briefs = Briefs(
-        settings.plan_cache.parent / "briefs", fhir=fhir, llm=llm, plans=plans, medicines=medicines,
+        settings.plan_cache.parent / "briefs", fhir=fhir, llm=llm, plans=plans, medicines=medicines, surgery=surgery,
         audit=app.state.audit, max_steps=settings.max_steps,
     )
     app.state.brief_tasks = set()

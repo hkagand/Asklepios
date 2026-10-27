@@ -25,6 +25,7 @@ from .fhir import FhirClient
 from .llm import LlmClient, LlmError
 from .meds import MedicationReader
 from .plans import PlanExtractor
+from .surgery import SurgeryReader
 from .record import Record, day_text, moment
 
 BRIEF_VERSION = 1
@@ -61,6 +62,7 @@ class Briefs:
         llm: LlmClient,
         plans: PlanExtractor,
         medicines: MedicationReader,
+        surgery: SurgeryReader,
         audit: AuditLog,
         max_steps: int,
     ) -> None:
@@ -69,6 +71,7 @@ class Briefs:
         self._llm = llm
         self._plans = plans
         self._medicines = medicines
+        self._surgery = surgery
         self._audit = audit
         self._max_steps = max_steps
         self.running: set[str] = set()
@@ -104,7 +107,7 @@ class Briefs:
                 "the clinician",
             )
             question = QUESTION.format(day=day_text(start.date()) if start else "the next appointment", clinician=clinician)
-            session = start_session(f"brief-{record.id}", record, await sections(record, self._plans, self._medicines))
+            session = start_session(f"brief-{record.id}", record, await sections(record, self._plans, self._medicines, self._surgery))
             answer = None
             async for event, data in run_turn(session, question, llm=self._llm, audit=self._audit, max_steps=self._max_steps, user=AUTHOR):
                 if event == "answer":
@@ -159,6 +162,7 @@ async def _main(args: argparse.Namespace) -> int:
         llm=llm,
         plans=PlanExtractor(extraction, settings.plan_cache),
         medicines=MedicationReader(extraction, settings.plan_cache.parent / "medications"),
+        surgery=SurgeryReader(extraction, settings.plan_cache.parent / "surgery"),
         audit=AuditLog(settings.audit_log),
         max_steps=settings.max_steps,
     )

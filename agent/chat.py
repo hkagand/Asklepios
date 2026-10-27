@@ -20,6 +20,8 @@ from .meds import MedicationReader, reconcile
 from .meds import index_section as medication_section
 from .plans import PlanExtractor
 from .record import Record, today_text
+from .surgery import SurgeryReader, surgical_history
+from .surgery import index_section as surgery_section
 
 SYSTEM_PROMPT = """\
 You are ASKlepios. You answer a physician's questions about one patient's medical record at Demo General \
@@ -40,6 +42,15 @@ statuses as given. "No record to confirm it" means the record cannot show it eit
 - MEDICATION RECONCILIATION lists where the notes and the medication orders disagree. For any question about a \
 medicine or its dose, give the order and also every reconciliation line about that medicine. Orders show what was \
 prescribed, not what the patient takes: what the patient takes is known only from what a note says, as of its date.
+- SURGICAL HISTORY lists earlier operations merged from procedure records, notes and reports. For any question about \
+previous operations, answer from it and cite its ids. Give the approach, body region, implants and complications as \
+listed, and say when an operation is only in notes, was done elsewhere, or its sources give different years. If it \
+lists none, say what was searched and that operations done elsewhere may not be recorded; never say the patient has \
+never had surgery.
+- If asked whether the patient is fit or suitable for an operation, or which surgical approach to use: say that this \
+is the surgeon's decision, then list every operation in SURGICAL HISTORY with its date, approach, body region, \
+implants and complications, citing each. Do not assess fitness from results or vital signs, and do not say whether \
+anything rules the operation in or out.
 - If the record does not answer the question, say so plainly, e.g. "No echocardiogram is on file."
 - For an open order write "no result on file". Do not say that the test was or was not drawn, performed or \
 scheduled unless the record says so.
@@ -114,15 +125,16 @@ class Session:
         return self.record.id
 
 
-async def sections(record: Record, plans: PlanExtractor, medicines: MedicationReader) -> str:
-    """The index sections computed from the notes: open loops, then medication reconciliation."""
+async def sections(record: Record, plans: PlanExtractor, medicines: MedicationReader, surgery: SurgeryReader) -> str:
+    """The index sections computed from the notes: open loops, medication reconciliation, surgical history."""
     loops, unread = await open_loops(record, plans)
     picture = await reconcile(record, medicines, loops)
-    return f"{loops_section(loops, unread)}\n\n{medication_section(picture)}"
+    history = await surgical_history(record, surgery)
+    return f"{loops_section(loops, unread)}\n\n{medication_section(picture)}\n\n{surgery_section(history)}"
 
 
 def start_session(session_id: str, record: Record, extra: str | None = None) -> Session:
-    """`extra` is appended to the chart index: the OPEN LOOPS and MEDICATION RECONCILIATION sections (sections())."""
+    """`extra` is appended to the chart index: the sections computed from the notes (sections())."""
     index = record.index() + (f"\n\n{extra}" if extra else "")
     evidence = Evidence()
     for line in index.splitlines():
@@ -139,6 +151,7 @@ class Sessions:
         fhir: FhirClient,
         plans: PlanExtractor,
         medicines: MedicationReader,
+        surgery: SurgeryReader,
         *,
         idle_seconds: float = 2 * 3600,
         limit: int = 200,
@@ -146,6 +159,7 @@ class Sessions:
         self._fhir = fhir
         self._plans = plans
         self._medicines = medicines
+        self._surgery = surgery
         self._idle_seconds = idle_seconds
         self._limit = limit
         self._items: dict[str, Session] = {}
@@ -155,7 +169,7 @@ class Sessions:
         if session is None or session.patient_id != patient_id:
             patient, found = await self._fhir.patient_chart(patient_id)
             record = Record(patient, found)
-            session = self._items[session_id] = start_session(session_id, record, await sections(record, self._plans, self._medicines))
+            session = self._items[session_id] = start_session(session_id, record, await sections(record, self._plans, self._medicines, self._surgery))
             self._prune()
         session.used = time.monotonic()
         return session

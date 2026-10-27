@@ -38,6 +38,7 @@ from agent.chat import sections as note_sections
 from agent.meds import MedicationReader
 from agent.plans import PlanExtractor
 from agent.record import Record
+from agent.surgery import SurgeryReader
 from agent.tools import fold
 
 HERE = Path(__file__).resolve().parent
@@ -45,7 +46,7 @@ ROOT = HERE.parent
 LANGUAGES = {"en": "English", "tr": "Turkish"}
 CATEGORIES = (
     "lookup", "medication", "labs", "pending", "documents", "compare", "briefing", "absent", "safety", "followup",
-    "isolation", "loops", "medications",
+    "isolation", "loops", "medications", "surgery",
 )
 FLAGGED = ("check", "unsourced", "unsupported")
 
@@ -329,7 +330,7 @@ def report(summary: dict, rows: list[dict], meta: dict, baseline: dict | None) -
         f"# ASKlepios eval: {meta['started']}",
         "",
         f"Model `{meta['model']}` · cohort anchor {meta['anchor']}, seed {meta['seed']} · charts from {meta['source']} · "
-        f"note sections (open loops, medications) {'in' if meta.get('loops') else 'not in'} the index · {meta['cases']} cases × {meta['repeats']}",
+        f"note sections (open loops, medications, surgical history) {'in' if meta.get('loops') else 'not in'} the index · {meta['cases']} cases × {meta['repeats']}",
         "",
         f"**Passed {share({'passed': summary['passed'], 'runs': summary['runs']})}**"
         + (f" · {summary['errors']} errors" if summary["errors"] else ""),
@@ -467,8 +468,9 @@ async def run(args: argparse.Namespace) -> int:
         try:
             extractor = PlanExtractor(extraction, settings.plan_cache, concurrency=6)
             medicines = MedicationReader(extraction, settings.plan_cache.parent / "medications", concurrency=6)
+            surgery = SurgeryReader(extraction, settings.plan_cache.parent / "surgery", concurrency=6)
             for patient in sorted({case.patient for case in chosen}):
-                sections[patient] = await note_sections(records[patient], extractor, medicines)
+                sections[patient] = await note_sections(records[patient], extractor, medicines, surgery)
         finally:
             await extraction.close()
     started = datetime.now(timezone.utc)
@@ -582,7 +584,7 @@ def main() -> None:
     parser.add_argument("--baseline", type=Path, help="an earlier run folder to compare with")
     parser.add_argument("--fhir", action="store_true", help="read charts from the FHIR server instead of the generator")
     parser.add_argument("--rescore", type=Path, help="score an earlier run's answers again instead of asking the agent")
-    parser.add_argument("--no-loops", action="store_true", help="leave the OPEN LOOPS and MEDICATION RECONCILIATION sections out of the chart index")
+    parser.add_argument("--no-loops", action="store_true", help="leave the sections computed from notes (open loops, medications, surgical history) out of the chart index")
     parser.add_argument("--loops", action="store_true", help="check open loops against loops.toml instead of the questions")
     parser.add_argument("--meds", action="store_true", help="check medication reconciliation against meds.toml instead")
     parser.add_argument("--surgery", action="store_true", help="check surgical history against surgery.toml instead")

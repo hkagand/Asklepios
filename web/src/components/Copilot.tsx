@@ -362,6 +362,7 @@ const TYPE_DOTS: Record<string, string> = {
   MedicationRequest: 'bg-amber-500',
   ServiceRequest: 'bg-slate-400',
   Condition: 'bg-rose-400',
+  Procedure: 'bg-slate-700',
 }
 
 function Citation({ reference, label, resource }: { reference: string; label?: string; resource?: Resource }) {

@@ -10,8 +10,9 @@ This repository is a synthetic demo. Every patient is invented. Do not load real
 - **ASKlepios** (`agent/`): a FastAPI service that answers questions about the patient whose chart is open. The model never sees raw FHIR JSON. It gets a compact chart index plus five read-only tools (`read_documents`, `lab_series`, `medication_history`, `order_history`, `search_record`). Citations are checked before they reach the panel.
 - **Open loops** (`agent/plans.py`, `agent/loops.py`): what each clinician's latest note planned, open orders and new results, tracked from order to result, review and telling the patient. See [Open loops](#open-loops).
 - **Medication reconciliation** (`agent/meds.py`): the medication orders against what the notes say, with a timeline per drug. See [Medications](#medications).
+- **Surgical history** (`agent/surgery.py`): every earlier operation, merged from Procedure records, notes and reports, by body region. See [Surgical history](#surgical-history).
 - **My day and prepared briefs** (`agent/briefs.py`): a clinician's clinic list with what needs attention, and a pre-visit brief per patient written before the clinic. See [My day](#my-day).
-- **Synthetic cohort** (`synthetic/`): 20 seeded patients with labs, visit notes, imaging and pathology reports, medications, orders and appointments, and a few deliberate gaps for the checks above to find. Reloading overwrites the same resource ids.
+- **Synthetic cohort** (`synthetic/`): 21 seeded patients with labs, visit notes, imaging and pathology reports, medications, orders, procedures and appointments, and a few deliberate gaps for the checks above to find. Reloading overwrites the same resource ids.
 
 The model is any OpenAI-compatible chat-completions endpoint that supports tool calling (vLLM, a LiteLLM proxy, and similar). Point `agent/.env` at it.
 
@@ -138,6 +139,21 @@ The record holds medication orders, not what the patient takes: there are no dis
 
 `GET /api/patients/{id}/medications` returns all of it. ASKlepios gets the discrepancies in its chart index as a MEDICATION RECONCILIATION section.
 
+## Surgical history
+
+Before an operation, the surgeon needs every earlier one: when, what, open or laparoscopic, where on the body, and any implants or complications. The Overview tab has a **Surgical history** card, and the patient band says how many operations are recorded and how many were abdominal.
+
+- **Sources, merged:** Procedure records (operations done here, or reported by the patient: `asserter` is the patient), notes ("Past surgical history: open appendicectomy 1996") and reports (operation notes, endoscopy reports). The model reads the notes and reports that use surgical words and lists the operations each states, quoting it. Planned or proposed operations, family members' operations, diagnostic tests and cancelled operations are left out; open loops follows the planned ones.
+- **Plain code:** the date ("1996", "June 2015", "aged 22", or the document's own date for an operation note); the body region from words in the name and body site (abdomen and pelvis, chest, head and neck, spine and limbs, or other, so nothing is hidden); and merging mentions of the same kind of operation at most a year apart. When sources give different years, both are shown.
+- **Flags:** done here, done elsewhere, only in notes (no Procedure record), implants and complications. Indirect signs (scars, post-surgical change on imaging) are listed apart, and so is a note saying the patient has had no operations.
+- **What was searched:** the card says how many procedure records, notes and reports it read and since when, so "none recorded" says what it rests on. Operations done elsewhere may not be in the record.
+- **Region filter:** All, or one region with its count, so "No chest operations recorded" is a statement, not a blank.
+- **Without the agent service** the card lists the Procedure records alone and says that notes were not read.
+- ASKlepios gets the list as a SURGICAL HISTORY section of its chart index. Asked whether a patient is fit for an operation, it says that is the surgeon's decision and lists the earlier operations, implants and complications.
+- The cohort's cases: p-2042 (gallstones before a laparoscopic cholecystectomy, after an appendicectomy the patient reported, a caesarean section only in notes, and an umbilical hernia repair with mesh done here), p-2041 (cholecystectomy only in a note; a port), p-1009 (knee replacement: nothing abdominal), p-1011 (hysterectomy, the note and the Procedure record disagree on the year), p-1014 (no previous operations; the mother's operation is family history).
+
+`GET /api/patients/{id}/surgery` returns the operations with their sources, the signs, and what was searched.
+
 ## My day
 
 **My day** is the selected clinician's clinic list. It defaults to the next day with appointments, and you can step back or forward a day.
@@ -160,6 +176,7 @@ Endpoints: `GET /api/clinicians/{id}/day?day=…`, `POST /api/clinicians/{id}/br
 Each note is read once per kind of reading. The results are cached under `agent/cache/` (gitignored; the base is set by `AGENT_PLAN_CACHE`), keyed by the note text, the model and the prompt version:
 - `plans/`: plan items
 - `medications/`: medicines mentioned
+- `surgery/`: operations mentioned in notes and reports
 - `briefs/`: prepared briefs
 
 Note text is sent to the model in `agent/.env`, as chat questions are.
@@ -171,7 +188,7 @@ Note text is sent to the model in `agent/.env`, as chat questions are.
 - reading notes and reports, and comparing reports;
 - briefings, follow-up questions, and questions the record cannot answer;
 - requests for advice, and questions about other patients;
-- open loops, medication reconciliation, and Turkish.
+- open loops, medication reconciliation, surgical history, and Turkish.
 
 ```bash
 python -m evals --lint
@@ -188,18 +205,19 @@ Other options:
 - `--judge`: also checks each answer against its reference with a model, for contradictions and for advice. By default the judge is the agent's model; set `EVAL_JUDGE_BASE_URL`, `EVAL_JUDGE_MODEL` and `EVAL_JUDGE_API_KEY` to use another.
 - `--baseline evals/runs/<run>`: lists the cases that got better or worse since an earlier run.
 - `--rescore evals/runs/<run>`: scores that run's saved answers again with the current `gold.toml` (and `--judge`), without asking the agent. Use it after fixing a check that was too strict.
-- `--no-loops`: leaves the OPEN LOOPS and MEDICATION RECONCILIATION sections out of the chart index, to compare with and without them.
+- `--no-loops`: leaves the sections computed from notes (OPEN LOOPS, MEDICATION RECONCILIATION, SURGICAL HISTORY) out of the chart index, to compare with and without them.
 - `--loops`: checks the open loops of every cohort patient against `evals/loops.toml`. That file can also put review and communication marks on a patient first, to check the review stages.
 - `--meds`: checks medication reconciliation against `evals/meds.toml`.
-- `--fresh` (with `--loops` or `--meds`): reads every note again instead of using the cache. With `--repeats 3`, it shows how much extraction varies.
+- `--surgery`: checks surgical history against `evals/surgery.toml`: each expected operation with its year, region, approach, implant and sources, and no others.
+- `--fresh` (with `--loops`, `--meds` or `--surgery`): reads every note again instead of using the cache. With `--repeats 3`, it shows how much extraction varies.
 
-`--loops` and `--meds` report the expected findings that were found and the ones nobody expected (false alarms). Each run writes its results and `report.md` to `evals/runs/` (gitignored). The model is not deterministic, so compare runs made with `--repeats 3` or more.
+`--loops`, `--meds` and `--surgery` report the expected findings that were found and the ones nobody expected (false alarms). Each run writes its results and `report.md` to `evals/runs/` (gitignored). The model is not deterministic, so compare runs made with `--repeats 3` or more.
 
 ## Layout
 
 ```
-agent/          ASKlepios service: chat, tools, citation verifier, open loops, medications, briefs, marks, audit log
-evals/          gold question set, open-loop and medication gold files, eval runner
+agent/          ASKlepios service: chat, tools, citation verifier, open loops, medications, surgical history, briefs, marks, audit log
+evals/          gold question set, open-loop, medication and surgery gold files, eval runner
 synthetic/      cohort generator and FHIR loader
 web/            chart viewer, My day and chat panel
 docker-compose.yml

@@ -478,3 +478,40 @@ async def surgical_history(record: Record, reader: SurgeryReader) -> dict:
         },
         "unread": unread,
     }
+
+
+def index_section(history: dict) -> str:
+    """The SURGICAL HISTORY section of the chart index: each operation with its sources, then what was searched."""
+    lines = []
+    for operation in history["operations"]:
+        parts = [
+            f"{operation['name']}, {operation['when']}",
+            operation["approach"] or "approach not recorded",
+            REGIONS[operation["region"]].lower(),
+        ]
+        if operation["side"]:
+            parts.append(operation["side"])
+        if operation["implants"]:
+            parts.append("implant: " + "; ".join(operation["implants"]))
+        if operation["complications"]:
+            parts.append("complications: " + "; ".join(operation["complications"]))
+        if operation["yearsDiffer"]:
+            parts.append("sources give different years: " + " and ".join(str(year) for year in operation["yearsDiffer"]))
+        if operation["doneHere"]:
+            parts.append("done at this hospital")
+        elif operation["elsewhere"]:
+            parts.append("done elsewhere")
+        if operation["onlyInNotes"]:
+            parts.append("only in notes, no procedure record")
+        refs = ", ".join(dict.fromkeys(source["ref"] for source in operation["sources"]))
+        lines.append("; ".join(parts) + f" [{refs}]")
+    lines += [f'Sign of earlier surgery, {clue["finding"]}: "{clue["quote"]}" [{clue["ref"]}]' for clue in history["clues"]]
+    lines += [f'A note states: "{item["quote"]}" [{item["ref"]}]' for item in history["noneStated"]]
+    searched = history["searched"]
+    since = f" since {day_text(date.fromisoformat(searched['earliest']))}" if searched["earliest"] else ""
+    head = (
+        "SURGICAL HISTORY: earlier operations from procedure records, notes and reports, newest first. Searched "
+        f"{searched['procedures']} procedure records, {searched['notes']} notes and {searched['reports']} reports{since}; "
+        "operations done elsewhere may not be recorded."
+    )
+    return head + "\n" + "\n".join(f"- {line}" for line in lines or ["no operations recorded"])
