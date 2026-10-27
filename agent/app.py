@@ -8,6 +8,7 @@ POST /api/patients/{patient_id}/chat streams server-sent events:
 GET /api/patients/{patient_id}/loops returns the open loops: each clinician's latest plan checked against the record.
 GET /api/loops/summary?patients=p-1,p-2 counts them by status for each patient, for the worklist.
 GET /api/patients/{patient_id}/medications reconciles the medication orders with what the notes say (meds.py).
+GET /api/patients/{patient_id}/surgery lists earlier operations from Procedure records, notes and reports (surgery.py).
 GET /api/clinicians/{practitioner_id}/day?day=... a clinician's day: appointments, open loops, medications, briefs.
 POST /api/clinicians/{practitioner_id}/briefs?day=... starts preparing that day's briefs (briefs.py).
 GET /api/patients/{patient_id}/brief the patient's prepared brief, and whether the chart has changed since.
@@ -48,6 +49,7 @@ from .marks import REVIEWABLE, Mark, Practitioner, communication, mark_of, marks
 from .briefs import Briefs, appointments_on, next_clinic_day, patient_of
 from .meds import DISCREPANCIES, MedicationReader, reconcile
 from .plans import PlanExtractor
+from .surgery import SurgeryReader, surgical_history
 from .record import TZ, Record
 
 FHIR_ID = re.compile(r"[A-Za-z0-9\-.]{1,64}")
@@ -66,6 +68,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.fhir = fhir
     app.state.plans = plans
     app.state.medicines = medicines
+    app.state.surgery = SurgeryReader(extraction, settings.plan_cache.parent / "surgery")
     app.state.audit = AuditLog(settings.audit_log)
     app.state.sessions = Sessions(fhir, plans, medicines)
     app.state.practitioners = {}
@@ -263,6 +266,20 @@ async def medications(patient_id: str, practitioner: Practitioner | None = Depen
         findings=dict(Counter(finding["kind"] for drug in picture["drugs"] for finding in drug["findings"])),
     )
     return picture
+
+
+@app.get("/api/patients/{patient_id}/surgery")
+async def surgery(patient_id: str, practitioner: Practitioner | None = Depends(acting)) -> dict:
+    record = await _record(checked(patient_id))
+    try:
+        history = await surgical_history(record, app.state.surgery)
+    except LlmError as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+    app.state.audit.write(
+        session="-", patient=patient_id, event="surgery", user=practitioner.id if practitioner else None,
+        operations=len(history["operations"]), unread=history["unread"],
+    )
+    return history
 
 
 @app.get("/api/clinicians/{practitioner_id}/day")

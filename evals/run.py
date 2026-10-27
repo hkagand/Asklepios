@@ -446,6 +446,10 @@ async def run(args: argparse.Namespace) -> int:
         from .meds import run_meds
 
         return await run_meds(load_settings(), records, HERE / "meds.toml", args.out, fresh=args.fresh, repeats=args.repeats)
+    if args.surgery:
+        from .surgery import run_surgery
+
+        return await run_surgery(load_settings(), records, HERE / "surgery.toml", args.out, fresh=args.fresh, repeats=args.repeats)
     if not chosen:
         print("No case matches the filters.")
         return 1
@@ -581,6 +585,7 @@ def main() -> None:
     parser.add_argument("--no-loops", action="store_true", help="leave the OPEN LOOPS and MEDICATION RECONCILIATION sections out of the chart index")
     parser.add_argument("--loops", action="store_true", help="check open loops against loops.toml instead of the questions")
     parser.add_argument("--meds", action="store_true", help="check medication reconciliation against meds.toml instead")
-    parser.add_argument("--fresh", action="store_true", help="with --loops or --meds: read every note again instead of using the cache")
+    parser.add_argument("--surgery", action="store_true", help="check surgical history against surgery.toml instead")
+    parser.add_argument("--fresh", action="store_true", help="with --loops, --meds or --surgery: read every note again instead of using the cache")
     parser.add_argument("--out", type=Path, default=HERE / "runs")
     raise SystemExit(asyncio.run(run(parser.parse_args())))
