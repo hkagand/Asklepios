@@ -147,8 +147,9 @@ def visible(answer: dict) -> tuple[str, set[str]]:
 
 
 def answer_language(text: str) -> str | None:
-    """Like chat.language_of, but from common words only: answers are full of Turkish names ("Dr. Elif Aydın")."""
-    words = re.findall(r"[^\W\d_]+", text.lower())
+    """Like chat.language_of, but from common words only: answers are full of Turkish names ("Dr. Elif Aydın"). Text in
+    double quotes is left out: a Turkish answer may quote an English note word for word."""
+    words = re.findall(r"[^\W\d_]+", re.sub(r"“[^”]*”|\"[^\"\n]*\"", " ", text).lower())
     turkish = sum(word in TURKISH_WORDS for word in words)
     english = sum(word in ENGLISH_WORDS for word in words)
     if turkish != english:

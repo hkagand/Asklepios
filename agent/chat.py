@@ -6,7 +6,7 @@ import asyncio
 import re
 import time
 from collections import Counter
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterable
 from dataclasses import dataclass, field
 
 from . import tools
@@ -19,7 +19,7 @@ from .loops import open_loops
 from .meds import MedicationReader, reconcile
 from .meds import index_section as medication_section
 from .plans import PlanExtractor
-from .record import Record, today_text
+from .record import Record, patient_name, today_text
 from .surgery import SurgeryReader, surgical_history
 from .surgery import index_section as surgery_section
 
@@ -40,7 +40,8 @@ find where something is mentioned.
 - OPEN LOOPS lists what each clinician's latest note planned and whether the record shows it was done. Report those \
 statuses as given. "No record to confirm it" means the record cannot show it either way, not that it was missed.
 - MEDICATION RECONCILIATION lists where the notes and the medication orders disagree. For any question about a \
-medicine or its dose, give the order and also every reconciliation line about that medicine. Orders show what was \
+medicine or its dose, including its current dose, first look for that medicine in MEDICATION RECONCILIATION, then give \
+the order and also every reconciliation line about that medicine. Orders show what was \
 prescribed, not what the patient takes: what the patient takes is known only from what a note says, as of its date.
 - SURGICAL HISTORY lists earlier operations merged from procedure records, notes and reports. For any question about \
 previous operations, answer from it and cite its ids. Give the approach, body region, implants and complications as \
@@ -91,22 +92,30 @@ TURKISH_WORDS = set(
 ENGLISH_WORDS = set(
     "the a an what why how when which who is are was were did does do has have had and or of to in on for with since "
     "last me my his her their this that there changed between brief summarise summarize show list any pending "
-    "overdue visit today result results".split()
+    "overdue visit today result results she he him it its be can could should would will let lets please tell give "
+    "about from at by after before raise increase decrease lower reduce start stop restart dose taking take".split()
 )
 
 
-def language_of(question: str) -> str | None:
-    """"Turkish" or "English" when the question is clearly in one of them."""
-    words = re.findall(r"[^\W\d_]+", question.lower())
-    turkish = sum(word in TURKISH_WORDS for word in words) + 2 * any(letter in TURKISH_LETTERS for letter in question)
+def language_of(question: str, names: Iterable[str] = ()) -> str | None:
+    """"Turkish" or "English" when the question is clearly in one of them. Turkish letters count only in words that
+    are not names: a capitalised word, or a word of `names` (the patient's), says nothing about the language, so "Raise
+    Hülya Güneş's ramipril dose" stays English. What follows an apostrophe is a suffix ("Güneş'in", "mg'a", "let's"),
+    not a word."""
+    skip = {word.lower() for name in names for word in re.findall(r"[^\W\d_]+", name)}
+    tokens = re.findall(r"(?<!['’])\b[^\W\d_]+", question)
+    raw = [word for word in tokens if word.lower() not in skip]
+    words = [word.lower() for word in raw]
+    letters = any(letter in TURKISH_LETTERS for word in raw if not word[0].isupper() for letter in word)
+    turkish = sum(word in TURKISH_WORDS for word in words) + 2 * letters
     english = sum(word in ENGLISH_WORDS for word in words)
     if turkish != english:
         return "Turkish" if turkish > english else "English"
     return None
 
 
-def reminder(question: str) -> str:
-    language = language_of(question)
+def reminder(question: str, names: Iterable[str] = ()) -> str:
+    language = language_of(question, names)
     reply = f"Answer in {language}" if language else "Reply in the language of the question above"
     return f"\n\n({reply}. Copy cited ids exactly.)"
 
@@ -196,7 +205,7 @@ async def run_turn(
     # A turn that does not finish is taken back out, so the next question starts from a clean history.
     checkpoint = len(session.messages)
     answered = False
-    session.messages.append({"role": "user", "content": question + reminder(question)})
+    session.messages.append({"role": "user", "content": question + reminder(question, [patient_name(session.record.patient)])})
     steps: list[dict] = []
     usage: Counter[str] = Counter()
     try:

@@ -27,12 +27,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 from collections import Counter
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import replace
-from datetime import date, datetime
+from datetime import date
 from typing import Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException
@@ -50,7 +51,7 @@ from .briefs import Briefs, appointments_on, next_clinic_day, patient_of
 from .meds import DISCREPANCIES, MedicationReader, reconcile
 from .plans import PlanExtractor
 from .surgery import SurgeryReader, surgical_history
-from .record import TZ, Record
+from .record import Record, clinic_today
 
 FHIR_ID = re.compile(r"[A-Za-z0-9\-.]{1,64}")
 
@@ -95,7 +96,8 @@ class ChatRequest(BaseModel):
 
 @app.get("/api/health")
 async def health() -> dict:
-    return {"model": app.state.settings.llm_model}
+    """The model, and the clinic day the agent works with; `fixedToday` when AGENT_TODAY sets it."""
+    return {"model": app.state.settings.llm_model, "today": clinic_today().isoformat(), "fixedToday": "AGENT_TODAY" in os.environ}
 
 
 async def practitioner_named(practitioner_id: str) -> Practitioner:
@@ -289,7 +291,7 @@ async def clinic_day(practitioner_id: str, day: date | None = None) -> dict:
     medication discrepancies and brief, and totals for the day."""
     clinician = await practitioner_named(practitioner_id)
     state = app.state
-    today = datetime.now(TZ).date()
+    today = clinic_today()
     try:
         day = day or await next_clinic_day(state.fhir, clinician.id, today)
         booked = await appointments_on(state.fhir, clinician.id, day)
@@ -342,7 +344,7 @@ async def prepare_briefs(practitioner_id: str, day: date | None = None, practiti
     """Starts preparing the briefs of a clinic day in the background; the day view shows them as they finish."""
     clinician = await practitioner_named(practitioner_id)
     state = app.state
-    day = day or await next_clinic_day(state.fhir, clinician.id, datetime.now(TZ).date())
+    day = day or await next_clinic_day(state.fhir, clinician.id, clinic_today())
     booked = await appointments_on(state.fhir, clinician.id, day)
     started = []
     for appointment in booked:

@@ -26,7 +26,7 @@ from .llm import LlmClient, LlmError
 from .meds import MedicationReader
 from .plans import PlanExtractor
 from .surgery import SurgeryReader
-from .record import Record, day_text, moment
+from .record import Record, clinic_today, day_text, moment
 
 BRIEF_VERSION = 1
 QUESTION = "Brief me for the visit on {day} with {clinician}."
@@ -167,7 +167,7 @@ async def _main(args: argparse.Namespace) -> int:
         max_steps=settings.max_steps,
     )
     try:
-        day = args.date or await next_clinic_day(fhir, args.practitioner, datetime.now().date())
+        day = args.date or await next_clinic_day(fhir, args.practitioner, clinic_today())
         booked = await appointments_on(fhir, args.practitioner, day)
         print(f"{len(booked)} appointments for {args.practitioner} on {day_text(day)}")
         for appointment in booked:

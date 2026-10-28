@@ -1,5 +1,5 @@
 import { code, read, refId, search, text, type Resource } from './fhir.ts'
-import { isoDay, todayIso, toTime } from './format.ts'
+import { isoDay, now as clockNow, todayIso, toTime } from './format.ts'
 
 export type Flag = 'H' | 'L'
 
@@ -207,7 +207,7 @@ export interface Change {
   baseline?: Point
 }
 
-export function lastVisit(chart: Chart, now = Date.now()): fhir4.Encounter | undefined {
+export function lastVisit(chart: Chart, now = clockNow()): fhir4.Encounter | undefined {
   return chart.encounters.find((encounter) => encounterStart(encounter) < now)
 }
 
@@ -248,7 +248,7 @@ export interface VisitItem {
   notes: fhir4.DocumentReference[]
 }
 
-export function timeline(chart: Chart, now = Date.now()): VisitItem[] {
+export function timeline(chart: Chart, now = clockNow()): VisitItem[] {
   const items: VisitItem[] = chart.encounters
     .filter((encounter) => encounterStart(encounter) < now)
     .map((encounter) => ({ key: encounter.id ?? '', time: encounterStart(encounter), encounter, notes: [] }))

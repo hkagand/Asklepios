@@ -42,7 +42,7 @@ python synthetic/generate.py --anchor 2026-10-23 --seed 2041
 python synthetic/load.py
 ```
 
-`--anchor` is “today” for the stories: histories end just before it, upcoming appointments start on or after it, on working days. Use today's date, since the chart viewer and the agent work with the real date. The same anchor and seed always produce the same ids, so a reload overwrites. A different anchor leaves resources from the old one behind (the loader says so); restart HAPI before loading for a clean dataset. Patient names depend on the anchor too.
+`--anchor` is “today” for the stories: histories end just before it, upcoming appointments start on or after it, on working days. Use today's date: the chart viewer and the agent work with the real date, unless `AGENT_TODAY` fixes it (step 3). The same anchor and seed always produce the same ids, so a reload overwrites. A different anchor leaves resources from the old one behind (the loader says so); restart HAPI before loading for a clean dataset. Patient names depend on the anchor too.
 
 **3. Configure the model**
 
@@ -53,6 +53,8 @@ cp agent/.env.example agent/.env
 Fill in `LLM_BASE_URL`, `LLM_MODEL` and, if the endpoint needs one, `LLM_API_KEY`. Leave `FHIR_BASE_URL` as `http://localhost:8080/fhir` unless HAPI is elsewhere.
 
 `agent/.env` is gitignored. Do not commit keys or internal hostnames.
+
+For a demo on a later day, set `AGENT_TODAY` to the anchor (for example `AGENT_TODAY=2026-10-23`). The agent and the chart viewer then treat that day as today, so the cohort reads as it was loaded without reloading it. The top bar shows "Demo date" while it is set. Real timestamps (marks, the audit log, when a brief was prepared) are not affected. If the agent is not running, the chart viewer falls back to the real date.
 
 **4. Start ASKlepios**
 

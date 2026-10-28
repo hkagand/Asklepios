@@ -1,8 +1,9 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
+import { agentHealth, type AgentHealth } from './agent.ts'
 import { ClinicianPicker, ClinicianProvider } from './components/clinician.tsx'
 import { SourceProvider } from './components/source.tsx'
 import { Badge } from './components/ui.tsx'
-import { formatWeekday } from './format.ts'
+import { formatDate, formatWeekday, now, setClinicToday } from './format.ts'
 import { useRoute } from './route.ts'
 import { PatientView } from './views/PatientView.tsx'
 import { MyDay } from './views/MyDay.tsx'
@@ -11,13 +12,16 @@ import { Worklist } from './views/Worklist.tsx'
 export default function App() {
   const route = useRoute()
   const patientId = route.page === 'patient' ? route.id : undefined
+  const clinicDay = useClinicDay()
   useEffect(() => {
     window.scrollTo(0, 0)
   }, [patientId])
+  // Wait for the agent's clinic day, so nothing renders with the wrong "today" first.
+  if (clinicDay === undefined) return null
   return (
     <ClinicianProvider>
       <SourceProvider>
-        <TopBar page={route.page} />
+        <TopBar page={route.page} fixedDay={clinicDay?.fixedToday ? clinicDay.today : undefined} />
         {route.page === 'patient' ? (
           <PatientView key={route.id} id={route.id} tab={route.tab} item={route.item} />
         ) : route.page === 'day' ? (
@@ -30,7 +34,31 @@ export default function App() {
   )
 }
 
-function TopBar({ page }: { page: string }) {
+/** The agent's clinic day, applied to the clock; null when the agent does not answer within two seconds. */
+function useClinicDay(): AgentHealth | null | undefined {
+  const [health, setHealth] = useState<AgentHealth | null | undefined>(undefined)
+  useEffect(() => {
+    let current = true
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 2000)
+    agentHealth(controller.signal)
+      .then((found) => {
+        if (!current) return
+        if (found.fixedToday) setClinicToday(found.today)
+        setHealth(found)
+      })
+      .catch(() => current && setHealth(null))
+      .finally(() => clearTimeout(timer))
+    return () => {
+      current = false
+      clearTimeout(timer)
+      controller.abort()
+    }
+  }, [])
+  return health
+}
+
+function TopBar({ page, fixedDay }: { page: string; fixedDay?: string }) {
   const link = (href: string, label: string, active: boolean) => (
     <a
       href={href}
@@ -57,8 +85,13 @@ function TopBar({ page }: { page: string }) {
         </nav>
         <div className="ml-auto flex items-center gap-4">
           <span className="hidden text-[13px] text-slate-500 xl:block">
-            {formatWeekday(Date.now())}, Demo General Hospital
+            {formatWeekday(now())}, Demo General Hospital
           </span>
+          {fixedDay && (
+            <Badge tone="amber" title="AGENT_TODAY fixes the clinic day, so the demo cohort reads as it was loaded">
+              Demo date {formatDate(fixedDay)}
+            </Badge>
+          )}
           <span className="hidden md:inline-flex">
             <Badge tone="violet" title="Every record is synthetic and labelled HTEST (test health data)">
               Synthetic data

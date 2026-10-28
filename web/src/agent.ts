@@ -190,7 +190,14 @@ const postJson = <T>(url: string, body: unknown) =>
 
 const patientPath = (patientId: string) => `/api/patients/${encodeURIComponent(patientId)}`
 
-export const agentHealth = (signal: AbortSignal) => getJson<{ model: string }>('/api/health', signal)
+export interface AgentHealth {
+  model: string
+  /** The clinic day the agent works with; `fixedToday` when AGENT_TODAY sets it. */
+  today: string
+  fixedToday: boolean
+}
+
+export const agentHealth = (signal: AbortSignal) => getJson<AgentHealth>('/api/health', signal)
 
 export type BriefState = 'missing' | 'ready' | 'outdated' | 'preparing'
 

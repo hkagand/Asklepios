@@ -8,6 +8,7 @@ answer can point back to its source.
 from __future__ import annotations
 
 import base64
+import os
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
@@ -57,6 +58,13 @@ def text_of(concept: dict | None) -> str:
 
 def code_of(concept: dict | None) -> str | None:
     return first((concept or {}).get("coding")).get("code")
+
+
+def clinic_today() -> date:
+    """Today in clinic time, or the day in AGENT_TODAY (YYYY-MM-DD): a demo cohort generated for one day can then be
+    shown on any later day as it was loaded."""
+    fixed = os.environ.get("AGENT_TODAY")
+    return date.fromisoformat(fixed) if fixed else datetime.now(TZ).date()
 
 
 def moment(value: str | None) -> datetime | None:
@@ -157,7 +165,7 @@ class Record:
     def __init__(self, patient: dict, found: dict[str, list[dict]], today: date | None = None) -> None:
         self.patient = patient
         self.id: str = patient["id"]
-        self.today = today or datetime.now(TZ).date()
+        self.today = today or clinic_today()
         self.resources: dict[str, dict] = {ref_of(patient): patient}
         for items in found.values():
             for item in items:

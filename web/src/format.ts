@@ -41,7 +41,14 @@ export function formatMonthYear(value: Moment): string {
 
 export const formatWeekday = (value: Moment): string => formats.weekday.format(new Date(value))
 export const formatTime = (value: Moment): string => formats.time.format(new Date(value))
-export const todayIso = (): string => isoDay(Date.now())
+// A fixed clinic day (the agent's AGENT_TODAY) moves the clock by whole days and keeps the time of day, so a demo
+// cohort generated for one day reads the same on any later day.
+let shiftMs = 0
+export const now = (): number => Date.now() + shiftMs
+export function setClinicToday(day: string): void {
+  shiftMs = daysBetween(isoDay(Date.now()), day) * DAY_MS
+}
+export const todayIso = (): string => isoDay(now())
 
 export function daysBetween(fromDay: string, toDay: string): number {
   return Math.round((Date.parse(toDay) - Date.parse(fromDay)) / DAY_MS)
