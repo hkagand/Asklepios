@@ -46,7 +46,7 @@ ROOT = HERE.parent
 LANGUAGES = {"en": "English", "tr": "Turkish"}
 CATEGORIES = (
     "lookup", "medication", "labs", "pending", "documents", "compare", "briefing", "absent", "safety", "followup",
-    "isolation", "loops", "medications", "surgery",
+    "isolation", "loops", "medications", "surgery", "onboarding",
 )
 FLAGGED = ("check", "unsourced", "unsupported")
 
@@ -63,6 +63,7 @@ class Case:
     cites: tuple[tuple[str, ...], ...]
     avoid: tuple[str, ...]
     language: str | None
+    source_labels: tuple[str, ...] = ()
 
     @property
     def expected_language(self) -> str | None:
@@ -86,6 +87,7 @@ def load_gold(path: Path) -> tuple[date, int, list[Case]]:
             mentions=_groups(item.get("mentions", [])),
             cites=_groups(item.get("cites", [])),
             avoid=tuple(item.get("avoid", [])),
+            source_labels=tuple(item.get("source_labels", [])),
             language=item.get("language"),
         )
         for item in gold.get("case", [])
@@ -141,7 +143,8 @@ def visible(answer: dict) -> tuple[str, set[str]]:
     for block in answer["blocks"]:
         if block["status"] == "unsupported":
             continue
-        lines.append("".join(segment.get("text", "") for segment in block["segments"]).strip())
+        # The panel renders **bold** and _italic_ without the marks.
+        lines.append(re.sub(r"\*\*|__", "", "".join(segment.get("text", "") for segment in block["segments"])).strip())
         cited |= {ref for segment in block["segments"] for ref in segment.get("cite", []) if ref in answer["sources"]}
     return "\n".join(line for line in lines if line), cited
 
@@ -157,9 +160,12 @@ def answer_language(text: str) -> str | None:
     return None
 
 
-def score(case: Case, text: str, cited: set[str]) -> dict[str, list[str]]:
-    """Failed checks by kind; empty when the answer passes."""
+def score(case: Case, text: str, cited: set[str], labels: dict[str, str] | None = None) -> dict[str, list[str]]:
+    """Failed checks by kind; empty when the answer passes. `labels` are the cited sources' chip labels."""
     failures: dict[str, list[str]] = {}
+    shown = [label for ref, label in (labels or {}).items() if ref in cited]
+    if unlabelled := [phrase for phrase in case.source_labels if not any(says(label, phrase) for label in shown)]:
+        failures["source_labels"] = unlabelled
     if missing := [" | ".join(group) for group in case.mentions if not any(says(text, phrase) for phrase in group)]:
         failures["mentions"] = missing
     if uncited := [" | ".join(group) for group in case.cites if not cited & set(group)]:
@@ -211,13 +217,15 @@ async def run_case(
     events = audit.events[session.id]
     final = next(event for event in reversed(events) if event["event"] == "answer")
     asked_at = max(index for index, event in enumerate(events) if event["event"] == "question")
-    failures = score(case, text, cited)
+    labels = {ref: answer["sources"][ref]["label"] for ref in cited}
+    failures = score(case, text, cited, labels)
     return row | {
         "passed": not failures,
         "failures": failures,
         "answer": text,
         "raw": final["text"],
         "cited": sorted(cited),
+        "labels": labels,
         "statuses": dict(Counter(block["status"] for block in answer["blocks"])),
         "tools": [{"name": event["name"], "arguments": event["arguments"]} for event in events[asked_at:] if event["event"] == "tool"],
         "elapsed_ms": answer["elapsedMs"],
@@ -433,7 +441,12 @@ def select(cases: list[Case], args: argparse.Namespace) -> list[Case]:
 async def run(args: argparse.Namespace) -> int:
     anchor, seed, cases = load_gold(args.gold)
     records = cohort_records(anchor, seed)
-    if problems := lint(cases, records):
+    from .onboarding import onboarded_records
+
+    # Patients onboarded from the national record (onboarding.toml), for questions only: the loops, meds and surgery
+    # checks cover the cohort.
+    question_records = records | onboarded_records(anchor, HERE / "onboarding.toml")
+    if problems := lint(cases, question_records):
         print("gold.toml has problems:\n" + "\n".join(f"  {problem}" for problem in problems))
         return 1
     chosen = select(cases, args)
@@ -456,6 +469,7 @@ async def run(args: argparse.Namespace) -> int:
         from .surgery import run_surgery
 
         return await run_surgery(load_settings(), records, HERE / "surgery.toml", args.out, fresh=args.fresh, repeats=args.repeats)
+    records = question_records
     if not chosen:
         print("No case matches the filters.")
         return 1
@@ -544,7 +558,7 @@ async def rescore(args: argparse.Namespace, chosen: list[Case]) -> int:
         if "answer" not in row:
             return
         case = lookup[row["case"]]
-        row["failures"] = score(case, row["answer"], set(row["cited"]))
+        row["failures"] = score(case, row["answer"], set(row["cited"]), row.get("labels"))
         row["passed"] = not row["failures"]
         if grader:
             async with gate:

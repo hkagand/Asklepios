@@ -15,11 +15,12 @@ seed = 2041
 #   cites     every group must be cited by at least one of its ids (only ids the assistant was shown count)
 #   avoid     phrases that must not appear
 #   language  "en" or "tr"; by default, the language the question is written in
+#   source_labels  phrases each cited source chip must show in at least one label (e.g. "national record")
 # Text in statements the panel hides (cites only ids never shown) does not count.
 #
 # Categories: lookup, medication, labs, pending, documents, compare, briefing, absent, safety, followup, isolation,
 # loops (plans in notes checked against the record; see also loops.toml), medications (see also meds.toml),
-# surgery (earlier operations; see also surgery.toml)
+# surgery (earlier operations; see also surgery.toml), onboarding (history imported from the national record)
 
 # ---------------------------------------------------------------- p-2041 Mehmet Yıldız, metastatic colon cancer
 
@@ -611,3 +612,64 @@ question = "What is İbrahim Yılmaz's current ramipril dose?"
 expected = "In English: the active order is ramipril 10 mg once daily, but the 24 Jul 2026 note records 5 mg; the two disagree."
 mentions = [["10 mg"], ["5 mg"]]
 cites = [["MedicationRequest/med-p-1003-006"]]
+
+# ---------------------------------------------------------------- onboarded patients (see also onboarding.toml)
+# p-3001 and p-3002 are charts as they read after onboarding from the national record on the anchor day, with the
+# patient's answers in onboarding.toml.
+
+[[case]]
+id = "p3001-onboarding-allergies"
+patient = "p-3001"
+category = "onboarding"
+question = "Does she have any allergies?"
+expected = "Yes: penicillin (urticaria and lip swelling, high criticality), recorded on 8 Nov 2004 at Demo State Hospital, from the national record imported on 23 Oct 2026."
+mentions = ["penicillin"]
+cites = [["AllergyIntolerance/nr-alg-p-3001-001"]]
+# The source shows on the citation chip the physician sees.
+source_labels = ["national record"]
+
+[[case]]
+id = "p3001-onboarding-medications"
+patient = "p-3001"
+category = "onboarding"
+question = "What medicines is she taking?"
+expected = "Per what she said at onboarding on 23 Oct 2026: amlodipine 5 mg once daily and metformin 1000 mg twice daily. She no longer takes atorvastatin 20 mg, though the national record still listed it (last prescribed Oct 2024). There are no orders here."
+mentions = ["amlodipine", "metformin", "atorvastatin", ["not taking", "no longer", "stopped", "does not take", "isn't taking", "is not taking"]]
+cites = [["MedicationStatement/nr-ms-p-3001-001"], ["MedicationStatement/nr-ms-p-3001-003"]]
+
+[[case]]
+id = "p3001-onboarding-asthma"
+patient = "p-3001"
+category = "onboarding"
+question = "Is her asthma still active?"
+expected = "No: asthma diagnosed in 1979 is recorded as resolved; it was imported from the national record, where it was still listed as active, and recorded as no longer current at onboarding."
+mentions = [["resolved", "no longer", "not active", "inactive"]]
+cites = [["Condition/nr-cond-p-3001-003"]]
+avoid = ["asthma is active", "has active asthma"]
+
+[[case]]
+id = "p3001-onboarding-hba1c-source"
+patient = "p-3001"
+category = "onboarding"
+question = "What was her latest HbA1c, and where was it measured?"
+expected = "7.1% on 11 Sep 2026, measured at Demo State Hospital, from the national record (previous 7.4%)."
+mentions = [["7.1"], ["demo state hospital"]]
+
+[[case]]
+id = "p3001-tr-onboarding-allergy"
+patient = "p-3001"
+category = "onboarding"
+language = "tr"
+question = "Penisilin alerjisi var mı?"
+expected = "Evet: penisilin alerjisi (ürtiker ve dudakta şişlik, yüksek kritiklik), 8 Kasım 2004'te Demo State Hospital'da kaydedilmiş; ulusal kayıttan aktarıldı."
+mentions = [["penisilin*", "penicillin*", "penicilin*"]]
+cites = [["AllergyIntolerance/nr-alg-p-3001-001"]]
+
+[[case]]
+id = "p3002-onboarding-ramipril"
+patient = "p-3002"
+category = "onboarding"
+question = "What dose of ramipril does he take?"
+expected = "He said at onboarding that he takes 10 mg once daily; the national record lists ramipril 5 mg once daily. There is no order here."
+mentions = [["10 mg"], ["5 mg"]]
+cites = [["MedicationStatement/nr-ms-p-3002-001"]]

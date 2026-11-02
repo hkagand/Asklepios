@@ -11,6 +11,7 @@ This repository is a synthetic demo. Every patient is invented. Do not load real
 - **Open loops** (`agent/plans.py`, `agent/loops.py`): what each clinician's latest note planned, open orders and new results, tracked from order to result, review and telling the patient. See [Open loops](#open-loops).
 - **Medication reconciliation** (`agent/meds.py`): the medication orders against what the notes say, with a timeline per drug. See [Medications](#medications).
 - **Surgical history** (`agent/surgery.py`): every earlier operation, merged from Procedure records, notes and reports, by body region. See [Surgical history](#surgical-history).
+- **Onboarding** (`agent/onboard.py`, `national/`): a new patient's history from a simulated national record, with their consent, reviewed by the clinician before anything is imported. See [National record service (simulated)](#national-record-service-simulated).
 - **My day and prepared briefs** (`agent/briefs.py`): a clinician's clinic list with what needs attention, and a pre-visit brief per patient written before the clinic. See [My day](#my-day).
 - **Synthetic cohort** (`synthetic/`): 21 seeded patients with labs, visit notes, imaging and pathology reports, medications, orders, procedures and appointments, and a few deliberate gaps for the checks above to find. Reloading overwrites the same resource ids.
 
@@ -117,6 +118,8 @@ The agent onboards a patient from that service for the acting clinician (`agent/
 3. `POST /api/onboarding/{onboarding}/accept` with a decision per item. Only accepted items are written, in one FHIR transaction with a Provenance naming the source, the consent and the clinician. Medicines are written as MedicationStatements with what the patient said (taking, a different dose, or not taking), never as orders. A new patient gets id `p-` and the last four digits of the national id. Nothing in the chart is changed.
 
 In the chart viewer, **New patient** (top bar) runs the same steps: the form, the code (a simulated phone beside it shows the SMS), and a review screen where each item can be imported or skipped and each medicine and old diagnosis is answered for the patient. Imported problems, allergies and medicines carry a **National record** badge; medicines appear under "What the patient says they take (not orders)". The web app reads the simulated phone through the `/national` proxy (`NATIONAL_SERVER`, default `http://localhost:8090`).
+
+**ASKlepios and imported items.** In the chart index every imported line starts "From the national record (simulated)", with the facility and import date, and its citation chip reads "… · national record", so the source shows in every answer. Medicines read as what the patient said at onboarding ("the patient says they take 10 mg once daily, which differs from the national record"), and such a difference, or a medicine the patient no longer takes, is also a line of MEDICATION RECONCILIATION.
 
 The service token stays on the agent. Onboarding sessions are in memory and end when the consent expires. Set `NATIONAL_BASE_URL` if the service is not on `http://localhost:8090`.
 
@@ -230,7 +233,9 @@ Note text is sent to the model in `agent/.env`, as chat questions are.
 - reading notes and reports, and comparing reports;
 - briefings, follow-up questions, and questions the record cannot answer;
 - requests for advice, and questions about other patients;
-- open loops, medication reconciliation, surgical history, and Turkish.
+- open loops, medication reconciliation, surgical history, onboarded patients, and Turkish.
+
+The onboarding cases ask about p-3001 and p-3002 as their charts read after onboarding on the anchor day, built with the answers in `evals/onboarding.toml`. `source_labels` checks what the cited source chips show (for example "national record").
 
 ```bash
 python -m evals --lint

@@ -131,6 +131,36 @@ def check_import(bundle: dict, items: list[Item], answers: list[dict], chart: st
     return problems, summary
 
 
+def onboarded_records(anchor: date, expected_path: Path) -> dict[str, Record]:
+    """The new patients of onboarding.toml as their charts read after onboarding on the anchor day, with the patient's
+    answers given there: for gold questions about imported history."""
+    bundles = national_bundles(anchor)
+    imported = datetime(anchor.year, anchor.month, anchor.day, 9, 0, tzinfo=timezone.utc)
+    records = {}
+    for want in tomllib.loads(expected_path.read_text(encoding="utf-8"))["record"]:
+        if want["chart"]:
+            continue
+        bundle = bundles[want["nationalId"]]
+        items = review_items(bundle, None, None, anchor)
+        patient_id = new_patient_id(want["nationalId"])
+        transaction = import_transaction(
+            bundle, items, decisions_for(items, want.get("answers", [])), patient_id=patient_id, existing=False,
+            practitioner=Practitioner("pr-aydin", "Dr. Elif Aydın"), consent="gold", onboarding="gold", now=imported,
+        )
+        found: dict[str, list[dict]] = {}
+        patient = None
+        for entry in transaction["entry"]:
+            resource = entry["resource"]
+            # As the FHIR server would stamp it on import.
+            resource["meta"] = resource.get("meta", {}) | {"lastUpdated": imported.isoformat()}
+            if resource["resourceType"] == "Patient":
+                patient = resource
+            elif resource["resourceType"] != "Provenance":
+                found.setdefault(resource["resourceType"], []).append(resource)
+        records[patient_id] = Record(patient, found, today=anchor)
+    return records
+
+
 async def run_onboarding(settings: Settings, records: dict[str, Record], anchor: date, expected_path: Path, out: Path) -> int:
     expected = tomllib.loads(expected_path.read_text(encoding="utf-8"))["record"]
     bundles = national_bundles(anchor)

@@ -275,9 +275,33 @@ async def reconcile(record: Record, reader: MedicationReader, loops: list[Loop])
             for drug in drugs
         ],
         "unlisted": unlisted,
+        "reported": reported(record),
         "adherence": adherence,
         "unread": unread,
     }
+
+
+def reported(record: Record) -> list[dict]:
+    """Where what the patient said at onboarding differs from what the national record listed: another dose, or a
+    medicine they no longer take."""
+    found = []
+    for statement in record.statements:
+        notes = [note.get("text", "").rstrip(".") for note in statement.get("note", [])]
+        listed = next((note.removeprefix("National record: ") for note in notes if note.startswith("National record: ")), None)
+        if not listed:
+            continue
+        name = text_of(statement.get("medicationCodeableConcept")) or "Medication"
+        dosage = ((statement.get("dosage") or [{}])[0].get("text") or "").strip()
+        when = statement.get("dateAsserted", "")[:10]
+        said = f"at onboarding on {day_text(date.fromisoformat(when))}" if when else "at onboarding"
+        if statement.get("status") == "stopped":
+            text = f"The patient said {said} that they no longer take it; the national record still lists {listed}"
+        elif dosage and dosage not in listed:
+            text = f"The patient said {said} that they take {dosage}; the national record lists {listed}"
+        else:
+            continue
+        found.append({"drug": name, "text": text, "refs": [ref_of(statement)]})
+    return found
 
 
 def index_section(picture: dict) -> str:
@@ -289,6 +313,7 @@ def index_section(picture: dict) -> str:
         if finding["kind"] in DISCREPANCIES
     ]
     lines += [f"{item['drug']}: {item['finding']['text']} [{', '.join(item['finding']['refs'])}]" for item in picture["unlisted"]]
+    lines += [f"{item['drug']}: {item['text']} [{', '.join(item['refs'])}]" for item in picture.get("reported", [])]
     lines += [f'Adherence, {day_text(date.fromisoformat(item["date"]))}: "{item["quote"]}" [{item["note"]}]' for item in picture["adherence"]]
     head = f"MEDICATION RECONCILIATION: orders against what the notes say. {picture['uncertainty']}"
     return head + "\n" + "\n".join(f"- {line}" for line in lines or ["no discrepancies found"])

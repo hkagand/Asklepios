@@ -367,6 +367,29 @@ class Record:
             text += f": {appointment['description']}"
         return f"{text} [{ref_of(appointment)}]"
 
+    @staticmethod
+    def imported_from(resource: dict, *, facility: bool = True) -> str | None:
+        """For an item imported at onboarding: "from the national record (simulated)", where it was done or measured,
+        and when it was imported."""
+        if not any(tag.get("code") == "national-import" for tag in resource.get("meta", {}).get("tag", [])):
+            return None
+        parts = ["from the national record (simulated)"]
+        where = resource.get("location", {}).get("display") or next(
+            (performer.get("display") for performer in resource.get("performer", []) if performer.get("display")), None
+        )
+        if facility and where:
+            parts.append(where)
+        imported = moment(resource.get("meta", {}).get("lastUpdated"))
+        if imported:
+            parts.append(f"imported {day_text(imported)}")
+        return ", ".join(parts)
+
+    def _sourced(self, resource: dict, line: str, *, facility: bool = True) -> str:
+        """The line with its id; an imported item's line starts with its source."""
+        source = self.imported_from(resource, facility=facility)
+        lead = f"{source[0].upper()}{source[1:]}: " if source else ""
+        return f"{lead}{line} [{ref_of(resource)}]"
+
     def condition_line(self, condition: dict) -> str:
         concept = condition.get("code", {})
         coding = first(concept.get("coding"))
@@ -387,7 +410,7 @@ class Record:
         asserter = condition.get("asserter", {}).get("display")
         if asserter:
             parts.append(f"recorded by {asserter}")
-        return "; ".join(parts) + f" [{ref_of(condition)}]"
+        return self._sourced(condition, "; ".join(parts), facility=False)
 
     def allergy_line(self, allergy: dict) -> str:
         parts = [text_of(allergy.get("code")) or "Allergy"]
@@ -402,7 +425,8 @@ class Record:
         recorded = moment(allergy.get("recordedDate"))
         if recorded:
             parts.append(f"recorded {day_text(recorded)}")
-        return "; ".join(parts) + f" [{ref_of(allergy)}]"
+        parts += [note["text"].rstrip(".") for note in allergy.get("note", []) if note.get("text")]
+        return self._sourced(allergy, "; ".join(parts))
 
     def medication_line(self, medication: dict) -> str:
         name = text_of(medication.get("medicationCodeableConcept")) or "Medication"
@@ -434,6 +458,8 @@ class Record:
         site = ", ".join(text_of(item) for item in procedure.get("bodySite", []) if text_of(item))
         if site:
             parts.append(f"site: {site}")
+        if location := procedure.get("location", {}).get("display"):
+            parts.append(f"at {location}")
         if procedure.get("asserter", {}).get("reference", "").startswith("Patient/"):
             parts.append("reported by the patient, not performed here")
         performers = [item.get("actor", {}).get("display") for item in procedure.get("performer", [])]
@@ -454,18 +480,26 @@ class Record:
         reports = [item.get("reference") for item in procedure.get("report", []) if item.get("reference")]
         if reports:
             parts.append("report " + ", ".join(f"[{ref}]" for ref in reports))
-        return "; ".join(parts) + f" [{ref_of(procedure)}]"
+        return self._sourced(procedure, "; ".join(parts), facility=False)
 
     def statement_line(self, statement: dict) -> str:
         name = text_of(statement.get("medicationCodeableConcept")) or "Medication"
         dosage = first(statement.get("dosage")).get("text")
-        parts = [f"{name}: {dosage}" if dosage else name]
-        parts.append({"active": "taking it, per the patient", "stopped": "not taking it, per the patient"}.get(statement.get("status", ""), statement.get("status", "")))
+        notes = [note["text"].rstrip(".") for note in statement.get("note", []) if note.get("text")]
+        listed = next((note.removeprefix("National record: ") for note in notes if note.startswith("National record: ")), None)
+        if statement.get("status") == "stopped":
+            said = "the patient says they no longer take it"
+        elif listed and dosage and dosage not in listed:
+            said = f"the patient says they take {dosage}, which differs from the national record"
+        else:
+            said = f"the patient says they take it{f': {dosage}' if dosage else ''}"
+        parts = [f"{name}: {said}"]
+        if listed:
+            parts.append(f"national record lists {listed}")
         asserted = moment(statement.get("dateAsserted"))
         if asserted:
             parts.append(f"stated {day_text(asserted)}")
-        parts += [note["text"].rstrip(".") for note in statement.get("note", []) if note.get("text")]
-        return "; ".join(parts) + f" [{ref_of(statement)}]"
+        return self._sourced(statement, "; ".join(parts), facility=False)
 
     def due_text(self, due: date) -> str:
         days = (due - self.today).days
@@ -541,6 +575,8 @@ class Record:
             text += f"; reference {series.range}"
         if len(series.points) > 2:
             text += f"; {len(series.points)} results since {day_text(series.points[0].when)}"
+        if source := self.imported_from(self.resources.get(last.ref, {})):
+            text += f"; latest {source}"
         return text
 
     # ------------------------------------------------------- full renders
@@ -586,10 +622,15 @@ class Record:
         return "\n".join(readings) or f"[{ref}] has no numeric value."
 
     def label(self, ref: str) -> str:
-        """A short name for a citation chip."""
+        """A short name for a citation chip; an item imported at onboarding says it is from the national record."""
         resource = self.resources.get(ref)
         if resource is None:
             return ref
+        if self.imported_from(resource):
+            return f"{self._label(ref, resource)} · national record"
+        return self._label(ref, resource)
+
+    def _label(self, ref: str, resource: dict) -> str:
         kind = resource["resourceType"]
         if ref in self.document_by_ref:
             document = self.document_by_ref[ref]

@@ -52,6 +52,8 @@ never had surgery.
 is the surgeon's decision, then list every operation in SURGICAL HISTORY with its date, approach, body region, \
 implants and complications, citing each. Do not assess fitness from results or vital signs, and do not say whether \
 anything rules the operation in or out.
+- Lines that start "From the national record (simulated)" were imported at onboarding from records kept elsewhere: \
+whenever you use one, say it comes from the national record, with the facility and date the line gives.
 - If the record does not answer the question, say so plainly, e.g. "No echocardiogram is on file."
 - For an open order write "no result on file". Do not say that the test was or was not drawn, performed or \
 scheduled unless the record says so.
