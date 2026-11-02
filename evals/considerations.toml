@@ -1,0 +1,84 @@
+# Scripted visits for clinical considerations from the second model (agent/considerations.py). Check with:
+#   python -m evals --considerations [--compare] [--repeats 3]
+#
+# Uses the anchor and seed in gold.toml; patients onboarded in onboarding.toml (p-3001, p-3002) can be used too. Each
+# visit's jottings get the code alerts the visit would (allergy, dose), then the model's considerations are made once
+# from all of them, as after the last jotting. Checks, on the considerations code keeps:
+#   expect   each must be raised by some consideration: one with a phrase from every group of "all" (a trailing *
+#            matches any word ending), and of one of "kind" if given; "about" names it in the report
+#   forbid   phrases no consideration may contain: wrong claims a small model was seen to make, or facts the visit
+#            does not have
+# Each case states its clinical reasoning, so a failure can be judged against it.
+
+[[visit]]
+id = "ckd-nsaid"
+patient = "p-1011"
+# CKD stage 3 (eGFR 38) with an NSAID plan: NSAIDs can worsen kidney function, more so with losartan.
+jottings = ["Right knee pain for 3 weeks, worse on stairs", "Plan: start ibuprofen 400 mg three times daily"]
+expect = [{ about = "ibuprofen with CKD", all = [["ibuprofen", "nsaid*", "anti-inflammator*"], ["kidney", "ckd", "egfr", "renal", "nephro*"]], kind = ["caution"] }]
+
+[[visit]]
+id = "amlodipine-oedema"
+patient = "p-1003"
+# Ankle swelling is a common dose-related effect of amlodipine.
+jottings = ["Ankles more swollen over 2 weeks, worse in the evening"]
+expect = [{ about = "amlodipine as a cause", all = [["amlodipine", "calcium channel blocker*"]] }]
+
+[[visit]]
+id = "metformin-gi"
+patient = "p-1001"
+# Loose stools are a common effect of metformin.
+jottings = ["Occasional loose stools for a month, no blood, no weight loss"]
+expect = [{ about = "metformin as a cause", all = [["metformin"]] }]
+
+[[visit]]
+id = "statin-myalgia"
+patient = "p-1008"
+# Muscle aches on a statin: statin-associated muscle symptoms.
+jottings = ["Aching in both thighs for 2 weeks, no injury"]
+expect = [{ about = "rosuvastatin as a cause", all = [["rosuvastatin", "statin*"]] }]
+
+[[visit]]
+id = "hf-decompensation"
+patient = "p-1004"
+# HFrEF with more breathlessness, weight gain and oedema: worsening heart failure, fluid overload.
+jottings = ["More breathless on one flight of stairs over a week", "Weight up 3 kg since the last visit, pitting oedema to mid-shin"]
+expect = [{ about = "worsening heart failure", all = [["heart failure", "hfref", "fluid overload", "fluid retention", "decompensat*", "congest*", "cardiac"]] }]
+
+[[visit]]
+id = "hypothyroid-undertreated"
+patient = "p-1014"
+# Tiredness, cold and weight gain on levothyroxine with the last TSH high: under-replaced hypothyroidism.
+jottings = ["Tired and feeling cold, weight up 2 kg over 3 months"]
+expect = [{ about = "thyroid under-replacement", all = [["thyroid*", "hypothyroid*", "tsh", "levothyroxine"]] }]
+
+[[visit]]
+id = "penicillin-pharyngitis"
+patient = "p-1010"
+# A penicillin allergy (high criticality) with an amoxicillin plan; the code alert also raises it.
+jottings = ["Sore throat for 4 days, fever 38.4, tonsillar exudate, no cough", "Plan: amoxicillin 500 mg three times daily for 5 days"]
+expect = [{ about = "penicillin allergy with amoxicillin", all = [["penicillin"], ["allerg*", "amoxicillin"]], kind = ["caution"] }]
+
+[[visit]]
+id = "onboarded-coamoxiclav"
+patient = "p-3001"
+# A penicillin allergy imported from the national record; co-amoxiclav contains amoxicillin.
+jottings = ["Painful red swelling of the left lower leg for 3 days, fever 38.1", "Plan: co-amoxiclav 625 mg three times daily for 7 days"]
+expect = [{ about = "penicillin allergy with co-amoxiclav", all = [["penicillin"], ["allerg*", "amoxicillin", "co-amoxiclav", "amoxiclav"]], kind = ["caution"] }]
+
+[[visit]]
+id = "amoxicillin-egfr-53"
+patient = "p-1004"
+# Chest infection in HFrEF with eGFR 53. Amoxicillin needs no dose change at this eGFR: MedGemma once claimed it did.
+jottings = ["Productive cough for 5 days, fever 38.2, crackles at the right base", "Plan: amoxicillin 1 g three times daily for 5 days"]
+expect = [{ about = "a chest infection or pneumonia", all = [["pneumonia", "chest infection", "lower respiratory", "respiratory infection", "infection"]] }]
+forbid = ["dose adjust*", "adjust the dose", "reduce the dose", "lower dose", "dose reduction", "renally adjust*"]
+
+[[visit]]
+id = "anaemia-tired"
+patient = "p-2041"
+# Tiredness with haemoglobin 9.8 and ferritin 9 on chemotherapy: anaemia. Nothing in the visit points to COVID-19,
+# which MedGemma once raised "though not stated in the record".
+jottings = ["More tired over 3 weeks, breathless walking uphill"]
+expect = [{ about = "anaemia as a cause", all = [["anaemi*", "anemi*", "hemoglobin", "haemoglobin", "iron", "ferritin"]] }]
+forbid = ["covid*"]

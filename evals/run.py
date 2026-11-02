@@ -473,6 +473,12 @@ async def run(args: argparse.Namespace) -> int:
         from .visits import run_visits
 
         return await run_visits(load_settings(), question_records, HERE / "visits.toml", args.out, repeats=args.repeats)
+    if args.considerations:
+        from .considerations import run_considerations
+
+        return await run_considerations(
+            load_settings(), question_records, HERE / "considerations.toml", args.out, repeats=args.repeats, compare=args.compare,
+        )
     records = question_records
     if not chosen:
         print("No case matches the filters.")
@@ -612,6 +618,8 @@ def main() -> None:
     parser.add_argument("--meds", action="store_true", help="check medication reconciliation against meds.toml instead")
     parser.add_argument("--surgery", action="store_true", help="check surgical history against surgery.toml instead")
     parser.add_argument("--visits", action="store_true", help="check live help on visit jottings against visits.toml instead")
+    parser.add_argument("--considerations", action="store_true", help="check clinical considerations from the second model against considerations.toml instead")
+    parser.add_argument("--compare", action="store_true", help="with --considerations: run the agent's own model on the same visits too")
     parser.add_argument("--onboarding", action="store_true", help="check onboarding reviews and imports against onboarding.toml instead")
     parser.add_argument("--fresh", action="store_true", help="with --loops, --meds or --surgery: read every note again instead of using the cache")
     parser.add_argument("--out", type=Path, default=HERE / "runs")
