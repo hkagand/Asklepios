@@ -3,11 +3,14 @@ import {
   addJotting,
   cancelVisit,
   deleteJotting,
+  draftNote,
   editJotting,
+  signNote,
   tickAgenda,
   type AgendaItem,
   type AgendaKind,
   type Jotting,
+  type NoteDraft,
   type NoteSection,
   type Visit,
 } from '../agent.ts'
@@ -45,6 +48,7 @@ export function VisitView({
   onStart: () => void
   starting: boolean
 }) {
+  if (visit?.status === 'signed') return <Signed visit={visit} />
   if (!visit || visit.status !== 'open') {
     return (
       <Card title="No visit in progress">
@@ -123,7 +127,181 @@ function Workspace({ chart, visit, onChange }: { chart: Chart; visit: Visit; onC
           onDelete={(jotting) => run(() => deleteJotting(visit.id, jotting.id))}
         />
       </div>
+      <NoteCard visit={visit} pending={pending.length > 0} run={run} />
     </div>
+  )
+}
+
+const ORDER: NoteSection[] = ['subjective', 'objective', 'assessment', 'plan']
+const TITLES: Record<NoteSection, string> = { subjective: 'Subjective', objective: 'Objective', assessment: 'Assessment', plan: 'Plan' }
+
+/** A section's text for editing: the plan as "- " lines, the rest as one paragraph (as the agent writes the note). */
+function textsOf(draft: NoteDraft): Record<NoteSection, string> {
+  return Object.fromEntries(
+    ORDER.map((section) => [
+      section,
+      section === 'plan'
+        ? draft.sections.plan.map((item) => `- ${item.text}`).join('\n')
+        : draft.sections[section].map((item) => item.text).join(' '),
+    ]),
+  ) as Record<NoteSection, string>
+}
+
+/** The note: drafted from the jottings, every line traced to its sources and checked; edited and signed by the clinician. */
+function NoteCard({ visit, pending, run }: { visit: Visit; pending: boolean; run: (action: () => Promise<Visit>) => Promise<void> }) {
+  const draft = visit.draft
+  const [texts, setTexts] = useState<Record<NoteSection, string>>()
+  const [shownDraft, setShownDraft] = useState<string>()
+  const [busy, setBusy] = useState<'drafting' | 'signing'>()
+  if (draft && draft.created !== shownDraft) {
+    setShownDraft(draft.created)
+    setTexts(textsOf(draft))
+  }
+  // Names for what a drafted line cites: jottings by id, record items by the label their link chip shows.
+  const labels = new Map<string, string>(
+    visit.jottings.flatMap((jotting) => (jotting.review?.links ?? []).map((link) => [link.ref, link.label] as [string, string])),
+  )
+  const flagged = draft ? ORDER.flatMap((section) => draft.sections[section]).filter((item) => item.issues.length > 0).length : 0
+  // Allergy and dose alerts from the jottings, repeated where the note is signed.
+  const alerts = visit.jottings.flatMap((jotting) => (jotting.review?.alerts ?? []).map((alert) => [jotting.id, alert.text] as [string, string]))
+  const changed =
+    !!draft && (draft.jottings.length !== visit.jottings.length || draft.jottings.some((id, index) => visit.jottings[index]?.id !== id))
+  const act = async (kind: 'drafting' | 'signing', action: () => Promise<Visit>) => {
+    setBusy(kind)
+    await run(action)
+    setBusy(undefined)
+  }
+  const sign = () => {
+    if (!texts || !window.confirm(`Sign this note as ${visit.practitionerName}? It is added to the chart and the visit is closed.`)) return
+    void act('signing', () => signNote(visit.id, texts))
+  }
+
+  return (
+    <Card
+      title="Visit note"
+      subtitle={
+        draft
+          ? `Drafted at ${formatTime(draft.created)} from ${draft.jottings.length} jottings · edit as needed, then sign`
+          : 'Drafted from your jottings only; every line shows what it came from'
+      }
+      action={
+        draft && (
+          <button
+            type="button"
+            onClick={() => void act('drafting', () => draftNote(visit.id))}
+            disabled={!!busy || pending}
+            className="text-[13px] font-semibold text-teal-700 hover:underline disabled:text-slate-400"
+          >
+            {busy === 'drafting' ? 'Drafting…' : 'Draft again'}
+          </button>
+        )
+      }
+    >
+      {!draft || !texts ? (
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            className={PRIMARY}
+            disabled={visit.jottings.length === 0 || !!busy || pending}
+            onClick={() => void act('drafting', () => draftNote(visit.id))}
+          >
+            {busy === 'drafting'
+              ? 'Drafting the note…'
+              : `Draft the note from ${visit.jottings.length} jotting${visit.jottings.length === 1 ? '' : 's'}`}
+          </button>
+          {pending && <span className="text-[13px] text-slate-500">Waiting for the last jotting to be read…</span>}
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {(flagged > 0 || draft.unused.length > 0 || changed) && (
+            <div className="rounded-md border-l-4 border-amber-500 bg-amber-50 px-3 py-2 text-[13.5px] text-amber-900">
+              {changed && <p className="font-semibold">The jottings changed after this draft: draft again to include them.</p>}
+              {flagged > 0 && (
+                <p>
+                  {flagged} drafted line{flagged === 1 ? '' : 's'} to check: marked below.
+                </p>
+              )}
+              {draft.unused.length > 0 && <p>Not in the draft: {draft.unused.join(', ')}. Add them by hand or draft again.</p>}
+            </div>
+          )}
+          {ORDER.map((section) => (
+            <div key={section}>
+              <label className="block">
+                <span className="text-[12.5px] font-bold uppercase tracking-wide text-slate-600">{TITLES[section]}</span>
+                <textarea
+                  value={texts[section]}
+                  rows={Math.max(2, texts[section].split('\n').length + (section === 'plan' ? 0 : Math.ceil(texts[section].length / 110)))}
+                  onChange={(event) => setTexts({ ...texts, [section]: event.target.value })}
+                  placeholder={section === 'plan' ? 'One action per line, starting with "- "' : 'Nothing recorded'}
+                  className="mt-1 w-full rounded-md border border-slate-300 bg-sheet px-3 py-2 text-[14.5px] leading-relaxed text-slate-900 focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900"
+                />
+              </label>
+              {draft.sections[section].length > 0 && (
+                <ul className="mt-1 space-y-0.5">
+                  {draft.sections[section].map((item, index) => (
+                    <li key={index} className="flex flex-wrap items-baseline gap-x-2 text-[12px] text-slate-500">
+                      <span className="max-w-[40ch] truncate" title={item.text}>
+                        {item.text}
+                      </span>
+                      <span aria-hidden>←</span>
+                      {item.sources.map((source) => (
+                        <span key={source} className="rounded-sm bg-mark-soft px-1 font-semibold text-slate-700">
+                          {source.startsWith('J') ? source : (labels.get(source) ?? source)}
+                        </span>
+                      ))}
+                      {item.issues.map((issue) => (
+                        <span key={issue} className="rounded-sm bg-amber-100 px-1 font-semibold text-amber-900">
+                          ⚠ {issue}
+                        </span>
+                      ))}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          ))}
+          {alerts.length > 0 && (
+            <div className="rounded-md border-l-4 border-rose-500 bg-rose-50 px-3 py-2 text-[13.5px] text-rose-900">
+              <p className="font-semibold">Raised during this visit, check before signing:</p>
+              <ul className="mt-0.5 list-disc pl-5">
+                {alerts.map(([id, text]) => (
+                  <li key={id + text}>
+                    {text} <span className="font-mono text-[12px] text-rose-700">({id})</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          <div className="flex flex-wrap items-center gap-3 border-t border-slate-200 pt-3">
+            <button type="button" className={PRIMARY} disabled={!!busy || pending} onClick={sign}>
+              {busy === 'signing' ? 'Signing…' : `Sign note as ${visit.practitionerName}`}
+            </button>
+            <span className="text-[12.5px] text-slate-500">
+              Saved to the chart with you as author; a provenance record says Asklepios drafted it from your jottings.
+            </span>
+          </div>
+        </div>
+      )}
+    </Card>
+  )
+}
+
+function Signed({ visit }: { visit: Visit }) {
+  const open = () => {
+    window.location.hash = patientHref(visit.patient, 'visits', visit.id).slice(1)
+    // The chart is loaded once per page; load it again to show the new note.
+    window.location.reload()
+  }
+  return (
+    <Card title="Note signed">
+      <p className="text-[15px] text-slate-700">
+        The visit note is in the chart, signed by {visit.practitionerName}, and the visit is closed. Its plan is tracked in open loops
+        from now on.
+      </p>
+      <button type="button" onClick={open} className={`${PRIMARY} mt-4`}>
+        Open the note
+      </button>
+    </Card>
   )
 }
 

@@ -15,13 +15,16 @@ from pathlib import Path
 
 from agent.config import Settings
 from agent.jottings import review
+from agent.notes import draft as draft_note
+from agent.notes import note_text, section_text
+from agent.record import Document
 from agent.llm import LlmClient
 from agent.loops import open_loops
 from agent.meds import MedicationReader, reconcile
 from agent.plans import PlanExtractor
 from agent.record import Record
+from agent.visits import Jotting, Visit, todays_appointment
 from agent.visits import agenda as build_agenda
-from agent.visits import todays_appointment
 
 from .run import says
 
@@ -51,6 +54,30 @@ def check(want: dict, result: dict, agenda: list[dict]) -> list[str]:
     return problems
 
 
+async def check_note(llm: LlmClient, plans: PlanExtractor, record: Record, agenda, jottings: list[tuple[str, dict]], expected_plan: list[str]) -> tuple[list[str], dict]:
+    """Drafts the note as the agent would, checks it, and reads its plan back the way open loops will."""
+    visit = Visit(id="visit-eval", patient=record.id, practitioner="pr-aydin", practitioner_name="Dr. Elif Aydın",
+                  started=f"{record.today.isoformat()}T09:00:00+03:00", agenda=agenda,
+                  jottings=[Jotting(f"J{index}", f"{record.today.isoformat()}T09:0{index}:00+03:00", text, "pr-aydin", result)
+                            for index, (text, result) in enumerate(jottings, 1)])
+    drafted = await draft_note(llm, record, visit)
+    problems = []
+    for section, items in drafted["sections"].items():
+        problems += [f"{section}: \"{item['text']}\": {', '.join(item['issues'])}" for item in items if item["issues"]]
+    if drafted["unused"]:
+        problems.append(f"jottings not in the note: {', '.join(drafted['unused'])}")
+    sections = {section: section_text(section, items) for section, items in drafted["sections"].items()}
+    when = datetime.fromisoformat(visit.started)
+    text = note_text(record, visit.practitioner_name, "Internal Medicine", when, sections)
+    document = Document(ref="DocumentReference/note-visit-eval", kind="note", category="Progress note",
+                        title="Internal medicine visit note", when=when, author=visit.practitioner_name, text=text)
+    items = await plans.items(document)
+    for phrase in expected_plan:
+        if not any(says(item.quote, phrase) for item in items):
+            problems.append(f"plan \"{phrase}\" not read back from the note (plan items: {[item.quote for item in items]})")
+    return problems, {"sections": drafted["sections"], "unused": drafted["unused"], "text": text, "plan": [item.quote for item in items]}
+
+
 async def run_visits(settings: Settings, records: dict[str, Record], expected_path: Path, out: Path, *, repeats: int) -> int:
     visits = tomllib.loads(expected_path.read_text(encoding="utf-8"))["visit"]
     if unknown := sorted({visit["patient"] for visit in visits} - set(records)):
@@ -67,16 +94,23 @@ async def run_visits(settings: Settings, records: dict[str, Record], expected_pa
                 record = records[visit["patient"]]
                 loops, _ = await open_loops(record, plans)
                 picture = await reconcile(record, medicines, loops)
-                agenda = [{"id": item.id, "kind": item.kind, "text": item.text} for item in build_agenda(record, loops, picture, todays_appointment(record))]
+                items = build_agenda(record, loops, picture, todays_appointment(record))
+                agenda = [{"id": item.id, "kind": item.kind, "text": item.text} for item in items]
                 earlier: list[str] = []
+                reviewed: list[tuple[str, dict]] = []
                 for want in visit["jottings"]:
                     result = await review(llm, record, agenda, earlier, want["text"])
                     problems = check(want, result, agenda)
                     run.append({"patient": visit["patient"], "jotting": want["text"], "result": result, "problems": problems})
                     earlier.append(want["text"])
+                    reviewed.append((want["text"], result))
+                problems, note = await check_note(llm, plans, record, items, reviewed, visit.get("plan", []))
+                run.append({"patient": visit["patient"], "jotting": "(the note)", "result": note, "problems": problems})
             runs.append(run)
-            passed = sum(not item["problems"] for item in run)
-            print(f"run {repeat + 1}: {passed}/{len(run)} jottings as expected")
+            jottings = [item for item in run if item["jotting"] != "(the note)"]
+            notes = [item for item in run if item["jotting"] == "(the note)"]
+            print(f"run {repeat + 1}: {sum(not item['problems'] for item in jottings)}/{len(jottings)} jottings as expected; "
+                  f"{sum(not item['problems'] for item in notes)}/{len(notes)} notes clean with their plan read back")
             for item in run:
                 for problem in item["problems"]:
                     print(f"   - {item['patient']} \"{item['jotting']}\": {problem}")

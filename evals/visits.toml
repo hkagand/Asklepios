@@ -9,6 +9,10 @@
 #   link     a phrase that must appear in the label of a record item it links to
 #   gaps     true when documentation gaps must be listed, false when there must be none
 # Across every jotting, no gap may read as advice.
+#
+# Then the note is drafted from the jottings and checked: every drafted line cites a source, its numbers are in what
+# it cites, and every jotting is used. The note is formatted as signing writes it and read by the plan reader that open
+# loops uses: each phrase in "plan" must come back in a plan item's quote.
 
 [[visit]]
 patient = "p-1003"
@@ -17,6 +21,7 @@ jottings = [
   { text = "Says he takes ramipril 5 mg once daily", section = ["subjective", "objective"], alerts = ["dose"], covers = ["medication"], link = "ramipril" },
   { text = "Plan: increase ramipril to 10 mg once daily", section = "plan", alerts = [], gaps = false },
 ]
+plan = ["ramipril"]
 
 [[visit]]
 patient = "p-3001"
@@ -26,6 +31,7 @@ jottings = [
   { text = "Plan: amoxicillin 500 mg three times daily for 5 days", section = "plan", alerts = ["allergy"], gaps = false },
   { text = "Confirms no allergies other than penicillin", alerts = [], covers = ["allergy"] },
 ]
+plan = ["amoxicillin"]
 
 [[visit]]
 patient = "p-1001"
@@ -35,3 +41,4 @@ jottings = [
   { text = "HbA1c result discussed with the patient", alerts = [], covers = ["loop"], gaps = false },
   { text = "Plan: continue current medicines, review in 3 months", section = "plan", alerts = [], gaps = false },
 ]
+plan = ["3 months"]

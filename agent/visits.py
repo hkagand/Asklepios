@@ -75,6 +75,8 @@ class Visit:
     agenda: list[AgendaItem] = field(default_factory=list)
     jottings: list[Jotting] = field(default_factory=list)
     version: int = 0  # raised on every save, so the panel can ignore an older answer that arrives late
+    draft: dict | None = None  # the drafted note, checked (notes.py)
+    note: str | None = None  # the signed note, "DocumentReference/..."
 
     def jot(self, text: str, by: str) -> Jotting:
         number = max((int(item.id[1:]) for item in self.jottings), default=0) + 1
@@ -106,6 +108,8 @@ class Visit:
             "agenda": [{**asdict(item), "doneBy": item.done_by} for item in self.agenda],
             "jottings": [asdict(item) for item in self.jottings],
             "version": self.version,
+            "draft": self.draft,
+            "note": self.note,
         }
 
     @classmethod
@@ -118,6 +122,8 @@ class Visit:
                     for item in data["agenda"]],
             jottings=[Jotting(**item) for item in data["jottings"]],
             version=data.get("version", 0),
+            draft=data.get("draft"),
+            note=data.get("note"),
         )
 
 

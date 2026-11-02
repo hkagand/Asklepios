@@ -15,6 +15,8 @@ POST /api/patients/{patient_id}/visits             starts a visit (an Encounter 
 GET  /api/patients/{patient_id}/visit              the visit in progress, if any
 POST /api/visits/{visit_id}/jottings               {"text"}; PUT and DELETE /api/visits/{visit_id}/jottings/{id}
 POST /api/visits/{visit_id}/agenda/{item_id}       {"done"}
+POST /api/visits/{visit_id}/draft                  drafts the note from the jottings, checked
+POST /api/visits/{visit_id}/sign                   {"subjective", "objective", "assessment", "plan"}: signs it
 POST /api/visits/{visit_id}/cancel                 closes the visit without a note
 
 Onboarding from the national record service (simulated; onboard.py), all for the acting practitioner:
@@ -78,6 +80,8 @@ from .onboard import SERVICE as ONBOARDING_SOURCE
 from .plans import PlanExtractor
 from .surgery import SurgeryReader, surgical_history
 from .jottings import review as review_jotting
+from .notes import draft as draft_visit_note
+from .notes import sign_transaction, specialty_of
 from .visits import Visit, VisitStore, new_visit_id, todays_appointment
 from .visits import agenda as visit_agenda
 from .visits import encounter as visit_encounter
@@ -613,6 +617,60 @@ async def tick_agenda(visit_id: str, item_id: str, body: TickBody, practitioner:
             raise HTTPException(status_code=404, detail="No such agenda item.")
         item.done, item.done_by = body.done, "clinician" if body.done else None
         app.state.visits.save(visit)
+    return visit.as_json()
+
+
+class SignBody(BaseModel):
+    subjective: str = Field(default="", max_length=8000)
+    objective: str = Field(default="", max_length=8000)
+    assessment: str = Field(default="", max_length=8000)
+    plan: str = Field(default="", max_length=8000)
+
+
+@app.post("/api/visits/{visit_id}/draft")
+async def draft_note(visit_id: str, practitioner: Practitioner | None = Depends(acting)) -> dict:
+    """Drafts the note from the jottings and checks it (notes.py); the clinician edits it before signing."""
+    clinician = required(practitioner)
+    visit = _open_visit(visit_id)
+    if not visit.jottings:
+        raise HTTPException(status_code=422, detail="Add jottings first: the note is drafted from them.")
+    record = await _record(visit.patient)
+    try:
+        drafted = await draft_visit_note(app.state.extraction, record, visit)
+    except LlmError as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+    async with app.state.visits.lock(visit_id):
+        visit = _open_visit(visit_id)
+        visit.draft = drafted | {"jottings": [item.id for item in visit.jottings]}
+        app.state.visits.save(visit)
+    issues = sum(len(item["issues"]) > 0 for items in drafted["sections"].values() for item in items)
+    app.state.audit.write(session="-", patient=visit.patient, event="visit-note-drafted", user=clinician.id, visit=visit.id,
+                          flagged=issues, unused=drafted["unused"])
+    return visit.as_json()
+
+
+@app.post("/api/visits/{visit_id}/sign")
+async def sign_note(visit_id: str, body: SignBody, practitioner: Practitioner | None = Depends(acting)) -> dict:
+    """Signs the note as edited: a DocumentReference by the clinician, the Encounter finished, and a Provenance."""
+    clinician = required(practitioner)
+    sections = {"subjective": body.subjective, "objective": body.objective, "assessment": body.assessment, "plan": body.plan}
+    if not any(text.strip() for text in sections.values()):
+        raise HTTPException(status_code=422, detail="The note is empty.")
+    record = await _record(_open_visit(visit_id).patient)
+    try:
+        specialty = specialty_of(await app.state.fhir.read("Practitioner", clinician.id))
+    except FhirError:
+        specialty = ""
+    async with app.state.visits.lock(visit_id):
+        visit = _open_visit(visit_id)
+        transaction, note = sign_transaction(record, visit, clinician, specialty, sections)
+        try:
+            await app.state.fhir.transaction(transaction)
+        except FhirError as error:
+            raise HTTPException(status_code=502, detail=str(error)) from error
+        visit.note = note
+        app.state.visits.save(visit)
+    app.state.audit.write(session="-", patient=visit.patient, event="visit-note-signed", user=clinician.id, visit=visit.id, note=note)
     return visit.as_json()
 
 

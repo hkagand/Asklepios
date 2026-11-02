@@ -366,6 +366,22 @@ export interface Visit {
   agenda: AgendaItem[]
   jottings: Jotting[]
   version: number
+  draft: NoteDraft | null
+  note: string | null
+}
+
+export interface DraftItem {
+  text: string
+  sources: string[]
+  issues: string[]
+}
+
+/** The note drafted from the jottings and checked by code (agent/notes.py). */
+export interface NoteDraft {
+  sections: Record<NoteSection, DraftItem[]>
+  unused: string[]
+  created: string
+  jottings: string[]
 }
 
 const visitPath = (visitId: string) => `/api/visits/${encodeURIComponent(visitId)}`
@@ -382,6 +398,8 @@ export const deleteJotting = (visitId: string, jottingId: string) =>
   deleteJson<Visit>(`${visitPath(visitId)}/jottings/${encodeURIComponent(jottingId)}`)
 export const tickAgenda = (visitId: string, itemId: string, done: boolean) =>
   postJson<Visit>(`${visitPath(visitId)}/agenda/${encodeURIComponent(itemId)}`, { done })
+export const draftNote = (visitId: string) => postJson<Visit>(`${visitPath(visitId)}/draft`, {})
+export const signNote = (visitId: string, sections: Record<NoteSection, string>) => postJson<Visit>(`${visitPath(visitId)}/sign`, sections)
 export const cancelVisit = (visitId: string) => postJson<Visit>(`${visitPath(visitId)}/cancel`, {})
 
 // ---------------------------------------------------------------- onboarding (agent/onboard.py)
