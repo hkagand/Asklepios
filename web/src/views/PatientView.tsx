@@ -19,6 +19,10 @@ import { Visits } from './Visits.tsx'
 
 export function PatientView({ id, tab, item }: { id: string; tab: Tab; item?: string }) {
   const state = useAsync((signal) => loadChart(id, signal), [id])
+  // The chart read again after a visit closes (a signed note, a cancelled Encounter), shown in place of the first read
+  // without a loading screen.
+  const [freshChart, setFreshChart] = useState<Chart>()
+  const chartState: AsyncState<Chart> = freshChart ? { status: 'ready', data: freshChart } : state
   // Read once for the band and the overview card.
   const surgery = useAsync((signal) => patientSurgery(id, signal), [id])
   const visitState = useAsync((signal) => patientVisit(id, signal), [id])
@@ -40,6 +44,14 @@ export function PatientView({ id, tab, item }: { id: string; tab: Tab; item?: st
       setStarting(false)
     }
   }
+  const changeVisit = (next: Visit | null) => {
+    setVisit(next)
+    if (next && next.status !== 'open') {
+      loadChart(id, new AbortController().signal).then(setFreshChart, () => {
+        // The chart as first read stays; a reload of the page reads it again.
+      })
+    }
+  }
   const [copilot, setCopilot] = useStoredFlag('copilot-open')
   return (
     <div className="flex items-start">
@@ -47,13 +59,13 @@ export function PatientView({ id, tab, item }: { id: string; tab: Tab; item?: st
         <a href="#/" className="text-[13.5px] font-semibold text-slate-500 hover:text-slate-900">
           ← All appointments
         </a>
-        {state.status === 'loading' && <Loading label="Loading the chart from the FHIR server…" />}
-        {state.status === 'error' && <ErrorPanel error={state.error} />}
-        {state.status === 'ready' && (
+        {chartState.status === 'loading' && <Loading label="Loading the chart from the FHIR server…" />}
+        {chartState.status === 'error' && <ErrorPanel error={chartState.error} />}
+        {chartState.status === 'ready' && (
           <>
-            <PatientHeader chart={state.data} surgery={surgery} />
+            <PatientHeader chart={chartState.data} surgery={surgery} />
             <TabBar
-              chart={state.data}
+              chart={chartState.data}
               tab={tab}
               copilot={copilot}
               onCopilot={() => setCopilot(!copilot)}
@@ -63,22 +75,22 @@ export function PatientView({ id, tab, item }: { id: string; tab: Tab; item?: st
             />
             {visitError && <p className="mt-2 rounded-md bg-rose-50 px-3 py-2 text-sm text-rose-800">{visitError}</p>}
             <div className="@container mt-4">
-              {tab === 'overview' && <Overview chart={state.data} surgery={surgery} />}
-              {tab === 'labs' && <Labs chart={state.data} selected={item} />}
-              {tab === 'visits' && <Visits chart={state.data} selected={item} />}
-              {tab === 'reports' && <Reports chart={state.data} selected={item} />}
-              {tab === 'medications' && <Medications chart={state.data} />}
-              {tab === 'visit' && <VisitView chart={state.data} visit={visit} onChange={setVisit} onStart={begin} starting={starting} />}
+              {tab === 'overview' && <Overview chart={chartState.data} surgery={surgery} />}
+              {tab === 'labs' && <Labs chart={chartState.data} selected={item} />}
+              {tab === 'visits' && <Visits chart={chartState.data} selected={item} />}
+              {tab === 'reports' && <Reports chart={chartState.data} selected={item} />}
+              {tab === 'medications' && <Medications chart={chartState.data} />}
+              {tab === 'visit' && <VisitView chart={chartState.data} visit={visit} onChange={changeVisit} onStart={begin} starting={starting} />}
             </div>
           </>
         )}
       </main>
-      {copilot && state.status === 'ready' && (
+      {copilot && chartState.status === 'ready' && (
         <aside
           aria-label="ASKlepios"
           className="fixed bottom-0 right-0 top-14 z-30 w-full max-w-md border-l border-slate-200 shadow-xl lg:sticky lg:z-auto lg:h-[calc(100vh-3.5rem)] lg:w-[26rem] lg:max-w-none lg:shrink-0 lg:shadow-none"
         >
-          <Copilot chart={state.data} onClose={() => setCopilot(false)} />
+          <Copilot chart={chartState.data} onClose={() => setCopilot(false)} />
         </aside>
       )}
     </div>

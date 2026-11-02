@@ -296,20 +296,16 @@ function NoteCard({ visit, pending, run }: { visit: Visit; pending: boolean; run
 }
 
 function Signed({ visit }: { visit: Visit }) {
-  const open = () => {
-    window.location.hash = patientHref(visit.patient, 'visits', visit.id).slice(1)
-    // The chart is loaded once per page; load it again to show the new note.
-    window.location.reload()
-  }
+  // The patient page reads the chart again once the visit closes, so the note is there without reloading the page.
   return (
     <Card title="Note signed">
       <p className="text-[15px] text-slate-700">
         The visit note is in the chart, signed by {visit.practitionerName}, and the visit is closed. Its plan is tracked in open loops
         from now on.
       </p>
-      <button type="button" onClick={open} className={`${PRIMARY} mt-4`}>
+      <a href={patientHref(visit.patient, 'visits', visit.id)} className={`${PRIMARY} mt-4`}>
         Open the note
-      </button>
+      </a>
     </Card>
   )
 }
