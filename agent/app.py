@@ -18,6 +18,10 @@ POST /api/visits/{visit_id}/agenda/{item_id}       {"done"}
 POST /api/visits/{visit_id}/draft                  drafts the note from the jottings, checked
 POST /api/visits/{visit_id}/sign                   {"subjective", "objective", "assessment", "plan"}: signs it
 POST /api/visits/{visit_id}/cancel                 closes the visit without a note
+GET  /api/visits/{visit_id}/considerations         the clinical model's latest considerations (experimental; off
+                                                   unless CLINICAL_LLM_MODEL is set): remade in the background after
+                                                   each change to the jottings. POST makes them now and waits.
+POST /api/visits/{visit_id}/considerations/feedback  {"index", "text", "useful"}: the clinician's verdict on one
 
 Onboarding from the national record service (simulated; onboard.py), all for the acting practitioner:
 POST /api/onboarding/consent                       {"nationalId", "name", "birthDate"}: the patient is texted a code
@@ -79,6 +83,7 @@ from .onboard import (
 from .onboard import SERVICE as ONBOARDING_SOURCE
 from .plans import PlanExtractor
 from .surgery import SurgeryReader, surgical_history
+from .considerations import consider, signature
 from .jottings import review as review_jotting
 from .notes import draft as draft_visit_note
 from .notes import sign_transaction, specialty_of
@@ -109,6 +114,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.onboardings = {}
     app.state.visits = VisitStore(settings.plan_cache.parent / "visits")
     app.state.extraction = extraction
+    # The second, clinical model (considerations.py), when one is configured.
+    app.state.clinical = LlmClient(settings.clinical) if settings.clinical else None
+    app.state.considering = {}  # visit id -> the task making its considerations
     app.state.audit = AuditLog(settings.audit_log)
     app.state.sessions = Sessions(fhir, plans, medicines, surgery)
     app.state.practitioners = {}
@@ -123,6 +131,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await fhir.close()
     await llm.close()
     await extraction.close()
+    if app.state.clinical:
+        await app.state.clinical.close()
 
 
 app = FastAPI(title="ASKlepios agent", lifespan=lifespan)
@@ -135,8 +145,10 @@ class ChatRequest(BaseModel):
 
 @app.get("/api/health")
 async def health() -> dict:
-    """The model, and the clinic day the agent works with; `fixedToday` when AGENT_TODAY sets it."""
-    return {"model": app.state.settings.llm_model, "today": clinic_today().isoformat(), "fixedToday": "AGENT_TODAY" in os.environ}
+    """The model, the clinical model if one is configured, and the clinic day the agent works with; `fixedToday` when
+    AGENT_TODAY sets it."""
+    clinical = app.state.clinical.model if app.state.clinical else None
+    return {"model": app.state.settings.llm_model, "clinicalModel": clinical, "today": clinic_today().isoformat(), "fixedToday": "AGENT_TODAY" in os.environ}
 
 
 async def practitioner_named(practitioner_id: str) -> Practitioner:
@@ -561,16 +573,114 @@ async def _review(visit_id: str, jotting_id: str) -> dict:
     return visit.as_json()
 
 
+async def _consider(visit_id: str, user: str) -> dict:
+    """The clinical model's considerations for the visit as it stands, kept only if the jottings have not changed
+    while the model worked (a newer run is on its way then)."""
+    visit = _open_visit(visit_id)
+    record = await _record(visit.patient)
+    result = await consider(app.state.clinical, record, visit)
+    async with app.state.visits.lock(visit_id):
+        visit = _open_visit(visit_id)
+        if signature(visit) == result["jottings"]:
+            visit.considerations = result
+            app.state.visits.save(visit)
+    app.state.audit.write(
+        session="-", patient=visit.patient, event="visit-considerations", user=user, visit=visit_id, model=result["model"],
+        status=result["status"], items=len(result.get("items", [])), dropped=len(result.get("dropped", [])), seconds=result.get("seconds"),
+    )
+    return result
+
+
+async def _consider_in_background(visit_id: str, user: str) -> None:
+    try:
+        await _consider(visit_id, user)
+    except HTTPException:
+        pass  # the visit was signed or cancelled meanwhile
+
+
+def _stop_considering(visit_id: str) -> None:
+    if task := app.state.considering.pop(visit_id, None):
+        task.cancel()
+
+
+def _start_considering(visit_id: str, user: str) -> None:
+    """Makes the considerations again in the background, cancelling a run still working on older jottings."""
+    if app.state.clinical is None:
+        return
+    _stop_considering(visit_id)
+    task = asyncio.create_task(_consider_in_background(visit_id, user))
+    app.state.considering[visit_id] = task
+    task.add_done_callback(lambda done: app.state.considering.pop(visit_id) if app.state.considering.get(visit_id) is done else None)
+
+
+def _considerations(visit: Visit) -> dict:
+    current = visit.considerations is not None and visit.considerations.get("jottings") == signature(visit)
+    return {
+        "enabled": app.state.clinical is not None,
+        "model": app.state.clinical.model if app.state.clinical else None,
+        "running": visit.id in app.state.considering,
+        "current": current,
+        "considerations": visit.considerations,
+    }
+
+
+@app.get("/api/visits/{visit_id}/considerations")
+async def get_considerations(visit_id: str) -> dict:
+    """The latest considerations; `current` is false while they were made from earlier jottings."""
+    return _considerations(_visit(visit_id))
+
+
+@app.post("/api/visits/{visit_id}/considerations")
+async def make_considerations(visit_id: str, practitioner: Practitioner | None = Depends(acting)) -> dict:
+    """Makes the considerations now from the jottings as they stand, and waits for them."""
+    clinician = required(practitioner)
+    if app.state.clinical is None:
+        raise HTTPException(status_code=409, detail="No clinical model is configured (CLINICAL_LLM_BASE_URL and CLINICAL_LLM_MODEL).")
+    if not _open_visit(visit_id).jottings:
+        raise HTTPException(status_code=422, detail="Add jottings first: the considerations follow from them.")
+    _stop_considering(visit_id)
+    await _consider(visit_id, clinician.id)
+    return _considerations(_visit(visit_id))
+
+
+class FeedbackBody(BaseModel):
+    index: int = Field(ge=0, lt=20)
+    text: str = Field(min_length=1, max_length=2000)
+    useful: bool
+
+
+@app.post("/api/visits/{visit_id}/considerations/feedback")
+async def rate_consideration(visit_id: str, body: FeedbackBody, practitioner: Practitioner | None = Depends(acting)) -> dict:
+    """The clinician's verdict on one consideration, kept with it and in the audit log, to judge the clinical model."""
+    clinician = required(practitioner)
+    async with app.state.visits.lock(visit_id):
+        visit = _visit(visit_id)
+        items = (visit.considerations or {}).get("items") or []
+        if body.index >= len(items) or items[body.index]["text"] != body.text:
+            raise HTTPException(status_code=409, detail="These considerations have changed; rate the ones shown now.")
+        item = items[body.index]
+        item["feedback"] = "useful" if body.useful else "not-useful"
+        app.state.visits.save(visit)
+    app.state.audit.write(
+        session="-", patient=visit.patient, event="visit-consideration-rated", user=clinician.id, visit=visit_id,
+        model=visit.considerations["model"], kind=item["kind"], useful=body.useful, text=item["text"],
+    )
+    return _considerations(visit)
+
+
 @app.post("/api/visits/{visit_id}/jottings")
 async def add_jotting(visit_id: str, body: JottingBody, practitioner: Practitioner | None = Depends(acting)) -> dict:
-    """Adds a jotting and returns the visit once the jotting is reviewed (sections, links, gaps, alerts, ticks)."""
+    """Adds a jotting and returns the visit once the jotting is reviewed (sections, links, gaps, alerts, ticks); the
+    considerations follow in the background."""
     clinician = required(practitioner)
     async with app.state.visits.lock(visit_id):
         visit = _open_visit(visit_id)
         jotting = visit.jot(body.text.strip(), clinician.id)
         app.state.visits.save(visit)
     app.state.audit.write(session="-", patient=visit.patient, event="visit-jotting", user=clinician.id, visit=visit.id, jotting=jotting.id)
-    return await _review(visit_id, jotting.id)
+    reviewed = await _review(visit_id, jotting.id)
+    _start_considering(visit_id, clinician.id)
+    return reviewed
 
 
 @app.put("/api/visits/{visit_id}/jottings/{jotting_id}")
@@ -588,7 +698,9 @@ async def edit_jotting(visit_id: str, jotting_id: str, body: JottingBody, practi
                 item.done, item.done_by = False, None
         app.state.visits.save(visit)
     app.state.audit.write(session="-", patient=visit.patient, event="visit-jotting-edited", user=clinician.id, visit=visit.id, jotting=jotting_id)
-    return await _review(visit_id, jotting_id)
+    reviewed = await _review(visit_id, jotting_id)
+    _start_considering(visit_id, clinician.id)
+    return reviewed
 
 
 @app.delete("/api/visits/{visit_id}/jottings/{jotting_id}")
@@ -602,8 +714,14 @@ async def delete_jotting(visit_id: str, jotting_id: str, practitioner: Practitio
         for item in visit.agenda:
             if item.done_by == jotting_id:
                 item.done, item.done_by = False, None
+        if not visit.jottings:
+            visit.considerations = None
         app.state.visits.save(visit)
     app.state.audit.write(session="-", patient=visit.patient, event="visit-jotting-deleted", user=clinician.id, visit=visit.id, jotting=jotting_id)
+    if visit.jottings:
+        _start_considering(visit_id, clinician.id)
+    else:
+        _stop_considering(visit_id)
     return visit.as_json()
 
 
@@ -670,6 +788,7 @@ async def sign_note(visit_id: str, body: SignBody, practitioner: Practitioner | 
             raise HTTPException(status_code=502, detail=str(error)) from error
         visit.note = note
         app.state.visits.save(visit)
+    _stop_considering(visit_id)
     app.state.audit.write(session="-", patient=visit.patient, event="visit-note-signed", user=clinician.id, visit=visit.id, note=note)
     return visit.as_json()
 
@@ -686,6 +805,7 @@ async def cancel_visit(visit_id: str, practitioner: Practitioner | None = Depend
     except FhirError as error:
         raise HTTPException(status_code=502, detail=str(error)) from error
     app.state.visits.save(visit)
+    _stop_considering(visit_id)
     app.state.audit.write(session="-", patient=visit.patient, event="visit-cancelled", user=clinician.id, visit=visit.id)
     return visit.as_json()
 

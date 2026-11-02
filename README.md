@@ -218,6 +218,24 @@ Starting a visit when one is open returns it. **Cancel visit** marks the Encount
 
 Endpoints: `POST /api/patients/{id}/visits`, `GET /api/patients/{id}/visit`, `POST /api/visits/{id}/jottings` (and `PUT`/`DELETE` on one), `POST /api/visits/{id}/agenda/{item}`, `POST /api/visits/{id}/draft`, `POST /api/visits/{id}/sign`, `POST /api/visits/{id}/cancel`.
 
+### Clinical considerations (experimental, second model)
+
+Optionally, a second, clinical model suggests what to keep in mind during the visit (`agent/considerations.py`). It is off unless configured in `agent/.env`; for example, MedGemma 1.5 4B on a local [Ollama](https://ollama.com), so the visit context stays on the machine:
+
+```
+ollama pull medgemma1.5:4b
+CLINICAL_LLM_BASE_URL=http://localhost:11434/v1
+CLINICAL_LLM_MODEL=medgemma1.5:4b
+```
+
+Any OpenAI-compatible endpoint works (`CLINICAL_LLM_API_KEY` if it needs one). `/api/health` names it as `clinicalModel`.
+
+After each change to the jottings, in the background (the jotting's own help is not delayed; a run still working on older jottings is cancelled), the model reads the jottings and a short record (problems, allergies, medicines, abnormal latest results; about 1,000 tokens) and gives up to four considerations, each a possible **cause** of what the jottings describe, something to **check**, or a **caution** from the record, citing the jottings and record items it rests on. Code keeps one only if it cites a jotting of this visit and only ids it was shown, every value in it is in what it cites, it does not admit to resting on what the record does not state, and it is not a copy of the prompt's example; it marks one whose record item a code alert already names. What was dropped, and why, is kept with the result.
+
+In the visit workspace they appear under the agenda, in a **Clinical considerations** panel marked experimental, which shows only while a clinical model is configured. Each shows its kind, its text, and its basis: the jottings by id and the record items as chips that open the source. The panel says when a run is working or the considerations come from earlier jottings, lists what the checks dropped and why, and has **Ask again**. **Useful** and **Not useful** keep the clinician's verdict with the consideration and in the audit log, to judge the model on real use.
+
+These are suggestions for the clinician to weigh, never written into the note or to FHIR. A 4B model misses things and can state a wrong rule with confidence (in testing it missed CKD with an ibuprofen plan, and once claimed amoxicillin needs a lower dose at an eGFR of 52), so the code alerts above remain the safety net. On a laptop GPU a run takes about 2 seconds. Endpoints: `GET /api/visits/{id}/considerations` (the latest, whether they match the jottings now, and whether a run is working), `POST` to make them now and wait, and `POST /api/visits/{id}/considerations/feedback` for a verdict.
+
 ## My day
 
 **My day** is the selected clinician's clinic list. It defaults to the next day with appointments, and you can step back or forward a day.
@@ -285,7 +303,8 @@ Other options:
 ## Layout
 
 ```
-agent/          ASKlepios service: chat, tools, citation verifier, open loops, medications, surgical history, briefs, marks, audit log
+agent/          ASKlepios service: chat, tools, citation verifier, open loops, medications, surgical history, briefs, marks,
+                visits (jottings, notes, clinical considerations from a second model), audit log
 evals/          gold question set, open-loop, medication and surgery gold files, eval runner
 national/       simulated national record service (patient onboarding demo)
 synthetic/      cohort generator, national records and FHIR loader

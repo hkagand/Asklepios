@@ -30,11 +30,17 @@ class LlmClient:
     async def close(self) -> None:
         await self._client.aclose()
 
-    async def chat(self, messages: list[dict], *, tools: list[dict], tool_choice: str) -> tuple[dict, dict]:
-        """Returns the assistant message and the token usage."""
+    async def chat(
+        self, messages: list[dict], *, tools: list[dict], tool_choice: str, json_mode: bool = False, max_tokens: int | None = None,
+    ) -> tuple[dict, dict]:
+        """Returns the assistant message and the token usage. `json_mode` asks the server for a JSON object only."""
         body = {"model": self.model, "messages": messages, **self._options}
+        if max_tokens:
+            body["max_tokens"] = max_tokens
         if tools:
             body |= {"tools": tools, "tool_choice": tool_choice}
+        if json_mode:
+            body["response_format"] = {"type": "json_object"}
         for attempt in (1, 2):
             try:
                 response = await self._client.post(self._url, json=body)

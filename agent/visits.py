@@ -77,6 +77,8 @@ class Visit:
     version: int = 0  # raised on every save, so the panel can ignore an older answer that arrives late
     draft: dict | None = None  # the drafted note, checked (notes.py)
     note: str | None = None  # the signed note, "DocumentReference/..."
+    # The clinical model's latest considerations (considerations.py), with the jottings they were made from.
+    considerations: dict | None = None
 
     def jot(self, text: str, by: str) -> Jotting:
         number = max((int(item.id[1:]) for item in self.jottings), default=0) + 1
@@ -110,6 +112,7 @@ class Visit:
             "version": self.version,
             "draft": self.draft,
             "note": self.note,
+            "considerations": self.considerations,
         }
 
     @classmethod
@@ -124,6 +127,7 @@ class Visit:
             version=data.get("version", 0),
             draft=data.get("draft"),
             note=data.get("note"),
+            considerations=data.get("considerations"),
         )
 
 

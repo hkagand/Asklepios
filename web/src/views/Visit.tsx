@@ -1,14 +1,20 @@
-import { useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
 import {
   addJotting,
   cancelVisit,
   deleteJotting,
   draftNote,
   editJotting,
+  makeConsiderations,
+  rateConsideration,
   signNote,
   tickAgenda,
+  visitConsiderations,
   type AgendaItem,
   type AgendaKind,
+  type Consideration,
+  type ConsiderationKind,
+  type ConsiderationsState,
   type Jotting,
   type NoteDraft,
   type NoteSection,
@@ -117,7 +123,10 @@ function Workspace({ chart, visit, onChange }: { chart: Chart; visit: Visit; onC
       </div>
       {error && <p className="rounded-md bg-rose-50 px-3 py-2 text-sm text-rose-800">{error}</p>}
       <div className="grid items-start gap-4 @4xl:grid-cols-[minmax(0,22rem)_minmax(0,1fr)]">
-        <Agenda chart={chart} visit={visit} onTick={(item, done) => run(() => tickAgenda(visit.id, item.id, done))} />
+        <div className="space-y-4">
+          <Agenda chart={chart} visit={visit} onTick={(item, done) => run(() => tickAgenda(visit.id, item.id, done))} />
+          <Considerations chart={chart} visit={visit} />
+        </div>
         <Jottings
           chart={chart}
           visit={visit}
@@ -351,6 +360,182 @@ function Agenda({ chart, visit, onTick }: { chart: Chart; visit: Visit; onTick: 
         ))}
       </ul>
     </Card>
+  )
+}
+
+const CONSIDERATION: Record<ConsiderationKind, { label: string; tone: Tone }> = {
+  cause: { label: 'Possible cause', tone: 'violet' },
+  check: { label: 'Worth checking', tone: 'blue' },
+  caution: { label: 'Caution', tone: 'amber' },
+}
+
+/** Suggestions from the second, clinical model (agent/considerations.py), shown only when one is configured. They
+ * are for the clinician to weigh: never added to the note, and the code alerts on the jottings stay the safety net. */
+function Considerations({ chart, visit }: { chart: Chart; visit: Visit }) {
+  const [state, setState] = useState<ConsiderationsState>()
+  const [error, setError] = useState<string>()
+  const [asking, setAsking] = useState(false)
+  const openRef = useOpenRef(chart)
+  // Read again whenever the visit changes (a jotting added, edited or deleted), then every second and a half while a
+  // run works on the jottings in the background.
+  useEffect(() => {
+    const controller = new AbortController()
+    let timer: number | undefined
+    const read = async () => {
+      try {
+        const next = await visitConsiderations(visit.id, controller.signal)
+        setState(next)
+        setError(undefined)
+        if (next.running) timer = window.setTimeout(read, 1500)
+      } catch (failure) {
+        if (!controller.signal.aborted) setError(failure instanceof Error ? failure.message : String(failure))
+      }
+    }
+    void read()
+    return () => {
+      controller.abort()
+      window.clearTimeout(timer)
+    }
+  }, [visit.id, visit.version])
+
+  const act = async (action: () => Promise<ConsiderationsState>) => {
+    setError(undefined)
+    try {
+      setState(await action())
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : String(failure))
+    }
+  }
+  const askAgain = async () => {
+    setAsking(true)
+    await act(() => makeConsiderations(visit.id))
+    setAsking(false)
+  }
+
+  if (!state?.enabled) return null
+  const result = state.considerations
+  const items = result?.status === 'done' ? (result.items ?? []) : []
+  const dropped = result?.dropped ?? []
+  const working = state.running || asking
+  return (
+    <Card
+      title="Clinical considerations"
+      subtitle={`From ${state.model}, a second model. Suggestions to weigh, not checked facts; never added to the note.`}
+      action={<Badge tone="violet">Experimental</Badge>}
+      flush
+    >
+      {working && (
+        <p className="flex items-center gap-1.5 border-b border-slate-100 px-4 py-2 text-[12px] text-slate-500">
+          <span className="h-3 w-3 animate-spin rounded-full border-2 border-slate-300 border-t-slate-700 motion-reduce:animate-none" />
+          Reading the jottings as they stand…
+        </p>
+      )}
+      {!working && result && !state.current && visit.jottings.length > 0 && (
+        <p className="border-b border-slate-100 px-4 py-2 text-[12px] text-amber-800">Made from earlier jottings.</p>
+      )}
+      {error && <p className="px-4 py-2 text-[12.5px] text-rose-800">{error}</p>}
+      {visit.jottings.length === 0 ? (
+        <p className="px-4 py-3 text-[13.5px] text-slate-500">Considerations appear here after the first jottings.</p>
+      ) : result?.status === 'failed' ? (
+        <p className="px-4 py-3 text-[13px] text-slate-600">The clinical model did not answer usably: {result.error}</p>
+      ) : result && items.length === 0 && !working ? (
+        <p className="px-4 py-3 text-[13.5px] text-slate-500">Nothing to raise from the jottings so far.</p>
+      ) : (
+        <ul className={`divide-y divide-slate-100 ${working ? 'opacity-60' : ''}`}>
+          {items.map((item, index) => (
+            <ConsiderationRow
+              key={`${index}-${item.text}`}
+              item={item}
+              onOpen={openRef}
+              onRate={(useful) => act(() => rateConsideration(visit.id, index, item.text, useful))}
+            />
+          ))}
+        </ul>
+      )}
+      {visit.jottings.length > 0 && (
+        <footer className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-slate-100 px-4 py-2 text-[12px] text-slate-500">
+          <button type="button" onClick={askAgain} disabled={working} className="font-semibold text-teal-700 hover:underline disabled:text-slate-400 disabled:no-underline">
+            Ask again
+          </button>
+          {result?.seconds !== undefined && <span>{result.seconds} s</span>}
+          {dropped.length > 0 && (
+            <details className="w-full">
+              <summary className="cursor-pointer select-none">
+                {dropped.length} dropped by the checks
+              </summary>
+              <ul className="mt-1 space-y-1">
+                {dropped.map((item) => (
+                  <li key={item.text}>
+                    <span className="text-slate-600">{item.text}</span> <span className="font-semibold">({item.reason})</span>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+        </footer>
+      )}
+    </Card>
+  )
+}
+
+function ConsiderationRow({
+  item,
+  onOpen,
+  onRate,
+}: {
+  item: Consideration
+  onOpen: (reference: string) => Promise<void>
+  onRate: (useful: boolean) => Promise<void>
+}) {
+  const kind = CONSIDERATION[item.kind]
+  return (
+    <li className="px-4 py-2.5">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <Badge tone={kind.tone}>{kind.label}</Badge>
+        {item.alerted && (
+          <span className="text-[11.5px] font-semibold text-slate-500" title="A record item it cites already raised an alert on a jotting">
+            also an alert above
+          </span>
+        )}
+      </div>
+      <p className="mt-1 text-[14px] leading-snug text-slate-900">{item.text}</p>
+      <div className="mt-1.5 flex flex-wrap gap-1">
+        {item.basis.map((source) =>
+          source.ref ? (
+            <button
+              key={source.id}
+              type="button"
+              title={source.ref}
+              onClick={() => void onOpen(source.ref!)}
+              className="inline-flex max-w-full items-center rounded-sm bg-mark-soft px-1.5 text-[11.5px] font-semibold leading-[19px] text-slate-800 hover:bg-mark"
+            >
+              <span className="truncate">{source.label}</span>
+            </button>
+          ) : (
+            <span
+              key={source.id}
+              title={source.label}
+              className="inline-flex items-center rounded-sm border border-slate-300 px-1.5 font-mono text-[11px] leading-[17px] text-slate-600"
+            >
+              {source.id}
+            </span>
+          ),
+        )}
+      </div>
+      <div className="mt-1.5 flex gap-3 text-[12px] font-semibold">
+        {(['useful', 'not-useful'] as const).map((verdict) => (
+          <button
+            key={verdict}
+            type="button"
+            aria-pressed={item.feedback === verdict}
+            onClick={() => void onRate(verdict === 'useful')}
+            className={item.feedback === verdict ? 'text-slate-900 underline decoration-mark decoration-2 underline-offset-2' : 'text-slate-400 hover:text-slate-700'}
+          >
+            {verdict === 'useful' ? 'Useful' : 'Not useful'}
+          </button>
+        ))}
+      </div>
+    </li>
   )
 }
 

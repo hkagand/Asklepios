@@ -58,7 +58,8 @@ def _sources(record: Record, visit: Visit) -> dict[str, str]:
     return sources
 
 
-def _numbers(text: str) -> set[str]:
+def numbers_in(text: str) -> set[str]:
+    """The numbers in a text, normalised (8,0 and 8.0 read as 8)."""
     return {number.replace(",", ".").rstrip("0").rstrip(".") if "." in number.replace(",", ".") else number for number in NUMBER.findall(text)}
 
 
@@ -76,7 +77,7 @@ def verify(sections: dict[str, list[dict]], sources: dict[str, str], jottings: l
             if unknown := [source for source in item["sources"] if source not in sources]:
                 issues.append(f"cites unknown {', '.join(unknown)}")
             grounding = " ".join(sources[source] for source in known)
-            if missing := sorted(_numbers(item["text"]) - _numbers(grounding)):
+            if missing := sorted(numbers_in(item["text"]) - numbers_in(grounding)):
                 issues.append(f"{', '.join(missing)} not in its sources")
             cited |= set(known)
             checked[section].append({"text": item["text"], "sources": known, "issues": issues})

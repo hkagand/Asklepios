@@ -197,6 +197,8 @@ const patientPath = (patientId: string) => `/api/patients/${encodeURIComponent(p
 
 export interface AgentHealth {
   model: string
+  /** The second, clinical model for visit considerations, when one is configured. */
+  clinicalModel: string | null
   /** The clinic day the agent works with; `fixedToday` when AGENT_TODAY sets it. */
   today: string
   fixedToday: boolean
@@ -370,6 +372,41 @@ export interface Visit {
   note: string | null
 }
 
+export type ConsiderationKind = 'cause' | 'check' | 'caution'
+
+/** One suggestion from the clinical model, kept by code because it cites a jotting and only what it was shown. */
+export interface Consideration {
+  kind: ConsiderationKind
+  text: string
+  /** Jottings (`ref` null) and record items it rests on. */
+  basis: { id: string; ref: string | null; label: string }[]
+  /** A record item it cites already has a code alert in this visit. */
+  alerted: boolean
+  feedback?: 'useful' | 'not-useful'
+}
+
+/** The clinical model's latest considerations (agent/considerations.py), with the jottings they were made from. */
+export interface Considerations {
+  model: string
+  jottings: [string, string][]
+  at: string
+  status: 'done' | 'failed'
+  items?: Consideration[]
+  dropped?: { kind: ConsiderationKind; text: string; reason: string }[]
+  seconds?: number
+  error?: string
+}
+
+export interface ConsiderationsState {
+  enabled: boolean
+  model: string | null
+  /** A run is working on the jottings as they stand. */
+  running: boolean
+  /** The considerations were made from the jottings as they stand. */
+  current: boolean
+  considerations: Considerations | null
+}
+
 export interface DraftItem {
   text: string
   sources: string[]
@@ -401,6 +438,11 @@ export const tickAgenda = (visitId: string, itemId: string, done: boolean) =>
 export const draftNote = (visitId: string) => postJson<Visit>(`${visitPath(visitId)}/draft`, {})
 export const signNote = (visitId: string, sections: Record<NoteSection, string>) => postJson<Visit>(`${visitPath(visitId)}/sign`, sections)
 export const cancelVisit = (visitId: string) => postJson<Visit>(`${visitPath(visitId)}/cancel`, {})
+export const visitConsiderations = (visitId: string, signal: AbortSignal) =>
+  getJson<ConsiderationsState>(`${visitPath(visitId)}/considerations`, signal)
+export const makeConsiderations = (visitId: string) => postJson<ConsiderationsState>(`${visitPath(visitId)}/considerations`, {})
+export const rateConsideration = (visitId: string, index: number, text: string, useful: boolean) =>
+  postJson<ConsiderationsState>(`${visitPath(visitId)}/considerations/feedback`, { index, text, useful })
 
 // ---------------------------------------------------------------- onboarding (agent/onboard.py)
 

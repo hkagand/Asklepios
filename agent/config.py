@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -32,6 +32,20 @@ class Settings:
     audit_log: Path
     plan_cache: Path
     national_base_url: str = "http://localhost:8090"
+    # The clinical model for considerations during a visit (considerations.py); off unless both are set.
+    clinical_llm_base_url: str | None = None
+    clinical_llm_model: str | None = None
+    clinical_llm_api_key: str | None = None
+
+    @property
+    def clinical(self) -> Settings | None:
+        """Settings for the clinical model's client, or None when it is not configured."""
+        if not (self.clinical_llm_base_url and self.clinical_llm_model):
+            return None
+        return replace(
+            self, llm_base_url=self.clinical_llm_base_url, llm_model=self.clinical_llm_model,
+            llm_api_key=self.clinical_llm_api_key, reasoning_effort=None, temperature=0.0,
+        )
 
 
 def load_settings() -> Settings:
@@ -51,4 +65,7 @@ def load_settings() -> Settings:
         audit_log=Path(os.environ.get("AGENT_AUDIT_LOG", HERE / "logs" / "audit.jsonl")),
         plan_cache=Path(os.environ.get("AGENT_PLAN_CACHE", HERE / "cache" / "plans")),
         national_base_url=os.environ.get("NATIONAL_BASE_URL", "http://localhost:8090").rstrip("/"),
+        clinical_llm_base_url=os.environ.get("CLINICAL_LLM_BASE_URL", "").rstrip("/") or None,
+        clinical_llm_model=os.environ.get("CLINICAL_LLM_MODEL") or None,
+        clinical_llm_api_key=os.environ.get("CLINICAL_LLM_API_KEY") or None,
     )
