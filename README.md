@@ -80,6 +80,34 @@ To ask from the terminal instead of the browser:
 python -m agent.ask p-2041 "Why was oxaliplatin stopped?"
 ```
 
+**6. Optional: the simulated national record service**
+
+```bash
+python -m national
+```
+
+Listens on `http://127.0.0.1:8090` (override with `NATIONAL_PORT`). See [National record service (simulated)](#national-record-service-simulated).
+
+## National record service (simulated)
+
+For demonstrating patient onboarding, `national/` stands in for a national health record such as e-Nabız. It is not e-Nabız and talks to no real system: it serves only the synthetic records that `synthetic/generate.py` writes to `synthetic/output/national/`, one International Patient Summary (IPS) FHIR document per patient. These are not loaded into HAPI.
+
+Knowing a national id is not enough to read a record, as with real records:
+
+1. `POST /consent-requests` with the national id, name and date of birth. If all three match, a one-time code is "sent by SMS" to the patient's phone. A wrong name, date or number gets the same refusal, so a caller learns nothing.
+2. `POST /consent-requests/{id}/confirm` with the code the patient reads out returns a token for four hours, for that patient only. Three wrong codes close the request.
+3. `GET /fhir/Patient/$summary?identifier=urn:demo:asklepios:national-id|<id>` with the token returns the patient's IPS bundle: allergies, medications, problems, procedures and results.
+
+`GET /demo/phone` shows the simulated SMS messages and `GET /demo/access-log` every request, granted or refused. State is in memory.
+
+| National id | Patient | Name and birth date | Worth catching |
+|---|---|---|---|
+| `00000003001` | new | Gülay Kaplan, 58 | a penicillin allergy; a statin not prescribed for two years that still reads as active; childhood asthma still listed as active |
+| `00000003002` | new | Murat Özdemir, 44 | ramipril 5 mg, which the patient may report differently |
+| `00000002042` | p-2042 in the chart | Nermin Aktaş, 52 | a caesarean section recorded at another hospital, next to operations the chart already has |
+
+Birth dates follow the anchor (the record says 58 years before it). The national ids start with 0, which no real Turkish identity number does.
+
 ## Who is viewing, and marks
 
 The "Viewing as" picker names a practitioner from the FHIR server. The web app sends it with every request to the agent (`X-Practitioner`), and the audit log records it. **It is a stand-in for sign-in, not authentication**: anyone can choose any name. Real use needs SMART on FHIR or similar.
@@ -220,7 +248,8 @@ Other options:
 ```
 agent/          ASKlepios service: chat, tools, citation verifier, open loops, medications, surgical history, briefs, marks, audit log
 evals/          gold question set, open-loop, medication and surgery gold files, eval runner
-synthetic/      cohort generator and FHIR loader
+national/       simulated national record service (patient onboarding demo)
+synthetic/      cohort generator, national records and FHIR loader
 web/            chart viewer, My day and chat panel
 docker-compose.yml
 ```

@@ -14,7 +14,7 @@ from datetime import date, datetime, timedelta
 from typing import Callable
 
 from catalog import CLINICIANS
-from chart import PatientChart, add_workdays, at, day_text, workday
+from chart import NATIONAL_ID, PatientChart, add_workdays, at, day_text, workday
 
 AYDIN = CLINICIANS["pr-aydin"]
 SAHIN = CLINICIANS["pr-sahin"]
@@ -2507,5 +2507,7 @@ def build_cohort(anchor: date, seed: int = 2041) -> list[PatientChart]:
         city="Ankara", gp=AYDIN,
     )
     gallstone_disease(Story(random.Random(seed + 1), anchor, second, at(add_workdays(anchor, 1), 11, 0)))
+    # Her national record (synthetic/national.py) is found by this number when she is onboarded.
+    second.resources[0]["identifier"].append({"system": NATIONAL_ID, "value": "00000002042"})
     charts.append(second)
     return charts

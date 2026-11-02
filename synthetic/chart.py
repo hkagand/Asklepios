@@ -16,6 +16,8 @@ TZ = timezone(timedelta(hours=3))
 ORGANIZATION_ID = "org-demo-hospital"
 ORGANIZATION_NAME = "Demo General Hospital"
 MRN_SYSTEM = "urn:demo:asklepios:mrn"
+# National identity numbers of the simulated national record service (synthetic/national.py).
+NATIONAL_ID = "urn:demo:asklepios:national-id"
 
 # HL7 "test health data" label: every resource is marked as synthetic.
 SYNTHETIC_META = {
