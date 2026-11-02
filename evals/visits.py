@@ -16,7 +16,7 @@ from pathlib import Path
 from agent.config import Settings
 from agent.jottings import review
 from agent.notes import draft as draft_note
-from agent.notes import note_text, section_text
+from agent.notes import note_text, numbers_in, section_text, values
 from agent.record import Document
 from agent.llm import LlmClient
 from agent.loops import open_loops
@@ -66,6 +66,14 @@ async def check_note(llm: LlmClient, plans: PlanExtractor, record: Record, agend
         problems += [f"{section}: \"{item['text']}\": {', '.join(item['issues'])}" for item in items if item["issues"]]
     if drafted["unused"]:
         problems.append(f"jottings not in the note: {', '.join(drafted['unused'])}")
+    # A jotting that gives its own measurement ("BP 138/84") gets no record values: earlier readings next to it would
+    # read as part of this visit.
+    said = {f"J{index}": text for index, (text, _) in enumerate(jottings, 1)}
+    for section, items in drafted["sections"].items():
+        for item in items:
+            cited = [said[source] for source in item["sources"] if source in said]
+            if any(values(text) for text in cited) and values(item["text"]) - numbers_in(" ".join(cited)):
+                problems.append(f"{section}: \"{item['text']}\" adds record values to a jotting that gives its own")
     sections = {section: section_text(section, items) for section, items in drafted["sections"].items()}
     when = datetime.fromisoformat(visit.started)
     text = note_text(record, visit.practitioner_name, "Internal Medicine", when, sections)

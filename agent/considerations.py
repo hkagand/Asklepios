@@ -23,15 +23,13 @@ import time
 from datetime import datetime, timezone
 
 from .llm import LlmClient, LlmError
-from .notes import numbers_in
+from .notes import numbers_in, values
 from .record import FLAGS, GROUPS, Record, ref_of
 from .visits import Visit
 
 KINDS = ("cause", "check", "caution")
 MAX_ITEMS = 4
 REF = re.compile(r"\s*\[[A-Za-z]+/[A-Za-z0-9.\-]+\]")
-# Values that stand alone ("38.4", "500 mg"), not digits in a name such as HbA1c, B12 or COVID-19.
-VALUE = re.compile(r"(?<![\w\-.,])\d+(?:[.,]\d+)?(?![A-Za-z\d])")
 # A consideration that says it rests on what the record does not state.
 UNSUPPORTED = re.compile(r"\bnot (?:explicitly |specifically )?(?:stated|mentioned|documented|recorded|given)\b|\bassum\w*\b", re.IGNORECASE)
 
@@ -101,10 +99,6 @@ def _parse(reply: str) -> list[dict]:
     if not isinstance(data, list):
         raise ValueError("no considerations list")
     return [item for item in data if isinstance(item, dict)]
-
-
-def values(text: str) -> set[str]:
-    return numbers_in(" ".join(VALUE.findall(text)))
 
 
 def check(items: list[dict], shown: dict[str, dict], alerted: set[str]) -> tuple[list[dict], list[dict]]:

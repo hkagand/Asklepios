@@ -11,7 +11,7 @@
 # Across every jotting, no gap may read as advice.
 #
 # Then the note is drafted from the jottings and checked: every drafted line cites a source, its numbers are in what
-# it cites, and every jotting is used. The note is formatted as signing writes it and read by the plan reader that open
+# it cites, every jotting is used, and no line adds record values to a jotting that gives its own measurement. The note is formatted as signing writes it and read by the plan reader that open
 # loops uses: each phrase in "plan" must come back in a plan item's quote.
 
 [[visit]]

@@ -27,6 +27,8 @@ from .visits import encounter as visit_encounter
 SECTIONS = ("subjective", "objective", "assessment", "plan")
 LOINC = "http://loinc.org"
 NUMBER = re.compile(r"\d+(?:[.,]\d+)?")
+# Values that stand alone ("38.4", "500 mg"), not digits in a name such as HbA1c, B12 or COVID-19.
+VALUE = re.compile(r"(?<![\w\-.,])\d+(?:[.,]\d+)?(?![A-Za-z\d])")
 DOCUMENT_CATEGORY = {
     "coding": [{"system": "http://hl7.org/fhir/us/core/CodeSystem/us-core-documentreference-category", "code": "clinical-note", "display": "Clinical Note"}]
 }
@@ -38,8 +40,9 @@ the visit agenda with what was covered, and record items the jottings refer to (
 Return only JSON: {"subjective": [...], "objective": [...], "assessment": [...], "plan": [...]}, each a list of \
 {"text": "...", "sources": ["J1", ...]}.
 - Use only what the jottings state. Do not add symptoms, findings, impressions, results, doses or plans the jottings \
-do not state. You may name a value of a record item a jotting refers to (e.g. the HbA1c it discusses), citing its id.
-- Every item cites the ids it comes from: the jottings, and any record item whose value it gives.
+do not state. You may name a value of a record item a jotting refers to (e.g. the HbA1c it discusses), citing its id; \
+never add earlier readings next to a measurement a jotting gives.
+- Every item cites the ids it comes from: the jottings, and any record item whose value it gives. Never cite agenda ids.
 - Every jotting appears in the note at least once.
 - Subjective: what the patient reports. Objective: findings, measurements, results. Assessment: only impressions the \
 clinician wrote. Plan: one action per item, as the clinician wrote it.
@@ -48,9 +51,14 @@ section."""
 
 
 def _sources(record: Record, visit: Visit) -> dict[str, str]:
-    """What the draft may cite: the jottings, and the record items the jottings were linked to."""
+    """What the draft may cite: the jottings, and the record items linked to a jotting that names a result or medicine
+    without giving values of its own ("HbA1c result discussed with the patient"). A jotting that gives its own
+    measurement ("BP 138/84") is linked to earlier readings for comparison only; offered as sources, they would let the
+    draft add them to the note as if they belonged to this visit."""
     sources = {jotting.id: jotting.text for jotting in visit.jottings}
     for jotting in visit.jottings:
+        if values(jotting.text):
+            continue
         for link in (jotting.review or {}).get("links", []):
             ref = link["ref"] if isinstance(link, dict) else link
             if ref in record.resources and ref not in sources:
@@ -61,6 +69,11 @@ def _sources(record: Record, visit: Visit) -> dict[str, str]:
 def numbers_in(text: str) -> set[str]:
     """The numbers in a text, normalised (8,0 and 8.0 read as 8)."""
     return {number.replace(",", ".").rstrip("0").rstrip(".") if "." in number.replace(",", ".") else number for number in NUMBER.findall(text)}
+
+
+def values(text: str) -> set[str]:
+    """The values a text gives, normalised; digits inside names do not count."""
+    return numbers_in(" ".join(VALUE.findall(text)))
 
 
 def verify(sections: dict[str, list[dict]], sources: dict[str, str], jottings: list[str]) -> tuple[dict[str, list[dict]], list[str]]:
@@ -120,6 +133,11 @@ async def draft(llm: LlmClient, record: Record, visit: Visit) -> dict:
             problem = str(error)
     else:
         raise LlmError(f"The draft note was not usable ({problem}).")
+    # The agenda says what to cover, not what was found: an agenda id is no source, and is not flagged as an unknown one.
+    agenda_ids = {item.id for item in visit.agenda}
+    for items in sections.values():
+        for item in items:
+            item["sources"] = [source for source in item["sources"] if source not in agenda_ids]
     checked, unused = verify(sections, sources, [jotting.id for jotting in visit.jottings])
     return {"sections": checked, "unused": unused, "created": datetime.now(timezone.utc).isoformat(timespec="seconds")}
 
