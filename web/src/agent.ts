@@ -202,9 +202,22 @@ export interface AgentHealth {
   /** The clinic day the agent works with; `fixedToday` when AGENT_TODAY sets it. */
   today: string
   fixedToday: boolean
+  /** AGENT_DEMO_RESET is set: the top bar offers "Reset demo". */
+  demoReset: boolean
 }
 
 export const agentHealth = (signal: AbortSignal) => getJson<AgentHealth>('/api/health', signal)
+
+/** What the demo reset did (agent/demo.py). */
+export interface DemoReset {
+  deleted: Record<string, number>
+  reloaded: number
+  visits: number
+  national: string
+  seconds: number
+}
+
+export const resetDemo = () => postJson<DemoReset>('/api/demo/reset', {})
 
 export type BriefState = 'missing' | 'ready' | 'outdated' | 'preparing'
 

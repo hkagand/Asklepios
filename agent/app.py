@@ -38,6 +38,9 @@ POST /api/patients/{patient_id}/reviews                       {"focus": [refs], 
 POST /api/patients/{patient_id}/communications                {"about": [refs], "medium", "sent", "note"}
 POST /api/patients/{patient_id}/marks/{type}/{id}/withdraw    marks one's own mark entered-in-error
 
+Demo (demo.py): POST /api/demo/reset puts the FHIR server and the agent's working state back to the synthetic data as
+loaded; off unless AGENT_DEMO_RESET is set.
+
 Requests name the acting practitioner in the X-Practitioner header (a Practitioner id). This is the demo's stand-in
 for sign-in, not authentication: it decides whose name goes on a mark and in the audit log. Marks require it.
 """
@@ -49,6 +52,7 @@ import json
 import os
 import re
 import secrets
+import time
 from collections import Counter
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -63,6 +67,7 @@ from pydantic import BaseModel, Field
 from .audit import AuditLog
 from .chat import Sessions, run_turn
 from .config import load_settings
+from .demo import ResetRefused, reset_fhir
 from .fhir import FhirClient, FhirError, PatientNotFound
 from .llm import LlmClient, LlmError
 from .loops import Loop, open_loops
@@ -126,6 +131,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     app.state.brief_tasks = set()
     app.state.brief_gate = asyncio.Semaphore(3)
+    app.state.resetting = asyncio.Lock()
     yield
     await app.state.national.close()
     await fhir.close()
@@ -148,7 +154,10 @@ async def health() -> dict:
     """The model, the clinical model if one is configured, and the clinic day the agent works with; `fixedToday` when
     AGENT_TODAY sets it."""
     clinical = app.state.clinical.model if app.state.clinical else None
-    return {"model": app.state.settings.llm_model, "clinicalModel": clinical, "today": clinic_today().isoformat(), "fixedToday": "AGENT_TODAY" in os.environ}
+    return {
+        "model": app.state.settings.llm_model, "clinicalModel": clinical, "today": clinic_today().isoformat(),
+        "fixedToday": "AGENT_TODAY" in os.environ, "demoReset": app.state.settings.demo_reset,
+    }
 
 
 async def practitioner_named(practitioner_id: str) -> Practitioner:
@@ -808,6 +817,38 @@ async def cancel_visit(visit_id: str, practitioner: Practitioner | None = Depend
     _stop_considering(visit_id)
     app.state.audit.write(session="-", patient=visit.patient, event="visit-cancelled", user=clinician.id, visit=visit.id)
     return visit.as_json()
+
+
+@app.post("/api/demo/reset")
+async def demo_reset(practitioner: Practitioner | None = Depends(acting)) -> dict:
+    """Puts the demo back to the synthetic data as loaded (demo.py): the FHIR server, visits, onboarding and chat
+    sessions, and the national record service's requests and messages."""
+    state = app.state
+    if not state.settings.demo_reset:
+        raise HTTPException(status_code=403, detail="The demo reset is off; set AGENT_DEMO_RESET=1 in agent/.env to turn it on.")
+    if state.resetting.locked():
+        raise HTTPException(status_code=409, detail="A demo reset is already running.")
+    async with state.resetting:
+        started = time.perf_counter()
+        for visit_id in list(state.considering):
+            _stop_considering(visit_id)
+        try:
+            done = await reset_fhir(state.fhir, state.settings.baseline_dir)
+        except ResetRefused as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        except FhirError as error:
+            raise HTTPException(status_code=502, detail=str(error)) from error
+        done["visits"] = state.visits.clear()
+        state.onboardings.clear()
+        state.sessions = Sessions(state.fhir, state.plans, state.medicines, state.surgery)
+        try:
+            await state.national.reset()
+            done["national"] = "reset"
+        except NationalError as error:
+            done["national"] = f"not reset: {error.detail}"
+        done["seconds"] = round(time.perf_counter() - started, 1)
+    state.audit.write(session="-", patient="-", event="demo-reset", user=practitioner.id if practitioner else None, **done)
+    return done
 
 
 @app.get("/api/clinicians/{practitioner_id}/day")

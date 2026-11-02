@@ -154,6 +154,14 @@ class VisitStore:
         path = self._path(visit_id)
         return Visit.from_json(json.loads(path.read_text(encoding="utf-8"))) if path.exists() else None
 
+    def clear(self) -> int:
+        """Forgets every visit (the demo reset); returns how many there were."""
+        paths = list(self.folder.glob("*.json"))
+        for path in paths:
+            path.unlink()
+        self._locks.clear()
+        return len(paths)
+
     def open_for(self, patient_id: str) -> Visit | None:
         """The patient's visit in progress, if any (the newest)."""
         found = []

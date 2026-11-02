@@ -36,6 +36,9 @@ class Settings:
     clinical_llm_base_url: str | None = None
     clinical_llm_model: str | None = None
     clinical_llm_api_key: str | None = None
+    # The demo reset (demo.py): off unless AGENT_DEMO_RESET is set; it reloads these bundles.
+    demo_reset: bool = False
+    baseline_dir: Path = HERE.parent / "synthetic" / "output"
 
     @property
     def clinical(self) -> Settings | None:
@@ -68,4 +71,6 @@ def load_settings() -> Settings:
         clinical_llm_base_url=os.environ.get("CLINICAL_LLM_BASE_URL", "").rstrip("/") or None,
         clinical_llm_model=os.environ.get("CLINICAL_LLM_MODEL") or None,
         clinical_llm_api_key=os.environ.get("CLINICAL_LLM_API_KEY") or None,
+        demo_reset=os.environ.get("AGENT_DEMO_RESET", "").lower() in ("1", "true", "yes"),
+        baseline_dir=Path(os.environ.get("AGENT_BASELINE_DIR", HERE.parent / "synthetic" / "output")),
     )

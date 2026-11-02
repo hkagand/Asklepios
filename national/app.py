@@ -15,6 +15,7 @@ GET  /fhir/Patient/$summary?identifier=  the patient's IPS document, with the to
 GET  /demo/people                        who has a record, to try onboarding with (a demo aid; a real service has none)
 GET  /demo/phone                         the simulated phones: every SMS sent, newest first
 GET  /demo/access-log                    every request, granted or refused
+POST /demo/reset                         forgets every request, token, message and log entry (the demo reset)
 
 State is in memory: restarting the service forgets requests and tokens.
 """
@@ -190,3 +191,11 @@ def phone() -> dict:
 @app.get("/demo/access-log")
 def access_log() -> dict:
     return {"events": list(reversed(app.state.log))}
+
+
+@app.post("/demo/reset")
+def reset() -> dict:
+    """Back to a fresh start: no consent requests, tokens, messages or log entries. The records stay."""
+    for state in (app.state.requests, app.state.tokens, app.state.phone, app.state.log):
+        state.clear()
+    return {"records": len(app.state.records)}

@@ -58,6 +58,8 @@ Fill in `LLM_BASE_URL`, `LLM_MODEL` and, if the endpoint needs one, `LLM_API_KEY
 
 For a demo on a later day, set `AGENT_TODAY` to the anchor (for example `AGENT_TODAY=2026-10-23`). The agent and the chart viewer then treat that day as today, so the cohort reads as it was loaded without reloading it. The top bar shows "Demo date" while it is set. Real timestamps (marks, the audit log, when a brief was prepared) are not affected. If the agent is not running, the chart viewer falls back to the real date.
 
+To run a demo again from the start, set `AGENT_DEMO_RESET=1`: the top bar then has **Reset demo** (`agent/demo.py`, `POST /api/demo/reset`). After a confirmation, it puts the FHIR server back to the bundles in `synthetic/output/` as `load.py` loaded them. In one transaction it deletes every resource those bundles do not hold, which is whatever the demo wrote: onboarded patients and their imported history, visit Encounters, signed notes, Provenance, and review and communication marks. It then posts the bundles again, which undoes any change to their own resources. It also clears the agent's visits, onboarding and chat sessions, and the national record service's consent requests, tokens and messages, then reloads the app on the worklist. It takes about 5 seconds. Caches of what the model read from notes are kept: they are keyed by the note's text, so they stay right. The reset refuses to run if the server holds a patient not marked synthetic (HTEST), and each reset is written to the audit log.
+
 **4. Start ASKlepios**
 
 ```bash
@@ -100,7 +102,7 @@ Knowing a national id is not enough to read a record, as with real records:
 2. `POST /consent-requests/{id}/confirm` with the code the patient reads out returns a token for four hours, for that patient only. Three wrong codes close the request.
 3. `GET /fhir/Patient/$summary?identifier=urn:demo:asklepios:national-id|<id>` with the token returns the patient's IPS bundle: allergies, medications, problems, procedures and results.
 
-`GET /demo/phone` shows the simulated SMS messages and `GET /demo/access-log` every request, granted or refused. State is in memory. `GET /demo/people` lists who has a record, a demo aid that a real service would not offer: the New patient screen shows it as "Demo people", with whether each is already in the chart, and fills the form in one click.
+`GET /demo/phone` shows the simulated SMS messages and `GET /demo/access-log` every request, granted or refused. State is in memory. `GET /demo/people` lists who has a record, a demo aid that a real service would not offer: the New patient screen shows it as "Demo people", with whether each is already in the chart, and fills the form in one click. `POST /demo/reset` forgets every request, token, message and log entry; the demo reset calls it.
 
 | National id | Patient | Name and birth date | Worth catching |
 |---|---|---|---|

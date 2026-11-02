@@ -86,6 +86,10 @@ class NationalClient:
     async def confirm(self, request_id: str, code: str) -> dict:
         return await self._send("POST", f"/consent-requests/{request_id}/confirm", json={"code": code})
 
+    async def reset(self) -> dict:
+        """Forgets every consent request, token, message and log entry (the demo reset)."""
+        return await self._send("POST", "/demo/reset")
+
     async def summary(self, national_id: str, token: str) -> dict:
         return await self._send(
             "GET", "/fhir/Patient/$summary", params={"identifier": f"{NATIONAL_ID}|{national_id}"},

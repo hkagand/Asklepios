@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { agentHealth, type AgentHealth } from './agent.ts'
+import { agentHealth, resetDemo, type AgentHealth } from './agent.ts'
 import { ClinicianPicker, ClinicianProvider } from './components/clinician.tsx'
 import { SourceProvider } from './components/source.tsx'
 import { Badge } from './components/ui.tsx'
@@ -22,7 +22,7 @@ export default function App() {
   return (
     <ClinicianProvider>
       <SourceProvider>
-        <TopBar page={route.page} fixedDay={clinicDay?.fixedToday ? clinicDay.today : undefined} />
+        <TopBar page={route.page} fixedDay={clinicDay?.fixedToday ? clinicDay.today : undefined} canReset={clinicDay?.demoReset ?? false} />
         {route.page === 'patient' ? (
           <PatientView key={route.id} id={route.id} tab={route.tab} item={route.item} />
         ) : route.page === 'day' ? (
@@ -61,7 +61,82 @@ function useClinicDay(): AgentHealth | null | undefined {
   return health
 }
 
-function TopBar({ page, fixedDay }: { page: string; fixedDay?: string }) {
+const RESET_NOTICE = 'demo-reset'
+
+/** Puts the demo back to the synthetic data as loaded (agent/demo.py), then reloads the app from the worklist. */
+function ResetDemo() {
+  const [busy, setBusy] = useState(false)
+  const reset = async () => {
+    const sure = window.confirm(
+      'Reset the demo?\n\nEverything done since the synthetic data was loaded is removed: onboarded patients and their ' +
+        'imported history, visits and signed notes, review and "patient told" marks, and the national record ' +
+        "service's consent codes. Every chart goes back to how it was loaded.",
+    )
+    if (!sure) return
+    setBusy(true)
+    try {
+      const done = await resetDemo()
+      const removed = Object.values(done.deleted).reduce((sum, count) => sum + count, 0)
+      try {
+        sessionStorage.setItem(RESET_NOTICE, `Demo reset in ${done.seconds} s: ${removed} record${removed === 1 ? '' : 's'} written during the demo removed, ${done.visits} visit${done.visits === 1 ? '' : 's'} cleared.`)
+      } catch {
+        // The notice is a courtesy; the reset is done either way.
+      }
+      window.location.hash = '#/'
+      window.location.reload()
+    } catch (failure) {
+      setBusy(false)
+      window.alert(`The demo reset failed: ${failure instanceof Error ? failure.message : String(failure)}`)
+    }
+  }
+  return (
+    <>
+      <button
+        type="button"
+        onClick={reset}
+        disabled={busy}
+        title="Put every chart back to the synthetic data as loaded, to run the demo again"
+        className="whitespace-nowrap rounded-md border border-slate-300 px-2.5 py-1 text-[13px] font-semibold text-slate-600 hover:border-slate-900 hover:text-slate-900 disabled:cursor-wait"
+      >
+        {busy ? 'Resetting…' : 'Reset demo'}
+      </button>
+      {busy && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-paper/80 backdrop-blur-sm" role="status">
+          <p className="flex items-center gap-3 rounded-lg border border-slate-200 bg-sheet px-5 py-4 text-[15px] font-semibold text-slate-800 shadow-lg">
+            <span className="h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-slate-800 motion-reduce:animate-none" />
+            Resetting the demo to the data as loaded…
+          </p>
+        </div>
+      )}
+    </>
+  )
+}
+
+/** After a reset, one line saying what it did; dismissed with a click. */
+function ResetNotice() {
+  const [text, setText] = useState<string | null>(() => {
+    try {
+      const found = sessionStorage.getItem(RESET_NOTICE)
+      sessionStorage.removeItem(RESET_NOTICE)
+      return found
+    } catch {
+      return null
+    }
+  })
+  if (!text) return null
+  return (
+    <div className="border-b border-teal-200 bg-teal-50">
+      <p className="mx-auto flex max-w-7xl items-center gap-3 px-4 py-2 text-[13.5px] text-teal-900 sm:px-6">
+        <span className="min-w-0 flex-1">{text}</span>
+        <button type="button" onClick={() => setText(null)} className="font-semibold hover:underline">
+          Dismiss
+        </button>
+      </p>
+    </div>
+  )
+}
+
+function TopBar({ page, fixedDay, canReset }: { page: string; fixedDay?: string; canReset: boolean }) {
   const link = (href: string, label: string, active: boolean) => (
     <a
       href={href}
@@ -101,9 +176,11 @@ function TopBar({ page, fixedDay }: { page: string; fixedDay?: string }) {
               Synthetic data
             </Badge>
           </span>
+          {canReset && <ResetDemo />}
           <ClinicianPicker />
         </div>
       </div>
+      <ResetNotice />
     </header>
   )
 }
