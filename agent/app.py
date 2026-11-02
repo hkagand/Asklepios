@@ -82,10 +82,11 @@ from .onboard import (
     NationalError,
     import_transaction,
     new_patient_id,
-    patient_of,
     review_items,
 )
 from .onboard import SERVICE as ONBOARDING_SOURCE
+# Not briefs.patient_of (an appointment's patient id), which the day and briefs endpoints use.
+from .onboard import patient_of as national_patient_of
 from .plans import PlanExtractor
 from .surgery import SurgeryReader, surgical_history
 from .considerations import consider, signature
@@ -369,7 +370,7 @@ class AcceptBody(BaseModel):
 
 
 def _onboarding_view(session: dict) -> dict:
-    national = patient_of(session["bundle"])
+    national = national_patient_of(session["bundle"])
     return {
         "onboarding": session["id"],
         "patient": {
