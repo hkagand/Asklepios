@@ -448,6 +448,10 @@ async def run(args: argparse.Namespace) -> int:
         from .meds import run_meds
 
         return await run_meds(load_settings(), records, HERE / "meds.toml", args.out, fresh=args.fresh, repeats=args.repeats)
+    if args.onboarding:
+        from .onboarding import run_onboarding
+
+        return await run_onboarding(load_settings(), records, anchor, HERE / "onboarding.toml", args.out)
     if args.surgery:
         from .surgery import run_surgery
 
@@ -589,6 +593,7 @@ def main() -> None:
     parser.add_argument("--loops", action="store_true", help="check open loops against loops.toml instead of the questions")
     parser.add_argument("--meds", action="store_true", help="check medication reconciliation against meds.toml instead")
     parser.add_argument("--surgery", action="store_true", help="check surgical history against surgery.toml instead")
+    parser.add_argument("--onboarding", action="store_true", help="check onboarding reviews and imports against onboarding.toml instead")
     parser.add_argument("--fresh", action="store_true", help="with --loops, --meds or --surgery: read every note again instead of using the cache")
     parser.add_argument("--out", type=Path, default=HERE / "runs")
     raise SystemExit(asyncio.run(run(parser.parse_args())))

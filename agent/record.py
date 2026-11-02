@@ -178,6 +178,10 @@ class Record:
         self.medications = sorted(
             found.get("MedicationRequest", []), key=lambda item: self.medication_period(item)[0] or EARLIEST, reverse=True
         )
+        # What the patient says they take (from onboarding), as opposed to what was ordered.
+        self.statements = sorted(
+            found.get("MedicationStatement", []), key=lambda item: moment(item.get("dateAsserted")) or EARLIEST, reverse=True
+        )
         self.encounters = sorted(found.get("Encounter", []), key=lambda item: self.encounter_start(item) or EARLIEST, reverse=True)
         self.orders = sorted(found.get("ServiceRequest", []), key=lambda item: moment(item.get("authoredOn")) or EARLIEST, reverse=True)
         self.appointments = sorted(found.get("Appointment", []), key=lambda item: moment(item.get("start")) or EARLIEST)
@@ -452,6 +456,17 @@ class Record:
             parts.append("report " + ", ".join(f"[{ref}]" for ref in reports))
         return "; ".join(parts) + f" [{ref_of(procedure)}]"
 
+    def statement_line(self, statement: dict) -> str:
+        name = text_of(statement.get("medicationCodeableConcept")) or "Medication"
+        dosage = first(statement.get("dosage")).get("text")
+        parts = [f"{name}: {dosage}" if dosage else name]
+        parts.append({"active": "taking it, per the patient", "stopped": "not taking it, per the patient"}.get(statement.get("status", ""), statement.get("status", "")))
+        asserted = moment(statement.get("dateAsserted"))
+        if asserted:
+            parts.append(f"stated {day_text(asserted)}")
+        parts += [note["text"].rstrip(".") for note in statement.get("note", []) if note.get("text")]
+        return "; ".join(parts) + f" [{ref_of(statement)}]"
+
     def due_text(self, due: date) -> str:
         days = (due - self.today).days
         if days < 0:
@@ -558,6 +573,7 @@ class Record:
             "Condition": self.condition_line,
             "AllergyIntolerance": self.allergy_line,
             "MedicationRequest": self.medication_line,
+            "MedicationStatement": self.statement_line,
             "ServiceRequest": self.order_line,
             "Appointment": self.appointment_line,
             "Encounter": self.encounter_line,
@@ -592,6 +608,8 @@ class Record:
             return f"{text_of(resource.get('code'))} · {day_text(when)}"
         if kind == "MedicationRequest":
             return text_of(resource.get("medicationCodeableConcept")) or "Medication"
+        if kind == "MedicationStatement":
+            return f"Patient-reported: {text_of(resource.get('medicationCodeableConcept')) or 'medication'}"
         if kind == "ServiceRequest":
             ordered = moment(resource.get("authoredOn")) or EARLIEST
             return f"Order: {text_of(resource.get('code')).split(' with ')[0]} · {day_text(ordered)}"
@@ -635,6 +653,7 @@ class Record:
             status = medication.get("status")
             key = "Active:" if status == "active" else "On hold:" if status == "on-hold" else "Stopped or completed, newest first:"
             groups[key].append(self.medication_line(medication))
+        groups["What the patient says they take (from onboarding; not orders):"] = [self.statement_line(item) for item in self.statements]
         lines = [line for title, items in groups.items() if items for line in (title, *items)]
         return lines or ["none recorded"]
 

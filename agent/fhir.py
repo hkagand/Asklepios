@@ -9,6 +9,7 @@ import httpx
 PATIENT_SEARCHES = (
     "Condition",
     "MedicationRequest",
+    "MedicationStatement",
     "AllergyIntolerance",
     "Observation",
     "DiagnosticReport",
@@ -67,6 +68,10 @@ class FhirClient:
     async def update(self, resource: dict) -> dict:
         url = f"{self.base_url}/{resource['resourceType']}/{resource['id']}"
         return await self._send("PUT", url, json=resource, headers=WRITE_HEADERS)
+
+    async def transaction(self, bundle: dict) -> dict:
+        """POSTs a transaction Bundle: every entry is written, or none is."""
+        return await self._send("POST", self.base_url, json=bundle, headers=WRITE_HEADERS)
 
     async def search(self, resource_type: str, params: dict[str, str]) -> list[dict]:
         """Runs a search and follows `next` links until every page has been read."""

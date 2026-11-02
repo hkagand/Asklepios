@@ -25,6 +25,7 @@ TYPES = (
     "AllergyIntolerance",
     "Appointment",
     "Procedure",
+    "MedicationStatement",
 )
 REF = re.compile(r"\b(?:%s)/[A-Za-z0-9](?:[A-Za-z0-9.\-]{0,62}[A-Za-z0-9])?" % "|".join(TYPES))
 BRACKETS = re.compile(r"\s*(?:\[([^\[\]\n]{1,400})\]|【([^【】\n]{1,400})】|\(([^()\n]{1,400})\))")

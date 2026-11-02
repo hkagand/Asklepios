@@ -31,6 +31,7 @@ class Settings:
     max_steps: int
     audit_log: Path
     plan_cache: Path
+    national_base_url: str = "http://localhost:8090"
 
 
 def load_settings() -> Settings:
@@ -49,4 +50,5 @@ def load_settings() -> Settings:
         max_steps=int(os.environ.get("AGENT_MAX_STEPS", "8")),
         audit_log=Path(os.environ.get("AGENT_AUDIT_LOG", HERE / "logs" / "audit.jsonl")),
         plan_cache=Path(os.environ.get("AGENT_PLAN_CACHE", HERE / "cache" / "plans")),
+        national_base_url=os.environ.get("NATIONAL_BASE_URL", "http://localhost:8090").rstrip("/"),
     )

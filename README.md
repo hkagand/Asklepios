@@ -108,6 +108,16 @@ Knowing a national id is not enough to read a record, as with real records:
 
 Birth dates follow the anchor (the record says 58 years before it). The national ids start with 0, which no real Turkish identity number does.
 
+### Onboarding
+
+The agent onboards a patient from that service for the acting clinician (`agent/onboard.py`):
+
+1. `POST /api/onboarding/consent` with the national id, name and birth date: the patient is texted a code.
+2. `POST /api/onboarding/consent/{request}/confirm` with the code: the agent reads the summary and lists every item for review, checked against our chart if the patient is in it (found by national id): **new**; **duplicate** (already in the chart, not imported again); **differs** (another dose, or "no known allergies" against recorded allergies); **ask** (every medicine, since a prescription does not show it is taken, and a diagnosis recorded long ago that is still listed as active). Operations are matched against the surgical history, so one the chart has only in notes is imported as a dated record.
+3. `POST /api/onboarding/{onboarding}/accept` with a decision per item. Only accepted items are written, in one FHIR transaction with a Provenance naming the source, the consent and the clinician. Medicines are written as MedicationStatements with what the patient said (taking, a different dose, or not taking), never as orders. A new patient gets id `p-` and the last four digits of the national id. Nothing in the chart is changed.
+
+The service token stays on the agent. Onboarding sessions are in memory and end when the consent expires. Set `NATIONAL_BASE_URL` if the service is not on `http://localhost:8090`.
+
 ## Who is viewing, and marks
 
 The "Viewing as" picker names a practitioner from the FHIR server. The web app sends it with every request to the agent (`X-Practitioner`), and the audit log records it. **It is a stand-in for sign-in, not authentication**: anyone can choose any name. Real use needs SMART on FHIR or similar.
@@ -238,6 +248,7 @@ Other options:
 - `--no-loops`: leaves the sections computed from notes (OPEN LOOPS, MEDICATION RECONCILIATION, SURGICAL HISTORY) out of the chart index, to compare with and without them.
 - `--loops`: checks the open loops of every cohort patient against `evals/loops.toml`. That file can also put review and communication marks on a patient first, to check the review stages.
 - `--meds`: checks medication reconciliation against `evals/meds.toml`.
+- `--onboarding`: checks onboarding against `evals/onboarding.toml`: each record's review statuses, and that the import writes only what was accepted, as the patient answered, with one Provenance. No model calls apart from cached surgical history.
 - `--surgery`: checks surgical history against `evals/surgery.toml`: each expected operation with its year, region, approach, implant and sources, and no others.
 - `--fresh` (with `--loops`, `--meds` or `--surgery`): reads every note again instead of using the cache. With `--repeats 3`, it shows how much extraction varies.
 
