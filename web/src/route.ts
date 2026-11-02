@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 
-export const TABS = ['overview', 'labs', 'visits', 'reports', 'medications'] as const
+export const TABS = ['overview', 'labs', 'visits', 'reports', 'medications', 'visit'] as const
 export type Tab = (typeof TABS)[number]
 
 export type Route =

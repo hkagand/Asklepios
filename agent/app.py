@@ -10,6 +10,13 @@ GET /api/loops/summary?patients=p-1,p-2 counts them by status for each patient, 
 GET /api/patients/{patient_id}/medications reconciles the medication orders with what the notes say (meds.py).
 GET /api/patients/{patient_id}/surgery lists earlier operations from Procedure records, notes and reports (surgery.py).
 
+Visits (visits.py), for the acting practitioner:
+POST /api/patients/{patient_id}/visits             starts a visit (an Encounter in progress) with its agenda
+GET  /api/patients/{patient_id}/visit              the visit in progress, if any
+POST /api/visits/{visit_id}/jottings               {"text"}; PUT and DELETE /api/visits/{visit_id}/jottings/{id}
+POST /api/visits/{visit_id}/agenda/{item_id}       {"done"}
+POST /api/visits/{visit_id}/cancel                 closes the visit without a note
+
 Onboarding from the national record service (simulated; onboard.py), all for the acting practitioner:
 POST /api/onboarding/consent                       {"nationalId", "name", "birthDate"}: the patient is texted a code
 POST /api/onboarding/consent/{request_id}/confirm  {"code"}: reads the summary; returns the items for review
@@ -70,7 +77,10 @@ from .onboard import (
 from .onboard import SERVICE as ONBOARDING_SOURCE
 from .plans import PlanExtractor
 from .surgery import SurgeryReader, surgical_history
-from .record import Record, clinic_today
+from .visits import Visit, VisitStore, new_visit_id, todays_appointment
+from .visits import agenda as visit_agenda
+from .visits import encounter as visit_encounter
+from .record import Record, clinic_today, ref_of
 
 FHIR_ID = re.compile(r"[A-Za-z0-9\-.]{1,64}")
 
@@ -92,6 +102,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.surgery = surgery
     app.state.national = NationalClient(settings.national_base_url)
     app.state.onboardings = {}
+    app.state.visits = VisitStore(settings.plan_cache.parent / "visits")
     app.state.audit = AuditLog(settings.audit_log)
     app.state.sessions = Sessions(fhir, plans, medicines, surgery)
     app.state.practitioners = {}
@@ -454,6 +465,144 @@ async def onboarding_accept(onboarding_id: str, body: AcceptBody, practitioner: 
         written=written,
     )
     return {"patient": session["patientId"], "written": written[:-1], "provenance": written[-1]}
+
+# ------------------------------------------------------------------- visits
+
+class StartVisitBody(BaseModel):
+    appointment: str | None = Field(default=None, pattern=r"^Appointment/[A-Za-z0-9\-.]{1,64}$")
+
+
+class JottingBody(BaseModel):
+    text: str = Field(min_length=1, max_length=2000)
+
+
+class TickBody(BaseModel):
+    done: bool
+
+
+def _visit(visit_id: str) -> Visit:
+    if not FHIR_ID.fullmatch(visit_id):
+        raise HTTPException(status_code=400, detail="Invalid visit id.")
+    visit = app.state.visits.get(visit_id)
+    if visit is None:
+        raise HTTPException(status_code=404, detail="No such visit.")
+    return visit
+
+
+def _open_visit(visit_id: str) -> Visit:
+    visit = _visit(visit_id)
+    if visit.status != "open":
+        raise HTTPException(status_code=409, detail=f"This visit is {visit.status}.")
+    return visit
+
+
+@app.post("/api/patients/{patient_id}/visits")
+async def start_visit(patient_id: str, body: StartVisitBody, practitioner: Practitioner | None = Depends(acting)) -> dict:
+    """Starts a visit (an Encounter in progress) with its agenda from the record, or returns the one already open."""
+    clinician = required(practitioner)
+    state = app.state
+    current = state.visits.open_for(checked(patient_id))
+    if current is not None:
+        return current.as_json()
+    record, items, _ = await _loops(patient_id, clinician.id)
+    picture = await reconcile(record, state.medicines, items)
+    appointment = None
+    if body.appointment:
+        appointment = record.resources.get(body.appointment)
+        if appointment is None:
+            raise HTTPException(status_code=404, detail=f"{body.appointment} is not this patient's appointment.")
+    else:
+        appointment = todays_appointment(record)
+    visit = Visit(
+        id=new_visit_id(), patient=patient_id, practitioner=clinician.id, practitioner_name=clinician.name,
+        started=now_text(), appointment=ref_of(appointment) if appointment else None,
+        reason=(appointment or {}).get("description"), agenda=visit_agenda(record, items, picture, appointment),
+    )
+    try:
+        await state.fhir.update(visit_encounter(record, visit, clinician))
+    except FhirError as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+    state.visits.save(visit)
+    state.audit.write(session="-", patient=patient_id, event="visit-started", user=clinician.id, visit=visit.id, agenda=len(visit.agenda))
+    return visit.as_json()
+
+
+@app.get("/api/patients/{patient_id}/visit")
+async def current_visit(patient_id: str) -> dict:
+    """The patient's visit in progress, or {"visit": null}."""
+    visit = app.state.visits.open_for(checked(patient_id))
+    return {"visit": visit.as_json() if visit else None}
+
+
+@app.get("/api/visits/{visit_id}")
+async def get_visit(visit_id: str) -> dict:
+    return _visit(visit_id).as_json()
+
+
+@app.post("/api/visits/{visit_id}/jottings")
+async def add_jotting(visit_id: str, body: JottingBody, practitioner: Practitioner | None = Depends(acting)) -> dict:
+    clinician = required(practitioner)
+    visit = _open_visit(visit_id)
+    jotting = visit.jot(body.text.strip(), clinician.id)
+    app.state.visits.save(visit)
+    app.state.audit.write(session="-", patient=visit.patient, event="visit-jotting", user=clinician.id, visit=visit.id, jotting=jotting.id)
+    return visit.as_json()
+
+
+@app.put("/api/visits/{visit_id}/jottings/{jotting_id}")
+async def edit_jotting(visit_id: str, jotting_id: str, body: JottingBody, practitioner: Practitioner | None = Depends(acting)) -> dict:
+    clinician = required(practitioner)
+    visit = _open_visit(visit_id)
+    jotting = next((item for item in visit.jottings if item.id == jotting_id), None)
+    if jotting is None:
+        raise HTTPException(status_code=404, detail="No such jotting.")
+    jotting.text = body.text.strip()
+    app.state.visits.save(visit)
+    app.state.audit.write(session="-", patient=visit.patient, event="visit-jotting-edited", user=clinician.id, visit=visit.id, jotting=jotting_id)
+    return visit.as_json()
+
+
+@app.delete("/api/visits/{visit_id}/jottings/{jotting_id}")
+async def delete_jotting(visit_id: str, jotting_id: str, practitioner: Practitioner | None = Depends(acting)) -> dict:
+    clinician = required(practitioner)
+    visit = _open_visit(visit_id)
+    if not any(item.id == jotting_id for item in visit.jottings):
+        raise HTTPException(status_code=404, detail="No such jotting.")
+    visit.jottings = [item for item in visit.jottings if item.id != jotting_id]
+    for item in visit.agenda:
+        if item.done_by == jotting_id:
+            item.done, item.done_by = False, None
+    app.state.visits.save(visit)
+    app.state.audit.write(session="-", patient=visit.patient, event="visit-jotting-deleted", user=clinician.id, visit=visit.id, jotting=jotting_id)
+    return visit.as_json()
+
+
+@app.post("/api/visits/{visit_id}/agenda/{item_id}")
+async def tick_agenda(visit_id: str, item_id: str, body: TickBody, practitioner: Practitioner | None = Depends(acting)) -> dict:
+    required(practitioner)
+    visit = _open_visit(visit_id)
+    item = next((entry for entry in visit.agenda if entry.id == item_id), None)
+    if item is None:
+        raise HTTPException(status_code=404, detail="No such agenda item.")
+    item.done, item.done_by = body.done, "clinician" if body.done else None
+    app.state.visits.save(visit)
+    return visit.as_json()
+
+
+@app.post("/api/visits/{visit_id}/cancel")
+async def cancel_visit(visit_id: str, practitioner: Practitioner | None = Depends(acting)) -> dict:
+    """Closes a visit without a note: the Encounter is marked cancelled, nothing else is written."""
+    clinician = required(practitioner)
+    visit = _open_visit(visit_id)
+    visit.status = "cancelled"
+    record = await _record(visit.patient)
+    try:
+        await app.state.fhir.update(visit_encounter(record, visit, clinician))
+    except FhirError as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+    app.state.visits.save(visit)
+    app.state.audit.write(session="-", patient=visit.patient, event="visit-cancelled", user=clinician.id, visit=visit.id)
+    return visit.as_json()
 
 
 @app.get("/api/clinicians/{practitioner_id}/day")

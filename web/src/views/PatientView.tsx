@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react'
-import { patientSurgery, type SurgicalHistory } from '../agent.ts'
+import { patientSurgery, patientVisit, startVisit, type SurgicalHistory, type Visit } from '../agent.ts'
 import { Copilot, SparkIcon } from '../components/Copilot.tsx'
+import { useClinician } from '../components/clinician.tsx'
 import { SourceButton } from '../components/source.tsx'
 import { operationsFact } from '../components/SurgicalHistory.tsx'
 import { ErrorPanel, Loading } from '../components/ui.tsx'
@@ -13,12 +14,32 @@ import { Labs } from './Labs.tsx'
 import { Medications } from './Medications.tsx'
 import { Overview } from './Overview.tsx'
 import { Reports } from './Reports.tsx'
+import { VisitView } from './Visit.tsx'
 import { Visits } from './Visits.tsx'
 
 export function PatientView({ id, tab, item }: { id: string; tab: Tab; item?: string }) {
   const state = useAsync((signal) => loadChart(id, signal), [id])
   // Read once for the band and the overview card.
   const surgery = useAsync((signal) => patientSurgery(id, signal), [id])
+  const visitState = useAsync((signal) => patientVisit(id, signal), [id])
+  // The visit as last changed here, once anything has changed; until then, as loaded.
+  const [changedVisit, setVisit] = useState<Visit | null>()
+  const visit = changedVisit !== undefined ? changedVisit : visitState.status === 'ready' ? visitState.data : null
+  const { current } = useClinician()
+  const [starting, setStarting] = useState(false)
+  const [visitError, setVisitError] = useState<string>()
+  const begin = async () => {
+    setStarting(true)
+    setVisitError(undefined)
+    try {
+      setVisit(await startVisit(id))
+      window.location.hash = patientHref(id, 'visit')
+    } catch (failure) {
+      setVisitError(failure instanceof Error ? failure.message : String(failure))
+    } finally {
+      setStarting(false)
+    }
+  }
   const [copilot, setCopilot] = useStoredFlag('copilot-open')
   return (
     <div className="flex items-start">
@@ -31,13 +52,23 @@ export function PatientView({ id, tab, item }: { id: string; tab: Tab; item?: st
         {state.status === 'ready' && (
           <>
             <PatientHeader chart={state.data} surgery={surgery} />
-            <TabBar chart={state.data} tab={tab} copilot={copilot} onCopilot={() => setCopilot(!copilot)} />
+            <TabBar
+              chart={state.data}
+              tab={tab}
+              copilot={copilot}
+              onCopilot={() => setCopilot(!copilot)}
+              visit={visit}
+              onStartVisit={current ? begin : undefined}
+              starting={starting}
+            />
+            {visitError && <p className="mt-2 rounded-md bg-rose-50 px-3 py-2 text-sm text-rose-800">{visitError}</p>}
             <div className="@container mt-4">
               {tab === 'overview' && <Overview chart={state.data} surgery={surgery} />}
               {tab === 'labs' && <Labs chart={state.data} selected={item} />}
               {tab === 'visits' && <Visits chart={state.data} selected={item} />}
               {tab === 'reports' && <Reports chart={state.data} selected={item} />}
               {tab === 'medications' && <Medications chart={state.data} />}
+              {tab === 'visit' && <VisitView chart={state.data} visit={visit} onChange={setVisit} onStart={begin} starting={starting} />}
             </div>
           </>
         )}
@@ -142,7 +173,24 @@ function Fact({ label, children }: { label: string; children: ReactNode }) {
   )
 }
 
-function TabBar({ chart, tab, copilot, onCopilot }: { chart: Chart; tab: Tab; copilot: boolean; onCopilot: () => void }) {
+function TabBar({
+  chart,
+  tab,
+  copilot,
+  onCopilot,
+  visit,
+  onStartVisit,
+  starting,
+}: {
+  chart: Chart
+  tab: Tab
+  copilot: boolean
+  onCopilot: () => void
+  visit: Visit | null
+  onStartVisit?: () => void
+  starting: boolean
+}) {
+  const open = visit?.status === 'open'
   const id = chart.patient.id ?? ''
   const awaiting = openOrders(chart).length
   const tabs: [Tab, string, number | undefined][] = [
@@ -151,6 +199,7 @@ function TabBar({ chart, tab, copilot, onCopilot }: { chart: Chart; tab: Tab; co
     ['visits', 'Visits & notes', timeline(chart).length],
     ['reports', 'Reports', chart.reports.length],
     ['medications', 'Medications', chart.medications.filter((medication) => medication.status === 'active').length],
+    ...(open ? ([['visit', 'Visit in progress', visit.jottings.length]] as [Tab, string, number][]) : []),
   ]
   return (
     <nav className="mt-4 flex flex-wrap items-end gap-x-5 gap-y-1 border-b border-slate-300" aria-label="Chart sections">
@@ -176,11 +225,22 @@ function TabBar({ chart, tab, copilot, onCopilot }: { chart: Chart; tab: Tab; co
           )}
         </a>
       ))}
+      {!open && (
+        <button
+          type="button"
+          onClick={onStartVisit}
+          disabled={!onStartVisit || starting}
+          title={onStartVisit ? 'Start a visit: an agenda from the record, and jottings for the note' : 'Choose who is viewing (top right) first'}
+          className="mb-2 ml-auto inline-flex items-center gap-1.5 rounded-md border border-slate-900 bg-sheet px-3 py-1.5 text-[14px] font-bold text-slate-900 hover:bg-mark-soft disabled:cursor-not-allowed disabled:border-slate-300 disabled:text-slate-400"
+        >
+          {starting ? 'Starting…' : 'Start visit'}
+        </button>
+      )}
       <button
         type="button"
         onClick={onCopilot}
         aria-pressed={copilot}
-        className={`mb-2 ml-auto inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[14px] font-bold ${
+        className={`mb-2 ${open ? 'ml-auto' : ''} inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[14px] font-bold ${
           copilot ? 'bg-mark text-slate-900' : 'bg-slate-900 text-white hover:bg-slate-800'
         }`}
       >

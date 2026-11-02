@@ -11,6 +11,7 @@ This repository is a synthetic demo. Every patient is invented. Do not load real
 - **Open loops** (`agent/plans.py`, `agent/loops.py`): what each clinician's latest note planned, open orders and new results, tracked from order to result, review and telling the patient. See [Open loops](#open-loops).
 - **Medication reconciliation** (`agent/meds.py`): the medication orders against what the notes say, with a timeline per drug. See [Medications](#medications).
 - **Surgical history** (`agent/surgery.py`): every earlier operation, merged from Procedure records, notes and reports, by body region. See [Surgical history](#surgical-history).
+- **Visits** (`agent/visits.py`): a workspace for the visit itself, with an agenda from the record and the clinician's jottings. See [Visits](#visits).
 - **Onboarding** (`agent/onboard.py`, `national/`): a new patient's history from a simulated national record, with their consent, reviewed by the clinician before anything is imported. See [National record service (simulated)](#national-record-service-simulated).
 - **My day and prepared briefs** (`agent/briefs.py`): a clinician's clinic list with what needs attention, and a pre-visit brief per patient written before the clinic. See [My day](#my-day).
 - **Synthetic cohort** (`synthetic/`): 21 seeded patients with labs, visit notes, imaging and pathology reports, medications, orders, procedures and appointments, and a few deliberate gaps for the checks above to find. Reloading overwrites the same resource ids.
@@ -199,6 +200,17 @@ Before an operation, the surgeon needs every earlier one: when, what, open or la
 
 `GET /api/patients/{id}/surgery` returns the operations with their sources, the signs, and what was searched.
 
+## Visits
+
+**Start visit** on a patient's page opens a FHIR Encounter (in progress) for the clinician viewing, linked to today's appointment if there is one, and a **Visit in progress** tab:
+
+- **Agenda from the record**, built by plain code, not suggested by the model: the reason for the appointment; open loops to close (results to review or tell the patient, overdue or missing plans); medicines to confirm (reconciliation findings, and what a patient said at onboarding); allergies to confirm, or to ask about when none are recorded. Each item links to its source and can be ticked as covered.
+- **Jottings**: short lines the clinician types as the patient talks ("BP 138/84", "no fever", "plan: refer to general surgery"), with their time; they can be edited or deleted. The visit note will be drafted from these.
+
+Starting a visit when one is open returns it. **Cancel visit** marks the Encounter cancelled and writes nothing else. The working state (agenda ticks, jottings) is kept on the agent under `agent/cache/visits/`, one file per visit, so a reload or restart keeps it.
+
+Endpoints: `POST /api/patients/{id}/visits`, `GET /api/patients/{id}/visit`, `POST /api/visits/{id}/jottings` (and `PUT`/`DELETE` on one), `POST /api/visits/{id}/agenda/{item}`, `POST /api/visits/{id}/cancel`.
+
 ## My day
 
 **My day** is the selected clinician's clinic list. It defaults to the next day with appointments, and you can step back or forward a day.
@@ -223,6 +235,7 @@ Each note is read once per kind of reading. The results are cached under `agent/
 - `medications/`: medicines mentioned
 - `surgery/`: operations mentioned in notes and reports
 - `briefs/`: prepared briefs
+- `visits/`: visits in progress (agenda ticks and jottings)
 
 Note text is sent to the model in `agent/.env`, as chat questions are.
 

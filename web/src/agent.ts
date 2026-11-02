@@ -188,6 +188,11 @@ const getJson = <T>(url: string, signal: AbortSignal) => send<T>(url, { headers:
 const postJson = <T>(url: string, body: unknown) =>
   send<T>(url, { method: 'POST', headers: headers({ 'Content-Type': 'application/json' }), body: JSON.stringify(body) })
 
+const putJson = <T>(url: string, body: unknown) =>
+  send<T>(url, { method: 'PUT', headers: headers({ 'Content-Type': 'application/json' }), body: JSON.stringify(body) })
+
+const deleteJson = <T>(url: string) => send<T>(url, { method: 'DELETE', headers: headers() })
+
 const patientPath = (patientId: string) => `/api/patients/${encodeURIComponent(patientId)}`
 
 export interface AgentHealth {
@@ -311,6 +316,58 @@ export async function markCommunicated(
 export async function withdrawMark(patientId: string, markId: string): Promise<void> {
   await postJson(`${patientPath(patientId)}/marks/${markId}/withdraw`, {})
 }
+
+// ---------------------------------------------------------------- visits (agent/visits.py)
+
+export type AgendaKind = 'reason' | 'loop' | 'medication' | 'allergy'
+
+/** Something the record suggests covering at this visit. */
+export interface AgendaItem {
+  id: string
+  kind: AgendaKind
+  text: string
+  detail: string
+  refs: string[]
+  done: boolean
+  doneBy: string | null
+}
+
+export interface Jotting {
+  id: string
+  time: string
+  text: string
+  by: string
+}
+
+export interface Visit {
+  id: string
+  encounter: string
+  patient: string
+  practitioner: string
+  practitionerName: string
+  started: string
+  status: 'open' | 'signed' | 'cancelled'
+  appointment: string | null
+  reason: string | null
+  agenda: AgendaItem[]
+  jottings: Jotting[]
+}
+
+const visitPath = (visitId: string) => `/api/visits/${encodeURIComponent(visitId)}`
+
+export async function patientVisit(patientId: string, signal: AbortSignal): Promise<Visit | null> {
+  return (await getJson<{ visit: Visit | null }>(`${patientPath(patientId)}/visit`, signal)).visit
+}
+
+export const startVisit = (patientId: string) => postJson<Visit>(`${patientPath(patientId)}/visits`, {})
+export const addJotting = (visitId: string, text: string) => postJson<Visit>(`${visitPath(visitId)}/jottings`, { text })
+export const editJotting = (visitId: string, jottingId: string, text: string) =>
+  putJson<Visit>(`${visitPath(visitId)}/jottings/${encodeURIComponent(jottingId)}`, { text })
+export const deleteJotting = (visitId: string, jottingId: string) =>
+  deleteJson<Visit>(`${visitPath(visitId)}/jottings/${encodeURIComponent(jottingId)}`)
+export const tickAgenda = (visitId: string, itemId: string, done: boolean) =>
+  postJson<Visit>(`${visitPath(visitId)}/agenda/${encodeURIComponent(itemId)}`, { done })
+export const cancelVisit = (visitId: string) => postJson<Visit>(`${visitPath(visitId)}/cancel`, {})
 
 // ---------------------------------------------------------------- onboarding (agent/onboard.py)
 
