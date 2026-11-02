@@ -7,9 +7,11 @@ export type Route =
   | { page: 'worklist' }
   | { page: 'day'; day?: string }
   | { page: 'patient'; id: string; tab: Tab; item?: string }
+  | { page: 'onboard' }
 
 function parse(hash: string): Route {
   const [page, id, tab, item] = hash.replace(/^#\/?/, '').split('/').map(decodeURIComponent)
+  if (page === 'onboard') return { page: 'onboard' }
   if (page === 'day') return { page: 'day', day: /^\d{4}-\d{2}-\d{2}$/.test(id ?? '') ? id : undefined }
   if (page === 'patients' && id) {
     const known = (TABS as readonly string[]).includes(tab) ? (tab as Tab) : 'overview'

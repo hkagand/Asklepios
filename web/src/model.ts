@@ -27,6 +27,8 @@ export interface Chart {
   patient: fhir4.Patient
   conditions: fhir4.Condition[]
   medications: fhir4.MedicationRequest[]
+  /** What the patient says they take, recorded at onboarding: not orders. */
+  statements: fhir4.MedicationStatement[]
   allergies: fhir4.AllergyIntolerance[]
   encounters: fhir4.Encounter[]
   notes: fhir4.DocumentReference[]
@@ -65,6 +67,7 @@ export function resourceIndex(chart: Chart): Map<string, Resource> {
     chart.patient,
     ...chart.conditions,
     ...chart.medications,
+    ...chart.statements,
     ...chart.allergies,
     ...chart.encounters,
     ...chart.notes,
@@ -86,7 +89,7 @@ export const reportTime = (report: fhir4.DiagnosticReport): number => toTime(rep
 
 export async function loadChart(id: string, signal: AbortSignal): Promise<Chart> {
   const byPatient = { patient: id }
-  const [patient, conditions, medications, allergies, observations, diagnosticReports, notes, encounters, orders, appointments, procedures] =
+  const [patient, conditions, medications, allergies, observations, diagnosticReports, notes, encounters, orders, appointments, procedures, statements] =
     await Promise.all([
       read<fhir4.Patient>('Patient', id, signal),
       search<fhir4.Condition>('Condition', byPatient, signal),
@@ -99,6 +102,7 @@ export async function loadChart(id: string, signal: AbortSignal): Promise<Chart>
       search<fhir4.ServiceRequest>('ServiceRequest', byPatient, signal),
       search<fhir4.Appointment>('Appointment', byPatient, signal),
       search<fhir4.Procedure>('Procedure', byPatient, signal),
+      search<fhir4.MedicationStatement>('MedicationStatement', byPatient, signal),
     ])
   const isLab = (report: fhir4.DiagnosticReport) => report.category?.some((category) => code(category) === 'LAB') ?? false
   const labs = new Map<string, Series>()
@@ -120,6 +124,7 @@ export async function loadChart(id: string, signal: AbortSignal): Promise<Chart>
     patient,
     conditions: sortConditions(conditions),
     medications: medications.sort(newestFirst((medication) => toTime(medication.authoredOn))),
+    statements: statements.sort(newestFirst((statement) => toTime(statement.dateAsserted))),
     allergies,
     encounters: encounters.sort(newestFirst(encounterStart)),
     notes: notes.sort(newestFirst((note) => toTime(note.date))),
@@ -196,6 +201,10 @@ function sortConditions(conditions: fhir4.Condition[]): fhir4.Condition[] {
     (a, b) => staged(b) - staged(a) || (b.onsetDateTime ?? '').localeCompare(a.onsetDateTime ?? ''),
   )
 }
+
+/** Imported from the national record (simulated) at onboarding. */
+export const isImported = (resource: { meta?: fhir4.Meta }): boolean =>
+  resource.meta?.tag?.some((tag) => tag.code === 'national-import') ?? false
 
 export const isActive = (condition: fhir4.Condition): boolean => code(condition.clinicalStatus) === 'active'
 

@@ -9,6 +9,7 @@ import { daysBetween, formatDate, formatNumber, signed, todayIso, toTime } from 
 import {
   changesSince,
   isActive,
+  isImported,
   lastVisit,
   openOrders,
   percentChange,
@@ -302,7 +303,9 @@ function Problems({ chart }: { chart: Chart }) {
           {active.map((condition) => (
             <li key={condition.id} className="flex items-start gap-2 px-4 py-2.5">
               <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium text-slate-900">{text(condition.code)}</p>
+                <p className="text-sm font-medium text-slate-900">
+                  {text(condition.code)} {isImported(condition) && <NationalBadge />}
+                </p>
                 {condition.stage?.[0]?.summary && <p className="text-xs text-slate-700">{text(condition.stage[0].summary)}</p>}
                 {condition.note?.[0]?.text && <p className="text-xs text-slate-500">{condition.note[0].text}</p>}
                 <p className="mt-0.5 text-[11px] text-slate-400">
@@ -329,7 +332,15 @@ function Medications({ chart }: { chart: Chart }) {
     return medication.status === 'stopped' && end !== undefined && daysBetween(end, today) <= 90
   })
   return (
-    <Card title="Medications" subtitle={`${active.length} active${held.length ? ` · ${held.length} on hold` : ''}`} flush>
+    <Card
+      title="Medications"
+      subtitle={
+        chart.statements.length
+          ? `${active.length} active order${active.length === 1 ? '' : 's'}${held.length ? ` · ${held.length} on hold` : ''} · ${chart.statements.length} reported by the patient`
+          : `${active.length} active${held.length ? ` · ${held.length} on hold` : ''}`
+      }
+      flush
+    >
       <ul className="divide-y divide-slate-100">
         {active.map((medication) => (
           <MedicationItem key={medication.id} medication={medication} />
@@ -338,9 +349,31 @@ function Medications({ chart }: { chart: Chart }) {
           <MedicationItem key={medication.id} medication={medication} held />
         ))}
       </ul>
-      {active.length + held.length === 0 && (
+      {active.length + held.length === 0 && chart.statements.length === 0 && (
         <div className="px-4 py-3">
           <Empty>No current medications.</Empty>
+        </div>
+      )}
+      {chart.statements.length > 0 && (
+        <div className="border-t border-slate-100">
+          <p className="px-4 pt-2.5 text-xs font-semibold text-slate-500">What the patient says they take (not orders)</p>
+          <ul className="divide-y divide-slate-100">
+            {chart.statements.map((statement) => (
+              <li key={statement.id} className="flex items-start gap-2 px-4 py-2.5">
+                <div className="min-w-0 flex-1">
+                  <p className={`text-sm font-medium ${statement.status === 'active' ? 'text-slate-900' : 'text-slate-500 line-through decoration-slate-300'}`}>
+                    {text(statement.medicationCodeableConcept)} {isImported(statement) && <NationalBadge />}
+                  </p>
+                  <p className="text-xs text-slate-600">
+                    {statement.status === 'active' ? 'Taking' : 'Not taking'}
+                    {statement.dosage?.[0]?.text && ` · ${statement.dosage[0].text}`}
+                  </p>
+                  <p className="mt-0.5 text-[11px] text-slate-400">Stated by the patient {formatDate(statement.dateAsserted)}</p>
+                </div>
+                <SourceButton resource={statement} />
+              </li>
+            ))}
+          </ul>
         </div>
       )}
       {stopped.length > 0 && (
@@ -364,6 +397,15 @@ function Medications({ chart }: { chart: Chart }) {
         </details>
       )}
     </Card>
+  )
+}
+
+/** Marks what came from the national record at onboarding; the source drawer shows its provenance. */
+function NationalBadge() {
+  return (
+    <Badge tone="violet" title="Imported from the national record (simulated) at onboarding">
+      National record
+    </Badge>
   )
 }
 
@@ -399,7 +441,7 @@ function Allergies({ chart }: { chart: Chart }) {
               <li key={allergy.id} className="flex items-start gap-2 px-4 py-2.5">
                 <div className="min-w-0 flex-1">
                   <p className={`text-sm font-medium ${allergy.criticality === 'high' ? 'text-rose-700' : 'text-slate-900'}`}>
-                    {text(allergy.code)}
+                    {text(allergy.code)} {isImported(allergy) && <NationalBadge />}
                   </p>
                   {reaction && (
                     <p className="text-xs text-slate-500">

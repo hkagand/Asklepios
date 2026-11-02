@@ -312,6 +312,77 @@ export async function withdrawMark(patientId: string, markId: string): Promise<v
   await postJson(`${patientPath(patientId)}/marks/${markId}/withdraw`, {})
 }
 
+// ---------------------------------------------------------------- onboarding (agent/onboard.py)
+
+export type ReviewStatus = 'new' | 'duplicate' | 'differs' | 'ask'
+export type ReviewSection = 'allergies' | 'problems' | 'medications' | 'procedures' | 'results'
+
+/** One item of a patient's national summary, checked against our chart. */
+export interface ReviewItem {
+  key: string
+  section: ReviewSection
+  label: string
+  detail: string
+  when: string | null
+  status: ReviewStatus
+  reason: string
+  chart: string[]
+  critical: boolean
+  stale: boolean
+}
+
+export interface OnboardingReview {
+  onboarding: string
+  patient: { name: string; birthDate: string; gender: string; nationalId: string; existing: boolean; id: string }
+  source: { service: string; summaryDate: string }
+  expiresAt: string
+  items: ReviewItem[]
+  imported: string[] | null
+}
+
+export interface ConsentSent {
+  requestId: string
+  sentTo: string
+  expiresAt: string
+}
+
+export interface ImportDecision {
+  key: string
+  import: boolean
+  taking?: 'yes' | 'no' | 'different'
+  dose?: string
+  current?: boolean
+}
+
+export interface ImportResult {
+  patient: string
+  written: string[]
+  provenance: string
+}
+
+export interface PhoneMessage {
+  to: string
+  patient: string
+  time: string
+  text: string
+}
+
+export const requestConsent = (nationalId: string, name: string, birthDate: string) =>
+  postJson<ConsentSent>('/api/onboarding/consent', { nationalId, name, birthDate })
+
+export const confirmConsent = (requestId: string, code: string) =>
+  postJson<OnboardingReview>(`/api/onboarding/consent/${encodeURIComponent(requestId)}/confirm`, { code })
+
+export const acceptOnboarding = (onboarding: string, decisions: ImportDecision[]) =>
+  postJson<ImportResult>(`/api/onboarding/${encodeURIComponent(onboarding)}/accept`, { decisions })
+
+/** The simulated patient's phone, straight from the national record service: it stands for the patient's device. */
+export async function nationalPhone(signal: AbortSignal): Promise<PhoneMessage[]> {
+  const response = await fetch('/national/demo/phone', { signal })
+  if (!response.ok) throw new Error('The national record service is not reachable. Start it with: python -m national')
+  return ((await response.json()) as { messages: PhoneMessage[] }).messages
+}
+
 export const patientLoops = (patientId: string, signal: AbortSignal) =>
   getJson<PatientLoops>(`${patientPath(patientId)}/loops`, signal)
 
