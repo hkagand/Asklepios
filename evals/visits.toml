@@ -1,0 +1,37 @@
+# Scripted visits: what live help should make of each jotting. Check with: python -m evals --visits
+#
+# Uses the anchor and seed in gold.toml; patients onboarded in onboarding.toml (p-3001, p-3002) can be used too. Each
+# visit gets its agenda from the record as the agent builds it, then the jottings are reviewed in order. For each
+# jotting, the checks given:
+#   section  the note section, or a list of acceptable ones
+#   alerts   the kinds of code alerts, exactly ("allergy", "dose"); [] means none
+#   covers   agenda item kinds the jotting must tick (reason, loop, medication, allergy)
+#   link     a phrase that must appear in the label of a record item it links to
+#   gaps     true when documentation gaps must be listed, false when there must be none
+# Across every jotting, no gap may read as advice.
+
+[[visit]]
+patient = "p-1003"
+# The note says 5 mg, the order 10 mg: what he reports now is a discrepancy; the plan to change it is not.
+jottings = [
+  { text = "Says he takes ramipril 5 mg once daily", section = ["subjective", "objective"], alerts = ["dose"], covers = ["medication"], link = "ramipril" },
+  { text = "Plan: increase ramipril to 10 mg once daily", section = "plan", alerts = [], gaps = false },
+]
+
+[[visit]]
+patient = "p-3001"
+# Onboarded with a penicillin allergy: an amoxicillin plan must raise it.
+jottings = [
+  { text = "Sore throat for 4 days, fever 38.4", section = ["subjective", "objective"], alerts = [] },
+  { text = "Plan: amoxicillin 500 mg three times daily for 5 days", section = "plan", alerts = ["allergy"], gaps = false },
+  { text = "Confirms no allergies other than penicillin", alerts = [], covers = ["allergy"] },
+]
+
+[[visit]]
+patient = "p-1001"
+jottings = [
+  { text = "Feels well, occasional loose stools on metformin", section = "subjective", alerts = [], link = "metformin", gaps = true },
+  { text = "BP 138/84, weight 78 kg", section = "objective", alerts = [], gaps = false },
+  { text = "HbA1c result discussed with the patient", alerts = [], covers = ["loop"], gaps = false },
+  { text = "Plan: continue current medicines, review in 3 months", section = "plan", alerts = [], gaps = false },
+]

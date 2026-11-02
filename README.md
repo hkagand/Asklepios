@@ -207,6 +207,11 @@ Before an operation, the surgeon needs every earlier one: when, what, open or la
 - **Agenda from the record**, built by plain code, not suggested by the model: the reason for the appointment; open loops to close (results to review or tell the patient, overdue or missing plans); medicines to confirm (reconciliation findings, and what a patient said at onboarding); allergies to confirm, or to ask about when none are recorded. Each item links to its source and can be ticked as covered.
 - **Jottings**: short lines the clinician types as the patient talks ("BP 138/84", "no fever", "plan: refer to general surgery"), with their time; they can be edited or deleted. The visit note will be drafted from these.
 
+**Live help on each jotting** (`agent/jottings.py`), shown under it within a second or two; the next jotting can be typed meanwhile:
+
+- From the model (one short call, temperature 0): the note **section** (S, O, A or P); the **agenda items** it covers, which are ticked ("✓ J5"); the **record items** it refers to, as source chips (only ids the model was shown); and for what the patient reports, up to three **details not recorded yet** ("onset", "severity", "associated symptoms"). These are history-taking only: anything that reads as advice (a diagnosis, test, treatment, dose or referral) is dropped by code, and none are listed for measurements, results or plans.
+- From plain code: an **allergy alert** when a jotting names a drug the patient is allergic to, or one of its class (penicillin covers amoxicillin and co-amoxiclav); a **dose alert** when a jotting gives a current dose that differs from the active order (a planned change is not one); and ticks for medicine and allergy agenda items it names.
+
 Starting a visit when one is open returns it. **Cancel visit** marks the Encounter cancelled and writes nothing else. The working state (agenda ticks, jottings) is kept on the agent under `agent/cache/visits/`, one file per visit, so a reload or restart keeps it.
 
 Endpoints: `POST /api/patients/{id}/visits`, `GET /api/patients/{id}/visit`, `POST /api/visits/{id}/jottings` (and `PUT`/`DELETE` on one), `POST /api/visits/{id}/agenda/{item}`, `POST /api/visits/{id}/cancel`.
@@ -268,6 +273,7 @@ Other options:
 - `--no-loops`: leaves the sections computed from notes (OPEN LOOPS, MEDICATION RECONCILIATION, SURGICAL HISTORY) out of the chart index, to compare with and without them.
 - `--loops`: checks the open loops of every cohort patient against `evals/loops.toml`. That file can also put review and communication marks on a patient first, to check the review stages.
 - `--meds`: checks medication reconciliation against `evals/meds.toml`.
+- `--visits`: checks live help on scripted visit jottings against `evals/visits.toml`: section, alerts, agenda ticks, record links, and gaps (none may read as advice).
 - `--onboarding`: checks onboarding against `evals/onboarding.toml`: each record's review statuses, and that the import writes only what was accepted, as the patient answered, with one Provenance. No model calls apart from cached surgical history.
 - `--surgery`: checks surgical history against `evals/surgery.toml`: each expected operation with its year, region, approach, implant and sources, and no others.
 - `--fresh` (with `--loops`, `--meds` or `--surgery`): reads every note again instead of using the cache. With `--repeats 3`, it shows how much extraction varies.

@@ -469,6 +469,10 @@ async def run(args: argparse.Namespace) -> int:
         from .surgery import run_surgery
 
         return await run_surgery(load_settings(), records, HERE / "surgery.toml", args.out, fresh=args.fresh, repeats=args.repeats)
+    if args.visits:
+        from .visits import run_visits
+
+        return await run_visits(load_settings(), question_records, HERE / "visits.toml", args.out, repeats=args.repeats)
     records = question_records
     if not chosen:
         print("No case matches the filters.")
@@ -607,6 +611,7 @@ def main() -> None:
     parser.add_argument("--loops", action="store_true", help="check open loops against loops.toml instead of the questions")
     parser.add_argument("--meds", action="store_true", help="check medication reconciliation against meds.toml instead")
     parser.add_argument("--surgery", action="store_true", help="check surgical history against surgery.toml instead")
+    parser.add_argument("--visits", action="store_true", help="check live help on visit jottings against visits.toml instead")
     parser.add_argument("--onboarding", action="store_true", help="check onboarding reviews and imports against onboarding.toml instead")
     parser.add_argument("--fresh", action="store_true", help="with --loops, --meds or --surgery: read every note again instead of using the cache")
     parser.add_argument("--out", type=Path, default=HERE / "runs")

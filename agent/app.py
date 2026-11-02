@@ -77,6 +77,7 @@ from .onboard import (
 from .onboard import SERVICE as ONBOARDING_SOURCE
 from .plans import PlanExtractor
 from .surgery import SurgeryReader, surgical_history
+from .jottings import review as review_jotting
 from .visits import Visit, VisitStore, new_visit_id, todays_appointment
 from .visits import agenda as visit_agenda
 from .visits import encounter as visit_encounter
@@ -103,6 +104,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.national = NationalClient(settings.national_base_url)
     app.state.onboardings = {}
     app.state.visits = VisitStore(settings.plan_cache.parent / "visits")
+    app.state.extraction = extraction
     app.state.audit = AuditLog(settings.audit_log)
     app.state.sessions = Sessions(fhir, plans, medicines, surgery)
     app.state.practitioners = {}
@@ -539,40 +541,64 @@ async def get_visit(visit_id: str) -> dict:
     return _visit(visit_id).as_json()
 
 
+async def _review(visit_id: str, jotting_id: str) -> dict:
+    """Reviews one jotting (jottings.py) outside the lock, then keeps the review if the jotting is unchanged."""
+    store = app.state.visits
+    visit = _open_visit(visit_id)
+    jotting = next(item for item in visit.jottings if item.id == jotting_id)
+    earlier = [item.text for item in visit.jottings if item.id != jotting_id]
+    agenda = [{"id": item.id, "kind": item.kind, "text": item.text} for item in visit.agenda]
+    record = await _record(visit.patient)
+    result = await review_jotting(app.state.extraction, record, agenda, earlier, jotting.text)
+    async with store.lock(visit_id):
+        visit = _open_visit(visit_id)
+        visit.apply_review(jotting_id, jotting.text, result)
+        store.save(visit)
+    return visit.as_json()
+
+
 @app.post("/api/visits/{visit_id}/jottings")
 async def add_jotting(visit_id: str, body: JottingBody, practitioner: Practitioner | None = Depends(acting)) -> dict:
+    """Adds a jotting and returns the visit once the jotting is reviewed (sections, links, gaps, alerts, ticks)."""
     clinician = required(practitioner)
-    visit = _open_visit(visit_id)
-    jotting = visit.jot(body.text.strip(), clinician.id)
-    app.state.visits.save(visit)
+    async with app.state.visits.lock(visit_id):
+        visit = _open_visit(visit_id)
+        jotting = visit.jot(body.text.strip(), clinician.id)
+        app.state.visits.save(visit)
     app.state.audit.write(session="-", patient=visit.patient, event="visit-jotting", user=clinician.id, visit=visit.id, jotting=jotting.id)
-    return visit.as_json()
+    return await _review(visit_id, jotting.id)
 
 
 @app.put("/api/visits/{visit_id}/jottings/{jotting_id}")
 async def edit_jotting(visit_id: str, jotting_id: str, body: JottingBody, practitioner: Practitioner | None = Depends(acting)) -> dict:
     clinician = required(practitioner)
-    visit = _open_visit(visit_id)
-    jotting = next((item for item in visit.jottings if item.id == jotting_id), None)
-    if jotting is None:
-        raise HTTPException(status_code=404, detail="No such jotting.")
-    jotting.text = body.text.strip()
-    app.state.visits.save(visit)
+    async with app.state.visits.lock(visit_id):
+        visit = _open_visit(visit_id)
+        jotting = next((item for item in visit.jottings if item.id == jotting_id), None)
+        if jotting is None:
+            raise HTTPException(status_code=404, detail="No such jotting.")
+        jotting.text, jotting.review = body.text.strip(), {"status": "pending"}
+        # Ticks this jotting made are made again from its new reading.
+        for item in visit.agenda:
+            if item.done_by == jotting_id:
+                item.done, item.done_by = False, None
+        app.state.visits.save(visit)
     app.state.audit.write(session="-", patient=visit.patient, event="visit-jotting-edited", user=clinician.id, visit=visit.id, jotting=jotting_id)
-    return visit.as_json()
+    return await _review(visit_id, jotting_id)
 
 
 @app.delete("/api/visits/{visit_id}/jottings/{jotting_id}")
 async def delete_jotting(visit_id: str, jotting_id: str, practitioner: Practitioner | None = Depends(acting)) -> dict:
     clinician = required(practitioner)
-    visit = _open_visit(visit_id)
-    if not any(item.id == jotting_id for item in visit.jottings):
-        raise HTTPException(status_code=404, detail="No such jotting.")
-    visit.jottings = [item for item in visit.jottings if item.id != jotting_id]
-    for item in visit.agenda:
-        if item.done_by == jotting_id:
-            item.done, item.done_by = False, None
-    app.state.visits.save(visit)
+    async with app.state.visits.lock(visit_id):
+        visit = _open_visit(visit_id)
+        if not any(item.id == jotting_id for item in visit.jottings):
+            raise HTTPException(status_code=404, detail="No such jotting.")
+        visit.jottings = [item for item in visit.jottings if item.id != jotting_id]
+        for item in visit.agenda:
+            if item.done_by == jotting_id:
+                item.done, item.done_by = False, None
+        app.state.visits.save(visit)
     app.state.audit.write(session="-", patient=visit.patient, event="visit-jotting-deleted", user=clinician.id, visit=visit.id, jotting=jotting_id)
     return visit.as_json()
 
@@ -580,12 +606,13 @@ async def delete_jotting(visit_id: str, jotting_id: str, practitioner: Practitio
 @app.post("/api/visits/{visit_id}/agenda/{item_id}")
 async def tick_agenda(visit_id: str, item_id: str, body: TickBody, practitioner: Practitioner | None = Depends(acting)) -> dict:
     required(practitioner)
-    visit = _open_visit(visit_id)
-    item = next((entry for entry in visit.agenda if entry.id == item_id), None)
-    if item is None:
-        raise HTTPException(status_code=404, detail="No such agenda item.")
-    item.done, item.done_by = body.done, "clinician" if body.done else None
-    app.state.visits.save(visit)
+    async with app.state.visits.lock(visit_id):
+        visit = _open_visit(visit_id)
+        item = next((entry for entry in visit.agenda if entry.id == item_id), None)
+        if item is None:
+            raise HTTPException(status_code=404, detail="No such agenda item.")
+        item.done, item.done_by = body.done, "clinician" if body.done else None
+        app.state.visits.save(visit)
     return visit.as_json()
 
 

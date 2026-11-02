@@ -332,11 +332,25 @@ export interface AgendaItem {
   doneBy: string | null
 }
 
+export type NoteSection = 'subjective' | 'objective' | 'assessment' | 'plan'
+
+/** Live help on one jotting (agent/jottings.py): the model's reading, checked, and the code's alerts. */
+export interface JottingReview {
+  status: 'pending' | 'done' | 'failed'
+  section?: NoteSection | null
+  covers?: string[]
+  links?: { ref: string; label: string }[]
+  gaps?: string[]
+  alerts?: { kind: 'allergy' | 'dose'; text: string; refs: string[] }[]
+  error?: string
+}
+
 export interface Jotting {
   id: string
   time: string
   text: string
   by: string
+  review: JottingReview | null
 }
 
 export interface Visit {
@@ -351,6 +365,7 @@ export interface Visit {
   reason: string | null
   agenda: AgendaItem[]
   jottings: Jotting[]
+  version: number
 }
 
 const visitPath = (visitId: string) => `/api/visits/${encodeURIComponent(visitId)}`

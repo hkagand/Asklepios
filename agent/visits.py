@@ -8,6 +8,7 @@ file per visit, until the note is signed; only the Encounter is written to FHIR 
 
 from __future__ import annotations
 
+import asyncio
 import json
 import secrets
 from dataclasses import asdict, dataclass, field
@@ -57,6 +58,8 @@ class Jotting:
     time: str
     text: str
     by: str
+    # Live help (jottings.py): section, covers, links, gaps, alerts, status ("pending", "done" or "failed").
+    review: dict | None = None
 
 
 @dataclass
@@ -71,12 +74,23 @@ class Visit:
     reason: str | None = None
     agenda: list[AgendaItem] = field(default_factory=list)
     jottings: list[Jotting] = field(default_factory=list)
+    version: int = 0  # raised on every save, so the panel can ignore an older answer that arrives late
 
     def jot(self, text: str, by: str) -> Jotting:
         number = max((int(item.id[1:]) for item in self.jottings), default=0) + 1
-        jotting = Jotting(f"J{number}", now_text(), text, by)
+        jotting = Jotting(f"J{number}", now_text(), text, by, {"status": "pending"})
         self.jottings.append(jotting)
         return jotting
+
+    def apply_review(self, jotting_id: str, text: str, review: dict) -> None:
+        """Keeps a review if the jotting still reads as it did when reviewed, and ticks the agenda items it covers."""
+        jotting = next((item for item in self.jottings if item.id == jotting_id), None)
+        if jotting is None or jotting.text != text:
+            return
+        jotting.review = review
+        for item in self.agenda:
+            if item.id in review.get("covers", []) and not item.done:
+                item.done, item.done_by = True, jotting_id
 
     def as_json(self) -> dict:
         return {
@@ -91,6 +105,7 @@ class Visit:
             "reason": self.reason,
             "agenda": [{**asdict(item), "doneBy": item.done_by} for item in self.agenda],
             "jottings": [asdict(item) for item in self.jottings],
+            "version": self.version,
         }
 
     @classmethod
@@ -102,6 +117,7 @@ class Visit:
             agenda=[AgendaItem(item["id"], item["kind"], item["text"], item["detail"], item["refs"], item["done"], item.get("doneBy"))
                     for item in data["agenda"]],
             jottings=[Jotting(**item) for item in data["jottings"]],
+            version=data.get("version", 0),
         )
 
 
@@ -111,11 +127,17 @@ class VisitStore:
     def __init__(self, folder: Path) -> None:
         self.folder = folder
         self.folder.mkdir(parents=True, exist_ok=True)
+        self._locks: dict[str, asyncio.Lock] = {}
+
+    def lock(self, visit_id: str) -> asyncio.Lock:
+        """Held while a visit is read, changed and saved, so two quick jottings cannot overwrite each other."""
+        return self._locks.setdefault(visit_id, asyncio.Lock())
 
     def _path(self, visit_id: str) -> Path:
         return self.folder / f"{visit_id}.json"
 
     def save(self, visit: Visit) -> None:
+        visit.version += 1
         self._path(visit.id).write_text(json.dumps(visit.as_json(), ensure_ascii=False, indent=1), encoding="utf-8")
 
     def get(self, visit_id: str) -> Visit | None:
