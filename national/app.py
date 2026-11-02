@@ -12,6 +12,7 @@ POST /consent-requests/{id}/confirm      {"code"}: the code the patient reads ou
                                          for that patient only; three wrong codes close the request
 GET  /fhir/Patient/$summary?identifier=  the patient's IPS document, with the token as a Bearer credential
 
+GET  /demo/people                        who has a record, to try onboarding with (a demo aid; a real service has none)
 GET  /demo/phone                         the simulated phones: every SMS sent, newest first
 GET  /demo/access-log                    every request, granted or refused
 
@@ -36,6 +37,10 @@ NATIONAL_ID = "urn:demo:asklepios:national-id"
 CODE_LIFETIME = timedelta(minutes=10)
 ACCESS_LIFETIME = timedelta(hours=4)
 ATTEMPTS = 3
+SECTIONS = {
+    "allergies": "AllergyIntolerance", "problems": "Condition", "medications": "MedicationRequest",
+    "procedures": "Procedure", "results": "Observation",
+}
 
 
 def fold(text: str) -> str:
@@ -63,6 +68,8 @@ class Record:
         self.name = patient["name"][0]["text"]
         self.birth_date = patient["birthDate"]
         self.phone = next(item["value"] for item in patient.get("telecom", []) if item["system"] == "phone")
+        self.gender = patient.get("gender")
+        self.counts = {section: sum(entry["resource"]["resourceType"] == kind for entry in bundle["entry"]) for section, kind in SECTIONS.items()}
 
 
 def load_records(folder: Path) -> dict[str, Record]:
@@ -165,6 +172,14 @@ def patient_summary(identifier: str, authorization: str | None = Header(default=
         raise HTTPException(status_code=403, detail="This access token is for another patient.")
     log("summary-read", nationalId=value, requester=grant["requester"])
     return app.state.records[value].bundle
+
+
+@app.get("/demo/people")
+def people() -> dict:
+    return {"people": [
+        {"nationalId": record.national_id, "name": record.name, "birthDate": record.birth_date, "gender": record.gender, "counts": record.counts}
+        for record in app.state.records.values()
+    ]}
 
 
 @app.get("/demo/phone")

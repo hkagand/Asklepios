@@ -100,7 +100,7 @@ Knowing a national id is not enough to read a record, as with real records:
 2. `POST /consent-requests/{id}/confirm` with the code the patient reads out returns a token for four hours, for that patient only. Three wrong codes close the request.
 3. `GET /fhir/Patient/$summary?identifier=urn:demo:asklepios:national-id|<id>` with the token returns the patient's IPS bundle: allergies, medications, problems, procedures and results.
 
-`GET /demo/phone` shows the simulated SMS messages and `GET /demo/access-log` every request, granted or refused. State is in memory.
+`GET /demo/phone` shows the simulated SMS messages and `GET /demo/access-log` every request, granted or refused. State is in memory. `GET /demo/people` lists who has a record, a demo aid that a real service would not offer: the New patient screen shows it as "Demo people", with whether each is already in the chart, and fills the form in one click.
 
 | National id | Patient | Name and birth date | Worth catching |
 |---|---|---|---|

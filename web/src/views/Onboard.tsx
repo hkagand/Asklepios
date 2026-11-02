@@ -2,9 +2,11 @@ import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 're
 import {
   acceptOnboarding,
   confirmConsent,
+  nationalPeople,
   nationalPhone,
   requestConsent,
   type ConsentSent,
+  type DemoPerson,
   type ImportDecision,
   type ImportResult,
   type OnboardingReview,
@@ -15,8 +17,11 @@ import {
 } from '../agent.ts'
 import { useClinician } from '../components/clinician.tsx'
 import { Badge, Card, type Tone } from '../components/ui.tsx'
-import { formatDate, formatTime, sexLabel } from '../format.ts'
+import { search } from '../fhir.ts'
+import { ageOn, formatDate, formatTime, sexLabel, todayIso } from '../format.ts'
 import { patientHref } from '../route.ts'
+
+const NATIONAL_ID = 'urn:demo:asklepios:national-id'
 
 const STATUS: Record<ReviewStatus, { label: string; tone: Tone }> = {
   new: { label: 'New', tone: 'teal' },
@@ -142,35 +147,131 @@ function Identify({ onSent }: { onSent: (sent: ConsentSent) => void }) {
     }
   }
 
+  const fill = (person: DemoPerson) => {
+    setNationalId(person.nationalId)
+    setName(person.name)
+    setBirthDate(person.birthDate)
+    setError(undefined)
+  }
+
   return (
-    <Card title="Who is the patient?" subtitle="All three must match the national record">
-      <form onSubmit={submit} className="grid gap-4 sm:max-w-md">
-        <Field label="National identity number" hint="11 digits. The demo's numbers start with 0, which no real number does.">
-          <input
-            className={`${INPUT} font-mono tracking-wider`}
-            inputMode="numeric"
-            maxLength={11}
-            value={nationalId}
-            onChange={(event) => setNationalId(event.target.value.replace(/\D/g, ''))}
-            placeholder="00000003001"
-          />
-        </Field>
-        <Field label="Full name">
-          <input className={INPUT} value={name} onChange={(event) => setName(event.target.value)} placeholder="Gülay Kaplan" />
-        </Field>
-        <Field label="Date of birth">
-          <input className={INPUT} type="date" value={birthDate} onChange={(event) => setBirthDate(event.target.value)} />
-        </Field>
-        {error && <p className="rounded-md bg-rose-50 px-3 py-2 text-sm text-rose-800">{error}</p>}
-        <div>
-          <button type="submit" className={PRIMARY} disabled={!ready || busy}>
-            {busy ? 'Sending…' : 'Send consent code to the patient'}
-          </button>
-          <p className="mt-2 text-[12.5px] text-slate-500">
-            The patient receives a one-time code by SMS. Knowing the number alone is not enough to read the record.
-          </p>
-        </div>
-      </form>
+    <div className="space-y-6">
+      <Card title="Who is the patient?" subtitle="All three must match the national record">
+        <form onSubmit={submit} className="grid gap-4 sm:max-w-md">
+          <Field label="National identity number" hint="11 digits. The demo's numbers start with 0, which no real number does.">
+            <input
+              className={`${INPUT} font-mono tracking-wider`}
+              inputMode="numeric"
+              maxLength={11}
+              value={nationalId}
+              onChange={(event) => setNationalId(event.target.value.replace(/\D/g, ''))}
+              placeholder="00000003001"
+            />
+          </Field>
+          <Field label="Full name">
+            <input className={INPUT} value={name} onChange={(event) => setName(event.target.value)} placeholder="Gülay Kaplan" />
+          </Field>
+          <Field label="Date of birth">
+            <input className={INPUT} type="date" value={birthDate} onChange={(event) => setBirthDate(event.target.value)} />
+          </Field>
+          {error && <p className="rounded-md bg-rose-50 px-3 py-2 text-sm text-rose-800">{error}</p>}
+          <div>
+            <button type="submit" className={PRIMARY} disabled={!ready || busy}>
+              {busy ? 'Sending…' : 'Send consent code to the patient'}
+            </button>
+            <p className="mt-2 text-[12.5px] text-slate-500">
+              The patient receives a one-time code by SMS. Knowing the number alone is not enough to read the record.
+            </p>
+          </div>
+        </form>
+      </Card>
+      <DemoPeople chosen={nationalId} onChoose={fill} />
+    </div>
+  )
+}
+
+const COUNTED: [ReviewSection, string, string][] = [
+  ['allergies', 'allergy', 'allergies'],
+  ['problems', 'problem', 'problems'],
+  ['medications', 'medicine', 'medicines'],
+  ['procedures', 'operation', 'operations'],
+  ['results', 'result', 'results'],
+]
+
+/** The synthetic people the simulated service has records for, with whether each is already in our chart. */
+function DemoPeople({ chosen, onChoose }: { chosen: string; onChoose: (person: DemoPerson) => void }) {
+  const [people, setPeople] = useState<DemoPerson[]>()
+  const [charts, setCharts] = useState<Record<string, string>>({})
+  const [error, setError] = useState<string>()
+  useEffect(() => {
+    const controller = new AbortController()
+    nationalPeople(controller.signal).then(
+      async (found) => {
+        setPeople(found)
+        const ids = await Promise.all(
+          found.map(async (person) => {
+            const patients = await search<fhir4.Patient>('Patient', { identifier: `${NATIONAL_ID}|${person.nationalId}` }, controller.signal)
+            return [person.nationalId, patients[0]?.id ?? ''] as const
+          }),
+        )
+        setCharts(Object.fromEntries(ids.filter(([, id]) => id)))
+      },
+      (failure: unknown) => !controller.signal.aborted && setError(failure instanceof Error ? failure.message : String(failure)),
+    )
+    return () => controller.abort()
+  }, [])
+
+  return (
+    <Card
+      title="Demo people"
+      subtitle="Synthetic records in the simulated national service. A real service offers no such list."
+      action={<Badge tone="violet">Demo only</Badge>}
+      flush
+    >
+      {error ? (
+        <p className="px-4 py-3 text-sm text-rose-800">{error}</p>
+      ) : !people ? (
+        <p className="px-4 py-3 text-sm text-slate-500">Loading…</p>
+      ) : (
+        <ul className="divide-y divide-slate-100">
+          {people.map((person) => {
+            const chart = charts[person.nationalId]
+            const age = ageOn(person.birthDate, todayIso())
+            return (
+              <li key={person.nationalId} className={`flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 ${chosen === person.nationalId ? 'bg-mark/30' : ''}`}>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                    <span className="text-[15px] font-semibold text-slate-900">{person.name}</span>
+                    {chart ? (
+                      <a href={patientHref(chart)} className="text-[12.5px] font-semibold text-teal-700 hover:underline">
+                        In the chart as {chart.toUpperCase()}
+                      </a>
+                    ) : (
+                      <Badge tone="teal">Not yet a patient here</Badge>
+                    )}
+                  </div>
+                  <p className="mt-0.5 text-[13px] text-slate-600">
+                    <span className="font-mono">{person.nationalId}</span> · born {formatDate(person.birthDate)}
+                    {age !== undefined && ` (${age})`} · {sexLabel(person.gender)}
+                  </p>
+                  <p className="mt-0.5 text-[12.5px] text-slate-500">
+                    {COUNTED.filter(([section]) => person.counts[section])
+                      .map(([section, one, many]) => `${person.counts[section]} ${person.counts[section] === 1 ? one : many}`)
+                      .join(' · ')}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => onChoose(person)}
+                  className="rounded-md border border-slate-300 bg-sheet px-3 py-1.5 text-[13px] font-semibold text-slate-700 hover:border-slate-900"
+                >
+                  Fill in
+                </button>
+              </li>
+            )
+          })}
+        </ul>
+      )}
     </Card>
   )
 }

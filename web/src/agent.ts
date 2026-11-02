@@ -466,6 +466,21 @@ export const confirmConsent = (requestId: string, code: string) =>
 export const acceptOnboarding = (onboarding: string, decisions: ImportDecision[]) =>
   postJson<ImportResult>(`/api/onboarding/${encodeURIComponent(onboarding)}/accept`, { decisions })
 
+export interface DemoPerson {
+  nationalId: string
+  name: string
+  birthDate: string
+  gender: string
+  counts: Record<ReviewSection, number>
+}
+
+/** Who has a record in the simulated national service: a demo aid, which a real service would never offer. */
+export async function nationalPeople(signal: AbortSignal): Promise<DemoPerson[]> {
+  const response = await fetch('/national/demo/people', { signal })
+  if (!response.ok) throw new Error('The national record service is not reachable. Start it with: python -m national')
+  return ((await response.json()) as { people: DemoPerson[] }).people
+}
+
 /** The simulated patient's phone, straight from the national record service: it stands for the patient's device. */
 export async function nationalPhone(signal: AbortSignal): Promise<PhoneMessage[]> {
   const response = await fetch('/national/demo/phone', { signal })
