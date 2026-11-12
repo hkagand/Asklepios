@@ -2,9 +2,10 @@
 
 For each national record, the review is built against the cohort chart as the agent would (surgical history from the
 cache, so an existing patient's notes are read once), and each expected item must have its status. Then the import
-is built with the patient's answers and checked: nothing already in the chart is imported, every reference points
-to our patient, medicines become MedicationStatements as the patient answered, and one Provenance covers it all.
-The consent flow itself is checked against the running service, not here.
+is built with the patient's answers (synthetic/national.py) and checked: nothing already in the chart is imported,
+every reference points to our patient, medicines become MedicationStatements as the patient answered, each item
+carries the day the history was taken, and one Provenance naming the hospital covers it all. Then two checks with
+nobody watching: an import that meets what it cannot settle, and the two patients as the generator writes them.
 """
 
 from __future__ import annotations
@@ -25,7 +26,7 @@ from agent.onboard import (
 from agent.record import IMPORTED_ON, Record, code_of
 from agent.surgery import SurgeryReader, surgical_history
 
-from .run import ROOT, says
+from .run import ROOT, cohort_records, says
 
 # When the history was taken, for the checks of the import itself: the working day before the gold anchor.
 TAKEN = datetime(2026, 10, 22, 9, 0, tzinfo=timezone(timedelta(hours=3)))
@@ -36,6 +37,14 @@ def national_bundles(anchor: date) -> dict[str, dict]:
     from national import national_records
 
     return {national_id_of(patient_of(bundle)): bundle for bundle in national_records(anchor)}
+
+
+def settled_answers(anchor: date) -> dict[str, list[dict]]:
+    """What was settled with each patient, by national id: the generator's own answers (synthetic/national.py)."""
+    sys.path.insert(0, str(ROOT / "synthetic"))
+    from national import people
+
+    return {person.national_id: list(person.answers) for person in people(anchor)}
 
 
 def check_items(expected: list[dict], items: list[Item]) -> list[str]:
@@ -162,37 +171,68 @@ def check_unattended(bundles: dict[str, dict], records: dict[str, Record]) -> li
     return problems + (["a Patient was written for a patient already in the chart"] if "Patient" in kinds else [])
 
 
-def onboarded_records(anchor: date, expected_path: Path) -> dict[str, Record]:
-    """The new patients of onboarding.toml as their charts read after onboarding on the anchor day, with the patient's
-    answers given there: for gold questions about imported history."""
-    bundles = national_bundles(anchor)
-    imported = datetime(anchor.year, anchor.month, anchor.day, 9, 0, tzinfo=timezone(timedelta(hours=3)))
-    records = {}
-    for want in tomllib.loads(expected_path.read_text(encoding="utf-8"))["record"]:
-        if want["chart"]:
+def check_generated(records: dict[str, Record], anchor: date) -> list[str]:
+    """The imported patients as the generator writes them: settled, synthetic, and on a clinic list."""
+    from national import FIRST_VISIT, history_taken, imported_charts  # synthetic/ is on sys.path (national_bundles)
+
+    problems = []
+    charts = imported_charts(anchor)
+    if sorted(charts) != ["p-3001", "p-3002"]:
+        return [f"imported patients: {sorted(charts)}"]
+    if json.dumps(charts, sort_keys=True) != json.dumps(imported_charts(anchor), sort_keys=True):
+        problems.append("two runs for the same anchor differ")
+    taken = history_taken(anchor)
+    if taken.date() >= anchor or taken.weekday() >= 5:
+        problems.append(f"history taken on {taken.date()}, not a working day before {anchor}")
+    booked = {
+        (resource["start"], actor["actor"]["reference"])
+        for record in records.values() for resource in record.resources.values()
+        if resource["resourceType"] == "Appointment" for actor in resource["participant"]
+    }
+    for patient_id, resources in charts.items():
+        patient = resources[0]
+        if patient["resourceType"] != "Patient" or patient["id"] != patient_id:
+            problems.append(f"{patient_id}: the Patient is not first")
+        if not any(label.get("code") == "HTEST" for label in patient.get("meta", {}).get("security", [])):
+            problems.append(f"{patient_id}: not marked synthetic")
+        appointments = [resource for resource in resources if resource["resourceType"] == "Appointment"]
+        if len(appointments) != 1:
+            problems.append(f"{patient_id}: {len(appointments)} appointments")
             continue
-        bundle = bundles[want["nationalId"]]
-        items = review_items(bundle, None, None, anchor)
-        patient_id = new_patient_id(want["nationalId"])
-        transaction = import_transaction(
-            bundle, items, decisions_from_answers(items, want.get("answers", [])), patient_id=patient_id, existing=False,
-            taken=imported,
-        )
+        appointment = appointments[0]
+        actors = {actor["actor"]["reference"] for actor in appointment["participant"]}
+        if actors != {f"Patient/{patient_id}", "Practitioner/pr-aydin"}:
+            problems.append(f"{patient_id}: appointment with {sorted(actors)}")
+        if appointment["description"] != FIRST_VISIT or appointment["start"][:10] < anchor.isoformat():
+            problems.append(f"{patient_id}: appointment {appointment['description']!r} at {appointment['start']}")
+        if (appointment["start"], "Practitioner/pr-aydin") in booked:
+            problems.append(f"{patient_id}: {appointment['start']} is already booked for pr-aydin")
+        if appointment["appointmentType"]["coding"][0]["code"] != "ROUTINE":
+            problems.append(f"{patient_id}: a first visit is typed as a follow-up")
+    return problems
+
+
+def imported_records(anchor: date) -> dict[str, Record]:
+    """The two patients whose history was imported from the national record, as the generator writes them
+    (synthetic/national.py) and the agent reads them on the anchor day: for gold questions about imported history."""
+    sys.path.insert(0, str(ROOT / "synthetic"))
+    from national import imported_charts
+
+    records = {}
+    for patient_id, resources in imported_charts(anchor).items():
         found: dict[str, list[dict]] = {}
-        patient = None
-        for entry in transaction["entry"]:
-            resource = entry["resource"]
-            if resource["resourceType"] == "Patient":
-                patient = resource
-            elif resource["resourceType"] != "Provenance":
+        for resource in resources[1:]:
+            # The agent does not read Provenance from the server either.
+            if resource["resourceType"] != "Provenance":
                 found.setdefault(resource["resourceType"], []).append(resource)
-        records[patient_id] = Record(patient, found, today=anchor)
+        records[patient_id] = Record(resources[0], found, today=anchor)
     return records
 
 
-async def run_onboarding(settings: Settings, records: dict[str, Record], anchor: date, expected_path: Path, out: Path) -> int:
+async def run_onboarding(settings: Settings, records: dict[str, Record], anchor: date, seed: int, expected_path: Path, out: Path) -> int:
     expected = tomllib.loads(expected_path.read_text(encoding="utf-8"))["record"]
     bundles = national_bundles(anchor)
+    answers = settled_answers(anchor)
     if missing := sorted(set(bundles) - {item["nationalId"] for item in expected}):
         print(f"onboarding.toml does not list: {', '.join(missing)}")
         return 1
@@ -206,7 +246,7 @@ async def run_onboarding(settings: Settings, records: dict[str, Record], anchor:
             history = await surgical_history(record, reader) if record else None
             items = review_items(bundle, record, history, anchor)
             item_problems = check_items(want.get("items", []), items)
-            import_problems, summary = check_import(bundle, items, want.get("answers", []), want["chart"])
+            import_problems, summary = check_import(bundle, items, answers[want["nationalId"]], want["chart"])
             statuses = {status: sum(item.status == status for item in items) for status in ("new", "duplicate", "differs", "ask")}
             results[want["nationalId"]] = {
                 "items": len(items), "statuses": statuses, "import": summary,
@@ -221,9 +261,15 @@ async def run_onboarding(settings: Settings, records: dict[str, Record], anchor:
         await llm.close()
     unattended = check_unattended(bundles, records)
     print("unattended import: " + ("OK" if not unattended else "; ".join(unattended)))
+    generated = []
+    # The gold anchor is a Friday; a Saturday and a Monday move the day the history was taken and the first visit.
+    for day in (anchor, date(2026, 10, 24), date(2026, 10, 26)):
+        cohort = records if day == anchor else cohort_records(day, seed)
+        generated += [f"{day}: {problem}" for problem in check_generated(cohort, day)]
+    print("generated patients: " + ("OK" if not generated else "; ".join(generated)))
     folder = out / f"{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-onboarding"
     folder.mkdir(parents=True)
-    (folder / "results.json").write_text(json.dumps(results | {"unattended": {"problems": unattended}}, ensure_ascii=False, indent=1), encoding="utf-8")
+    (folder / "results.json").write_text(json.dumps(results | {"unattended": {"problems": unattended}, "generated": {"problems": generated}}, ensure_ascii=False, indent=1), encoding="utf-8")
     failed = sum(bool(result["problems"]) for result in results.values())
     print(f"\n{len(results) - failed}/{len(results)} records as expected. Report: {folder / 'results.json'}")
     return 0

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import sys
 from collections import Counter
 from datetime import date
@@ -18,7 +19,7 @@ from pathlib import Path
 
 from chart import shared_resources, transaction
 from cohort import build_cohort
-from national import national_records
+from national import imported_charts
 
 
 def write(path: Path, bundle: dict) -> None:
@@ -47,19 +48,22 @@ def main() -> None:
         totals.update(resource["resourceType"] for resource in chart.resources)
         print(f"{chart.mrn:<7} {chart.name:<20} {len(chart.resources):>5} resources")
 
-    print(f"\nAnchor {args.anchor.isoformat()}, seed {args.seed}: {len(charts)} patients, {sum(totals.values())} resources")
+    # Two more patients, whose history was imported from the national record before their first visit.
+    try:
+        imported = imported_charts(args.anchor)
+    except ImportError as error:
+        raise SystemExit("The imported patients need the agent's packages: pip install -r agent/requirements.txt") from error
+    for pid, resources in imported.items():
+        write(args.out / f"{pid}.json", transaction(resources))
+        totals.update(resource["resourceType"] for resource in resources)
+        print(f"{pid.upper():<7} {resources[0]['name'][0]['text']:<20} {len(resources):>5} resources")
+
+    print(f"\nAnchor {args.anchor.isoformat()}, seed {args.seed}: {len(charts) + len(imported)} patients, {sum(totals.values())} resources")
     for resource_type, count in sorted(totals.items()):
         print(f"  {resource_type:<20} {count:>6}")
     print(f"Bundles written to {args.out}")
-
-    # The simulated national record service reads these; they are not loaded into HAPI.
-    national = args.out / "national"
-    national.mkdir(exist_ok=True)
-    for old in national.glob("*.json"):
-        old.unlink()
-    for record in national_records(args.anchor):
-        write(national / f"{record['identifier']['value']}.json", record)
-    print(f"{len(list(national.glob('*.json')))} national records written to {national}")
+    # National records used to be written here for a service to read; nothing reads them now.
+    shutil.rmtree(args.out / "national", ignore_errors=True)
 
 
 if __name__ == "__main__":
