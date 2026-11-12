@@ -12,9 +12,9 @@ This repository is a synthetic demo. Every patient is invented. Do not load real
 - **Medication reconciliation** (`agent/meds.py`): the medication orders against what the notes say, with a timeline per drug. See [Medications](#medications).
 - **Surgical history** (`agent/surgery.py`): every earlier operation, merged from Procedure records, notes and reports, by body region. See [Surgical history](#surgical-history).
 - **Visits** (`agent/visits.py`): a workspace for the visit itself, with an agenda from the record and the clinician's jottings. See [Visits](#visits).
-- **Onboarding** (`agent/onboard.py`, `national/`): a new patient's history from a simulated national record, with their consent, reviewed by the clinician before anything is imported. See [National record service (simulated)](#national-record-service-simulated).
+- **History from the national record** (`agent/onboard.py`, `synthetic/national.py`): two patients arrive with a history taken from a national record before their first visit, shown with its source. Asklepios has no admission screen. See [History from the national record](#history-from-the-national-record).
 - **My day and prepared briefs** (`agent/briefs.py`): a clinician's clinic list with what needs attention, and a pre-visit brief per patient written before the clinic. See [My day](#my-day).
-- **Synthetic cohort** (`synthetic/`): 21 seeded patients with labs, visit notes, imaging and pathology reports, medications, orders, procedures and appointments, and a few deliberate gaps for the checks above to find. Reloading overwrites the same resource ids.
+- **Synthetic cohort** (`synthetic/`): 23 seeded patients. 21 have labs, visit notes, imaging and pathology reports, medications, orders, procedures and appointments, with a few deliberate gaps for the checks above to find. Two are new to the hospital, with a history imported from the national record and a first appointment. Reloading overwrites the same resource ids.
 
 The model is any OpenAI-compatible chat-completions endpoint that supports tool calling (vLLM, a LiteLLM proxy, and similar). Point `agent/.env` at it.
 
@@ -44,6 +44,8 @@ python synthetic/generate.py --anchor 2026-10-23 --seed 2041
 python synthetic/load.py
 ```
 
+Generating needs the agent's packages (`pip install -r agent/requirements.txt`): two patients are built with the agent's import of a national record summary.
+
 `--anchor` is “today” for the stories: histories end just before it, upcoming appointments start on or after it, on working days. Use today's date: the chart viewer and the agent work with the real date, unless `AGENT_TODAY` fixes it (step 3). The same anchor and seed always produce the same ids, so a reload overwrites. A different anchor leaves resources from the old one behind (the loader says so); restart HAPI before loading for a clean dataset. Patient names depend on the anchor too.
 
 **3. Configure the model**
@@ -58,7 +60,7 @@ Fill in `LLM_BASE_URL`, `LLM_MODEL` and, if the endpoint needs one, `LLM_API_KEY
 
 For a demo on a later day, set `AGENT_TODAY` to the anchor (for example `AGENT_TODAY=2026-10-23`). The agent and the chart viewer then treat that day as today, so the cohort reads as it was loaded without reloading it. The top bar shows "Demo date" while it is set. Real timestamps (marks, the audit log, when a brief was prepared) are not affected. If the agent is not running, the chart viewer falls back to the real date.
 
-To run a demo again from the start, set `AGENT_DEMO_RESET=1`: the top bar then has **Reset demo** (`agent/demo.py`, `POST /api/demo/reset`). After a confirmation, it puts the FHIR server back to the bundles in `synthetic/output/` as `load.py` loaded them. In one transaction it deletes every resource those bundles do not hold, which is whatever the demo wrote: onboarded patients and their imported history, visit Encounters, signed notes, Provenance, and review and communication marks. It then posts the bundles again, which undoes any change to their own resources. It also clears the agent's visits, onboarding and chat sessions, and the national record service's consent requests, tokens and messages, then reloads the app on the worklist. It takes about 5 seconds. Caches of what the model read from notes are kept: they are keyed by the note's text, so they stay right. The reset refuses to run if the server holds a patient not marked synthetic (HTEST), and each reset is written to the audit log.
+To run a demo again from the start, set `AGENT_DEMO_RESET=1`: the top bar then has **Reset demo** (`agent/demo.py`, `POST /api/demo/reset`). After a confirmation, it puts the FHIR server back to the bundles in `synthetic/output/` as `load.py` loaded them. In one transaction it deletes every resource those bundles do not hold, which is whatever the demo wrote: visit Encounters, signed notes and their Provenance, and review and communication marks. It then posts the bundles again, which undoes any change to their own resources. It also clears the agent's visits and chat sessions, then reloads the app on the worklist. It takes about 5 seconds. Caches of what the model read from notes are kept: they are keyed by the note's text, so they stay right. The reset refuses to run if the server holds a patient not marked synthetic (HTEST), and each reset is written to the audit log.
 
 **4. Start ASKlepios**
 
@@ -84,47 +86,28 @@ To ask from the terminal instead of the browser:
 python -m agent.ask p-2041 "Why was oxaliplatin stopped?"
 ```
 
-**6. Optional: the simulated national record service**
+## History from the national record
 
-```bash
-python -m national
-```
+Asklepios has no admission screen: nobody identifies, consents or registers a patient in it. A patient's history from elsewhere is taken and settled with them before the consultation, and is in the chart when the doctor opens it.
 
-Listens on `http://127.0.0.1:8090` (override with `NATIONAL_PORT`). See [National record service (simulated)](#national-record-service-simulated).
+Two cohort patients show this. Each is new to the hospital, has a first appointment with Dr. Elif Aydın, and carries a history imported from a national health record on the working day before the anchor. The national record is simulated: it stands in for a system such as e-Nabız, talks to no real system, and holds only the synthetic summaries in `synthetic/national.py`, one International Patient Summary (IPS) FHIR document per patient.
 
-## National record service (simulated)
+| Patient | Name | Worth catching |
+|---|---|---|
+| p-3001 | Gülay Kaplan, 58 | a penicillin allergy; a statin last prescribed two years ago that the national record still lists, which she no longer takes; childhood asthma still listed as active there, recorded here as resolved |
+| p-3002 | Murat Özdemir, 44 | ramipril listed at 5 mg, which he takes at 10 mg |
 
-For demonstrating patient onboarding, `national/` stands in for a national health record such as e-Nabız. It is not e-Nabız and talks to no real system: it serves only the synthetic records that `synthetic/generate.py` writes to `synthetic/output/national/`, one International Patient Summary (IPS) FHIR document per patient. These are not loaded into HAPI.
+Birth dates follow the anchor (the record says 58 years before it). Their national ids start with 0, which no real Turkish identity number does.
 
-Knowing a national id is not enough to read a record, as with real records:
+**In the chart.** Imported problems, allergies, medicines and results carry a **National record** badge on the Overview and in Labs, where each result also names the facility that measured it. Medicines are MedicationStatements: what the patient said they take when their history was taken, never orders. They appear under "What the patient says they take (not orders)". Every imported item carries the `national-import` tag and the day the history was taken, and one Provenance names the national record and the hospital. Nothing recorded here is changed.
 
-1. `POST /consent-requests` with the national id, name and date of birth. If all three match, a one-time code is "sent by SMS" to the patient's phone. A wrong name, date or number gets the same refusal, so a caller learns nothing.
-2. `POST /consent-requests/{id}/confirm` with the code the patient reads out returns a token for four hours, for that patient only. Three wrong codes close the request.
-3. `GET /fhir/Patient/$summary?identifier=urn:demo:asklepios:national-id|<id>` with the token returns the patient's IPS bundle: allergies, medications, problems, procedures and results.
+**ASKlepios and imported items.** In the chart index every imported line starts "From the national record (simulated)", with the facility and import date, and its citation chip reads "… · national record", so the source shows in every answer. Medicines read as what the patient said when their history was taken ("the patient says they take 10 mg once daily, which differs from the national record"), and such a difference, or a medicine the patient no longer takes, is also a line of MEDICATION RECONCILIATION and an item on the visit agenda.
 
-`GET /demo/phone` shows the simulated SMS messages and `GET /demo/access-log` every request, granted or refused. State is in memory. `GET /demo/people` lists who has a record, a demo aid that a real service would not offer: the New patient screen shows it as "Demo people", with whether each is already in the chart, and fills the form in one click. `POST /demo/reset` forgets every request, token, message and log entry; the demo reset calls it.
+**The import** (`agent/onboard.py`). `settled_import` takes a summary and the answers settled with the patient, and returns one FHIR transaction. Every item is first reviewed against our chart if the patient is in it: **new**; **duplicate** (already in the chart, not imported again); **differs** (another dose, or "no known allergies" against recorded allergies); **ask** (needs the patient's answer: every medicine, since a prescription does not show it is taken, and a diagnosis recorded long ago that is still listed as active). Operations are matched against the surgical history, so one the chart has only in notes is imported as a dated record. Nobody reviews the import, so an item that cannot be settled is left out, not written. A new patient gets id `p-` and the last four digits of the national id.
 
-| National id | Patient | Name and birth date | Worth catching |
-|---|---|---|---|
-| `00000003001` | new | Gülay Kaplan, 58 | a penicillin allergy; a statin not prescribed for two years that still reads as active; childhood asthma still listed as active |
-| `00000003002` | new | Murat Özdemir, 44 | ramipril 5 mg, which the patient may report differently |
-| `00000002042` | p-2042 in the chart | Nermin Aktaş, 52 | a caesarean section recorded at another hospital, next to operations the chart already has |
+`synthetic/generate.py` runs the import for the two patients, with the answers in `synthetic/national.py`, so it needs the agent's packages (`pip install -r agent/requirements.txt`). The import is kept as the building block for summaries fetched from a national system later; no such integration exists, and Asklepios reads no national service.
 
-Birth dates follow the anchor (the record says 58 years before it). The national ids start with 0, which no real Turkish identity number does.
-
-### Onboarding
-
-The agent onboards a patient from that service for the acting clinician (`agent/onboard.py`):
-
-1. `POST /api/onboarding/consent` with the national id, name and birth date: the patient is texted a code.
-2. `POST /api/onboarding/consent/{request}/confirm` with the code: the agent reads the summary and lists every item for review, checked against our chart if the patient is in it (found by national id): **new**; **duplicate** (already in the chart, not imported again); **differs** (another dose, or "no known allergies" against recorded allergies); **ask** (every medicine, since a prescription does not show it is taken, and a diagnosis recorded long ago that is still listed as active). Operations are matched against the surgical history, so one the chart has only in notes is imported as a dated record.
-3. `POST /api/onboarding/{onboarding}/accept` with a decision per item. Only accepted items are written, in one FHIR transaction with a Provenance naming the source, the consent and the clinician. Medicines are written as MedicationStatements with what the patient said (taking, a different dose, or not taking), never as orders. A new patient gets id `p-` and the last four digits of the national id. Nothing in the chart is changed.
-
-In the chart viewer, **New patient** (top bar) runs the same steps: the form, the code (a simulated phone beside it shows the SMS), and a review screen where each item can be imported or skipped and each medicine and old diagnosis is answered for the patient. Imported problems, allergies and medicines carry a **National record** badge; medicines appear under "What the patient says they take (not orders)". The web app reads the simulated phone through the `/national` proxy (`NATIONAL_SERVER`, default `http://localhost:8090`).
-
-**ASKlepios and imported items.** In the chart index every imported line starts "From the national record (simulated)", with the facility and import date, and its citation chip reads "… · national record", so the source shows in every answer. Medicines read as what the patient said at onboarding ("the patient says they take 10 mg once daily, which differs from the national record"), and such a difference, or a medicine the patient no longer takes, is also a line of MEDICATION RECONCILIATION.
-
-The service token stays on the agent. Onboarding sessions are in memory and end when the consent expires. Set `NATIONAL_BASE_URL` if the service is not on `http://localhost:8090`.
+A third summary, for Nermin Aktaş (p-2042, already in the chart), is not imported. `python -m evals --onboarding` reviews it against her chart: what the chart already has is recognised, and a caesarean section recorded at another hospital, which the chart has only in notes, is new.
 
 ## Who is viewing, and marks
 
@@ -206,7 +189,7 @@ Before an operation, the surgeon needs every earlier one: when, what, open or la
 
 **Start visit** on a patient's page opens a FHIR Encounter (in progress) for the clinician viewing, linked to today's appointment if there is one, and a **Visit in progress** tab:
 
-- **Agenda from the record**, built by plain code, not suggested by the model: the reason for the appointment; open loops to close (results to review or tell the patient, overdue or missing plans); medicines to confirm (reconciliation findings, and what a patient said at onboarding); allergies to confirm, or to ask about when none are recorded. Each item links to its source and can be ticked as covered.
+- **Agenda from the record**, built by plain code, not suggested by the model: the reason for the appointment; open loops to close (results to review or tell the patient, overdue or missing plans); medicines to confirm (reconciliation findings, and what a patient said when their history was taken); allergies to confirm, or to ask about when none are recorded. Each item links to its source and can be ticked as covered.
 - **Jottings**: short lines the clinician types as the patient talks ("BP 138/84", "no fever", "plan: refer to general surgery"), with their time; they can be edited or deleted. The visit note will be drafted from these.
 
 **Live help on each jotting** (`agent/jottings.py`), shown under it within a second or two; the next jotting can be typed meanwhile:
@@ -273,9 +256,9 @@ Note text is sent to the model in `agent/.env`, as chat questions are.
 - reading notes and reports, and comparing reports;
 - briefings, follow-up questions, and questions the record cannot answer;
 - requests for advice, and questions about other patients;
-- open loops, medication reconciliation, surgical history, onboarded patients, and Turkish.
+- open loops, medication reconciliation, surgical history, history from the national record, and Turkish.
 
-The onboarding cases ask about p-3001 and p-3002 as their charts read after onboarding on the anchor day, built with the answers in `evals/onboarding.toml`. `source_labels` checks what the cited source chips show (for example "national record").
+The `onboarding` cases ask about p-3001 and p-3002 as the generator writes them, with their history imported from the national record. `source_labels` checks what the cited source chips show (for example "national record").
 
 ```bash
 python -m evals --lint
@@ -297,7 +280,7 @@ Other options:
 - `--meds`: checks medication reconciliation against `evals/meds.toml`.
 - `--visits`: checks live help on scripted visit jottings against `evals/visits.toml`: section, alerts, agenda ticks, record links, and gaps (none may read as advice). Then each visit's note is drafted and checked (every line sourced, numbers in their sources, every jotting used), and its plan is read back by the plan reader open loops uses.
 - `--considerations`: checks clinical considerations from the second model against `evals/considerations.toml`: scripted visits, each with the considerations it must raise (a caution for ibuprofen with CKD, amlodipine for ankle swelling, a penicillin allergy with co-amoxiclav) and claims it must not make (a renal dose change for amoxicillin at an eGFR of 53). It also counts unusable answers, considerations the checks dropped, ones citing more than three record items, and time. `--compare` runs the agent's own model on the same visits, prompt and checks.
-- `--onboarding`: checks onboarding against `evals/onboarding.toml`: each record's review statuses, and that the import writes only what was accepted, as the patient answered, with one Provenance. No model calls apart from cached surgical history.
+- `--onboarding`: checks the import of a national summary against `evals/onboarding.toml`: each record's review statuses; that the import writes only what can be settled, as the patient answered, with the day the history was taken and one Provenance naming the hospital; that an import nobody watches skips what it cannot settle; and the two patients as the generator writes them. No model calls apart from cached surgical history.
 - `--surgery`: checks surgical history against `evals/surgery.toml`: each expected operation with its year, region, approach, implant and sources, and no others.
 - `--fresh` (with `--loops`, `--meds` or `--surgery`): reads every note again instead of using the cache. With `--repeats 3`, it shows how much extraction varies.
 
@@ -309,8 +292,7 @@ Other options:
 agent/          ASKlepios service: chat, tools, citation verifier, open loops, medications, surgical history, briefs, marks,
                 visits (jottings, notes, clinical considerations from a second model), audit log
 evals/          gold question set, open-loop, medication and surgery gold files, eval runner
-national/       simulated national record service (patient onboarding demo)
-synthetic/      cohort generator, national records and FHIR loader
+synthetic/      cohort generator, national records (the import's input) and FHIR loader
 web/            chart viewer, My day and chat panel
 docker-compose.yml
 ```
