@@ -172,7 +172,7 @@ If all of that works, you are set up. The [README](README.md) explains each feat
 
 1. Start Docker Desktop, then `docker compose up -d`.
 2. If the computer or Docker restarted since last time, reload the data: `python synthetic/load.py`.
-3. Start the three services (step 7).
+3. Start the two services (step 7).
 4. After a demo, click **Reset demo** at the top to start clean.
 
 ## 10. Optional: MedGemma for clinical considerations

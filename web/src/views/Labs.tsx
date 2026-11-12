@@ -1,7 +1,7 @@
 import { CartesianGrid, Line, LineChart, ReferenceArea, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { Sparkline } from '../components/Sparkline.tsx'
 import { SourceButton, useSource } from '../components/source.tsx'
-import { Card, Empty, FlagMark, NATIONAL_TITLE, NationalBadge, valueTone } from '../components/ui.tsx'
+import { Card, Elsewhere, Empty, FlagMark, NationalBadge, valueTone } from '../components/ui.tsx'
 import { formatDate, formatDayMonth, formatMonthYear, formatNumber, signed } from '../format.ts'
 import { measuredElsewhere, percentChange, type Chart, type Point, type Series } from '../model.ts'
 import { select } from '../route.ts'
@@ -67,17 +67,6 @@ function ResultsTable({ series, selected, onSelect }: { series: Series[]; select
   )
 }
 
-/** Under a result's date: where it was measured, when it came from the national record. */
-function Elsewhere({ point }: { point: Point }) {
-  const facility = measuredElsewhere(point.observation)
-  if (!facility) return null
-  return (
-    <div className="text-[11px] font-medium text-violet-800" title={NATIONAL_TITLE}>
-      {facility}
-    </div>
-  )
-}
-
 function ResultRow({ series, selected, onSelect }: { series: Series; selected: boolean; onSelect: (key: string) => void }) {
   const latest = series.points[series.points.length - 1]
   const previous = series.points.at(-2)
@@ -106,7 +95,7 @@ function ResultRow({ series, selected, onSelect }: { series: Series; selected: b
         <span className={`font-semibold ${valueTone(latest.flag)}`}>{formatNumber(latest.value, series.decimals)}</span>
         <FlagMark flag={latest.flag} />
         <div className="text-[11px] text-slate-400">{formatDate(latest.time)}</div>
-        <Elsewhere point={latest} />
+        <Elsewhere observation={latest.observation} />
       </td>
       <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums text-slate-600">
         {previous ? (
@@ -114,7 +103,7 @@ function ResultRow({ series, selected, onSelect }: { series: Series; selected: b
             {formatNumber(previous.value, series.decimals)}
             <FlagMark flag={previous.flag} />
             <div className="text-[11px] text-slate-400">{formatDate(previous.time)}</div>
-            <Elsewhere point={previous} />
+            <Elsewhere observation={previous.observation} />
           </>
         ) : (
           <span className="text-slate-300">—</span>

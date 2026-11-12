@@ -24,7 +24,7 @@ from agent.onboard import (
     patient_of, review_items, settled_import,
 )
 from agent.record import IMPORTED_ON, Record, code_of
-from agent.surgery import SurgeryReader, surgical_history
+from agent.surgery import SurgeryReader, from_procedure, surgical_history
 
 from .run import ROOT, cohort_records, says
 
@@ -160,15 +160,48 @@ def check_imported_text(written: list[dict]) -> list[str]:
 
 
 def check_unattended(bundles: dict[str, dict], records: dict[str, Record]) -> list[str]:
-    """With nobody to refuse it, "no known allergies" against a chart with allergies is skipped, not fatal."""
+    """With nobody to refuse it, an import skips only what it cannot settle, says what it left out, and never stops."""
+    problems = []
     try:
         # Murat Özdemir's summary records no known allergies; p-1019 has a penicillin allergy.
-        transaction = settled_import(bundles["00000003002"], [], taken=TAKEN, record=records["p-1019"], history=None)
+        settled = settled_import(bundles["00000003002"], [], taken=TAKEN, record=records["p-1019"], history=None)
+        kinds = [entry["resource"]["resourceType"] for entry in settled.transaction["entry"]]
+        if "AllergyIntolerance" in kinds:
+            problems.append("no known allergies was written over recorded allergies")
+        if "Patient" in kinds:
+            problems.append("a Patient was written for a patient already in the chart")
+        if not any(item.section == "allergies" for item, _ in settled.left_out):
+            problems.append("the import does not say it left out \"no known allergies\"")
+
+        # The other way round must not lose an allergy: Gülay Kaplan's summary has a penicillin allergy, and
+        # p-2042's chart records no known allergies.
+        settled = settled_import(bundles["00000003001"], [], taken=TAKEN, record=records["p-2042"], history=None)
+        written = [entry["resource"] for entry in settled.transaction["entry"]]
+        if not any(resource["resourceType"] == "AllergyIntolerance" and says(resource["code"].get("text", ""), "penicillin") for resource in written):
+            problems.append("a penicillin allergy was dropped because the chart records no known allergies")
+
+        # Nothing left to write is a result, not a failure: a summary holding only "no known allergies".
+        only = bundles["00000003002"]
+        kept = [entry for entry in only["entry"] if entry["resource"]["resourceType"] in ("Patient", "AllergyIntolerance")]
+        settled = settled_import(only | {"entry": kept}, [], taken=TAKEN, record=records["p-1019"], history=None)
+        if settled.transaction is not None or len(settled.left_out) != 1:
+            problems.append(f"nothing to write: transaction {settled.transaction is not None}, {len(settled.left_out)} left out")
     except ImportRefused as error:
-        return [f"the import stopped: {error}"]
-    kinds = [entry["resource"]["resourceType"] for entry in transaction["entry"]]
-    problems = ["no known allergies was written over recorded allergies"] if "AllergyIntolerance" in kinds else []
-    return problems + (["a Patient was written for a patient already in the chart"] if "Patient" in kinds else [])
+        problems.append(f"the import stopped: {error}")
+    return problems
+
+
+def check_done_elsewhere(records: dict[str, Record]) -> list[str]:
+    """An operation imported from the national record was not done here, unless the record says it was."""
+    problems = []
+    for record in records.values():
+        for procedure in record.resources.values():
+            if procedure["resourceType"] != "Procedure":
+                continue
+            mention = from_procedure(record, procedure)
+            if mention.here or not mention.elsewhere:
+                problems.append(f"{record.id}: {mention.name} reads as done at this hospital")
+    return problems
 
 
 def check_generated(records: dict[str, Record], anchor: date) -> list[str]:
@@ -266,10 +299,11 @@ async def run_onboarding(settings: Settings, records: dict[str, Record], anchor:
     for day in (anchor, date(2026, 10, 24), date(2026, 10, 26)):
         cohort = records if day == anchor else cohort_records(day, seed)
         generated += [f"{day}: {problem}" for problem in check_generated(cohort, day)]
+    generated += check_done_elsewhere(imported_records(anchor))
     print("generated patients: " + ("OK" if not generated else "; ".join(generated)))
     folder = out / f"{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-onboarding"
     folder.mkdir(parents=True)
     (folder / "results.json").write_text(json.dumps(results | {"unattended": {"problems": unattended}, "generated": {"problems": generated}}, ensure_ascii=False, indent=1), encoding="utf-8")
     failed = sum(bool(result["problems"]) for result in results.values())
     print(f"\n{len(results) - failed}/{len(results)} records as expected. Report: {folder / 'results.json'}")
-    return 0
+    return 1 if failed or unattended or generated else 0

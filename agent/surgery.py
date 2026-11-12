@@ -380,10 +380,17 @@ def unique_sources(sources: list[dict]) -> list[dict]:
     return kept
 
 
+# This hospital, as a national record names it in a Procedure's location.
+HOSPITAL = "Demo General Hospital"
+
+
 def from_procedure(record: Record, procedure: dict) -> Mention:
     name = text_of(procedure.get("code")) or "Procedure"
     sites = " ".join(text_of(item) for item in procedure.get("bodySite", []))
     reported = procedure.get("asserter", {}).get("reference", "").startswith("Patient/")
+    # A record imported from the national record was done where it says, which is rarely here.
+    imported = Record.imported_from(procedure) is not None
+    outside = reported or (imported and procedure.get("location", {}).get("display") != HOSPITAL)
     ref = ref_of(procedure)
     return Mention(
         name=name,
@@ -392,8 +399,8 @@ def from_procedure(record: Record, procedure: dict) -> Mention:
         approach=approach_of(name),
         side=next((side for side in SIDES if _has(fold(f"{name} {sites}"), side)), None),
         when=procedure_when(record, procedure),
-        elsewhere=reported,
-        here=not reported,
+        elsewhere=outside,
+        here=not outside,
         complications=tuple(text_of(item) for item in procedure.get("complication", []) if text_of(item)),
         implants=tuple(
             item.get("manipulated", {}).get("display", "") for item in procedure.get("focalDevice", [])

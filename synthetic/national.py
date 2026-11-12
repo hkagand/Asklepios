@@ -283,7 +283,7 @@ def imported_charts(anchor: date) -> dict[str, list[dict]]:
     for person in people(anchor):
         if person.visit is None:
             continue
-        transaction = settled_import(summary(person, anchor), list(person.answers), taken=history_taken(anchor))
+        transaction = settled_import(summary(person, anchor), list(person.answers), taken=history_taken(anchor)).transaction
         days, hour, minute = person.visit
         appointment = person.chart.appointment(
             at(add_workdays(anchor, days), hour, minute), AYDIN, FIRST_VISIT,

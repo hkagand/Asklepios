@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import type { Flag } from '../model.ts'
+import { measuredElsewhere, type Flag } from '../model.ts'
 
 // Status chips: a tinted ground with a darker rule on the left edge, like a tab on a chart divider.
 const TONES = {
@@ -31,6 +31,17 @@ export function NationalBadge() {
     <Badge tone="violet" title={NATIONAL_TITLE}>
       National record
     </Badge>
+  )
+}
+
+/** Under a result's date: where it was measured, when it came from the national record. Nothing for a result taken here. */
+export function Elsewhere({ observation }: { observation: fhir4.Observation }) {
+  const facility = measuredElsewhere(observation)
+  if (!facility) return null
+  return (
+    <span className="block text-[11px] font-medium text-violet-800" title={NATIONAL_TITLE}>
+      {facility}
+    </span>
   )
 }
 

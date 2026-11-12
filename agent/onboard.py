@@ -67,6 +67,7 @@ class Item:
     chart: list[str] = field(default_factory=list)  # what in our chart it matches
     critical: bool = False
     stale: bool = False
+    none_known: bool = False  # the summary's "no known allergies" entry, not an allergy
 
     def as_json(self) -> dict:
         return {
@@ -120,7 +121,7 @@ def allergy_item(resource: dict, record: Record | None) -> Item:
         f"recorded {day_text(recorded)}{_at(facility_of(resource))}" if recorded else "",
     ]))
     item = Item(ref_of(resource), "allergies", name, detail, recorded.isoformat() if recorded else None, "new",
-                "Not in our chart.", critical=resource.get("criticality") == "high")
+                "Not in our chart.", critical=resource.get("criticality") == "high", none_known=none_known)
     if record is None:
         if item.critical:
             item.reason = "Not in our chart. High criticality: check with the patient."
@@ -276,11 +277,13 @@ def decisions_from_answers(items: list[Item], answers: list[dict]) -> list[Decis
     """The decision per item when the patient's answers are already settled and nobody reviews the import. An answer
     is {"match": <phrase in the item's name>, "taking": "yes" | "no" | "different", "dose": ...} for a medicine, or
     {"match": ..., "current": bool} for a problem; a medicine with no answer is taken as listed. What cannot be
-    settled without a person is left out: an item already in the chart, and an allergy entry that differs from it."""
+    settled without a person is left out: an item already in the chart, and "no known allergies" against a chart that
+    records allergies. An allergy the chart does not have is imported even when the chart says there are none: losing
+    one is the worse mistake."""
     decisions = []
     for item in items:
         answer = next((answer for answer in answers if fold(answer["match"]) in fold(item.label)), {})
-        if item.status == "duplicate" or (item.section == "allergies" and item.status == "differs"):
+        if item.status == "duplicate" or (item.status == "differs" and item.none_known):
             decisions.append(Decision(item.key, False))
         elif item.section == "medications":
             decisions.append(Decision(item.key, True, answer.get("taking", "yes"), answer.get("dose")))
@@ -445,6 +448,14 @@ def import_transaction(
     }
 
 
+@dataclass(frozen=True)
+class Settled:
+    """What an unattended import did."""
+
+    transaction: dict | None  # the FHIR transaction to post; None when there was nothing to write
+    left_out: list[tuple[Item, str]]  # each item of the summary that was not imported, and why
+
+
 def settled_import(
     bundle: dict,
     answers: list[dict],
@@ -452,11 +463,15 @@ def settled_import(
     taken: datetime,
     record: Record | None = None,
     history: dict | None = None,
-) -> dict:
-    """The FHIR transaction importing a national summary whose answers are already settled with the patient, with
-    nobody reviewing it: for a new patient, or into `record` (with its surgical `history`) when they are in the chart."""
+) -> Settled:
+    """Imports a national summary whose answers are already settled with the patient, with nobody reviewing it: for
+    a new patient, or into `record` (with its surgical `history`) when they are in the chart. It never stops on an
+    item it cannot settle: it leaves the item out and says so."""
     items = review_items(bundle, record, history, taken.date())
+    decisions = decisions_from_answers(items, answers)
+    left_out = [(item, item.reason) for item, decision in zip(items, decisions) if not decision.import_it]
+    if record is not None and not any(decision.import_it for decision in decisions):
+        return Settled(None, left_out)
     patient_id = record.id if record else new_patient_id(national_id_of(patient_of(bundle)))
-    return import_transaction(
-        bundle, items, decisions_from_answers(items, answers), patient_id=patient_id, existing=record is not None, taken=taken,
-    )
+    transaction = import_transaction(bundle, items, decisions, patient_id=patient_id, existing=record is not None, taken=taken)
+    return Settled(transaction, left_out)
