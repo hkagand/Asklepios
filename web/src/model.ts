@@ -206,6 +206,13 @@ function sortConditions(conditions: fhir4.Condition[]): fhir4.Condition[] {
 export const isImported = (resource: { meta?: fhir4.Meta }): boolean =>
   resource.meta?.tag?.some((tag) => tag.code === 'national-import') ?? false
 
+/** Where an imported result was measured, e.g. "Demo State Hospital"; undefined for a result taken here. */
+export function measuredElsewhere(observation: fhir4.Observation): string | undefined {
+  if (!isImported(observation)) return undefined
+  const performer = observation.performer?.find((item) => item.display)?.display
+  return performer?.replace(/ laboratory$/, '') ?? 'another facility'
+}
+
 export const isActive = (condition: fhir4.Condition): boolean => code(condition.clinicalStatus) === 'active'
 
 // ------------------------------------------------------------ derived views

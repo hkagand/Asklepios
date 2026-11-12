@@ -23,6 +23,17 @@ export function Badge({ tone = 'slate', title, children }: { tone?: Tone; title?
   )
 }
 
+export const NATIONAL_TITLE = 'Imported from the national record (simulated) before the first visit'
+
+/** Marks what came from the national record before the first visit; the source drawer shows the item itself. */
+export function NationalBadge() {
+  return (
+    <Badge tone="violet" title={NATIONAL_TITLE}>
+      National record
+    </Badge>
+  )
+}
+
 export function Card({
   title,
   subtitle,

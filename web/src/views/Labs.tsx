@@ -1,9 +1,9 @@
 import { CartesianGrid, Line, LineChart, ReferenceArea, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { Sparkline } from '../components/Sparkline.tsx'
 import { SourceButton, useSource } from '../components/source.tsx'
-import { Card, Empty, FlagMark, valueTone } from '../components/ui.tsx'
+import { Card, Empty, FlagMark, NATIONAL_TITLE, NationalBadge, valueTone } from '../components/ui.tsx'
 import { formatDate, formatDayMonth, formatMonthYear, formatNumber, signed } from '../format.ts'
-import { percentChange, type Chart, type Point, type Series } from '../model.ts'
+import { measuredElsewhere, percentChange, type Chart, type Point, type Series } from '../model.ts'
 import { select } from '../route.ts'
 
 const DAY_MS = 86_400_000
@@ -67,6 +67,17 @@ function ResultsTable({ series, selected, onSelect }: { series: Series[]; select
   )
 }
 
+/** Under a result's date: where it was measured, when it came from the national record. */
+function Elsewhere({ point }: { point: Point }) {
+  const facility = measuredElsewhere(point.observation)
+  if (!facility) return null
+  return (
+    <div className="text-[11px] font-medium text-violet-800" title={NATIONAL_TITLE}>
+      {facility}
+    </div>
+  )
+}
+
 function ResultRow({ series, selected, onSelect }: { series: Series; selected: boolean; onSelect: (key: string) => void }) {
   const latest = series.points[series.points.length - 1]
   const previous = series.points.at(-2)
@@ -84,11 +95,18 @@ function ResultRow({ series, selected, onSelect }: { series: Series; selected: b
       <td className="px-4 py-2">
         <div className={`font-medium ${selected ? 'text-teal-900' : 'text-slate-800'}`}>{series.name}</div>
         <div className="text-[11px] text-slate-400">{series.range ?? series.unit}</div>
+        {/* Only when every result of the series came from elsewhere; a mixed series marks its results one by one. */}
+        {series.points.every((point) => measuredElsewhere(point.observation)) && (
+          <div className="mt-1">
+            <NationalBadge />
+          </div>
+        )}
       </td>
       <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums">
         <span className={`font-semibold ${valueTone(latest.flag)}`}>{formatNumber(latest.value, series.decimals)}</span>
         <FlagMark flag={latest.flag} />
         <div className="text-[11px] text-slate-400">{formatDate(latest.time)}</div>
+        <Elsewhere point={latest} />
       </td>
       <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums text-slate-600">
         {previous ? (
@@ -96,6 +114,7 @@ function ResultRow({ series, selected, onSelect }: { series: Series; selected: b
             {formatNumber(previous.value, series.decimals)}
             <FlagMark flag={previous.flag} />
             <div className="text-[11px] text-slate-400">{formatDate(previous.time)}</div>
+            <Elsewhere point={previous} />
           </>
         ) : (
           <span className="text-slate-300">—</span>
@@ -224,6 +243,11 @@ function Trend({ series }: { series: Series }) {
                       {formatNumber(point.value, series.decimals)} {series.unit}
                       <FlagMark flag={point.flag} />
                     </p>
+                    {measuredElsewhere(point.observation) && (
+                      <p className="mt-0.5 text-[11px] font-medium text-violet-800">
+                        Measured at {measuredElsewhere(point.observation)} · national record
+                      </p>
+                    )}
                     <p className="mt-0.5 text-[11px] text-slate-400">Click to view the source</p>
                   </div>
                 )
@@ -259,7 +283,15 @@ function Trend({ series }: { series: Series }) {
           <tbody>
             {[...points].reverse().map((point) => (
               <tr key={point.observation.id} className="border-t border-slate-100 first:border-t-0">
-                <td className="px-3 py-1.5 text-slate-600">{formatDate(point.time)}</td>
+                <td className="px-3 py-1.5 text-slate-600">
+                  {formatDate(point.time)}
+                  {measuredElsewhere(point.observation) && (
+                    <span className="ml-2 inline-flex flex-wrap items-center gap-x-1.5 align-middle">
+                      <NationalBadge />
+                      <span className="text-[11px] font-medium text-violet-800">{measuredElsewhere(point.observation)}</span>
+                    </span>
+                  )}
+                </td>
                 <td className="whitespace-nowrap px-3 py-1.5 text-right tabular-nums">
                   <span className={`font-medium ${valueTone(point.flag)}`}>{formatNumber(point.value, series.decimals)}</span>{' '}
                   <span className="text-xs text-slate-400">{series.unit}</span>

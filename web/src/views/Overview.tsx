@@ -3,7 +3,7 @@ import type { SurgicalHistory as History } from '../agent.ts'
 import { OpenLoops } from '../components/OpenLoops.tsx'
 import { SurgicalHistory } from '../components/SurgicalHistory.tsx'
 import { SourceButton } from '../components/source.tsx'
-import { Badge, Card, Empty, FlagMark, valueTone, type Tone } from '../components/ui.tsx'
+import { Badge, Card, Empty, FlagMark, NationalBadge, valueTone, type Tone } from '../components/ui.tsx'
 import { code, refId, text } from '../fhir.ts'
 import { daysBetween, formatDate, formatNumber, signed, todayIso, toTime } from '../format.ts'
 import {
@@ -397,15 +397,6 @@ function Medications({ chart }: { chart: Chart }) {
         </details>
       )}
     </Card>
-  )
-}
-
-/** Marks what came from the national record before the first visit; the source drawer shows the item itself. */
-function NationalBadge() {
-  return (
-    <Badge tone="violet" title="Imported from the national record (simulated) before the first visit">
-      National record
-    </Badge>
   )
 }
 
