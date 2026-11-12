@@ -15,6 +15,8 @@ from datetime import date, datetime, timedelta, timezone
 
 # Clinic time: Europe/Istanbul has been UTC+3 all year since 2016.
 TZ = timezone(timedelta(hours=3))
+# On an item imported from the national record: an extension whose valueDate is the day its history was taken.
+IMPORTED_ON = "urn:demo:asklepios:imported-on"
 EARLIEST = datetime(1900, 1, 1, tzinfo=TZ)
 MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
@@ -369,8 +371,9 @@ class Record:
 
     @staticmethod
     def imported_from(resource: dict, *, facility: bool = True) -> str | None:
-        """For an item imported at onboarding: "from the national record (simulated)", where it was done or measured,
-        and when it was imported."""
+        """For an item imported from the national record: "from the national record (simulated)", where it was done or
+        measured, and the day it was imported. That day is on the item itself (IMPORTED_ON), since a FHIR server sets
+        meta.lastUpdated to when it was loaded."""
         if not any(tag.get("code") == "national-import" for tag in resource.get("meta", {}).get("tag", [])):
             return None
         parts = ["from the national record (simulated)"]
@@ -379,9 +382,9 @@ class Record:
         )
         if facility and where:
             parts.append(where)
-        imported = moment(resource.get("meta", {}).get("lastUpdated"))
+        imported = next((item.get("valueDate") for item in resource.get("extension", []) if item.get("url") == IMPORTED_ON), None)
         if imported:
-            parts.append(f"imported {day_text(imported)}")
+            parts.append(f"imported {day_text(date.fromisoformat(imported))}")
         return ", ".join(parts)
 
     def _sourced(self, resource: dict, line: str, *, facility: bool = True) -> str:

@@ -1,18 +1,21 @@
-"""Patient onboarding from the national record service (simulated): consent, review, then import.
+"""Imports a patient's history from a national record summary into the chart: review, then import.
 
-1. The clinician enters the patient's national id, name and birth date; the service texts the patient a code.
-2. With the code, the agent reads the patient's International Patient Summary (IPS) and lists every item for review,
-   checked against our chart when the patient is already in it:
+The input is the patient's International Patient Summary (IPS), a FHIR document Bundle, and the answers already
+settled with the patient. Asklepios has no admission screen: nobody identifies a patient or asks for consent here.
+The synthetic cohort runs this when it is generated (synthetic/national.py), and a later integration with a
+national system would hand it the summaries it fetches.
+
+1. Every item of the summary is reviewed against our chart when the patient is already in it:
      new        not in our chart
      duplicate  already in our chart (not imported again)
      differs    in our chart, but not the same (another dose; "no known allergies" against recorded allergies)
-     ask        to confirm with the patient first: every medicine (a prescription is not proof it is taken), and
-                a diagnosis recorded long ago that is still listed as active
-3. Only what the clinician accepts is written to the chart, in one transaction, with a Provenance naming the source,
-   the consent and the clinician. Medicines are written as MedicationStatements, what the patient says they take,
-   never as orders. Nothing in the chart is changed or overwritten.
+     ask        needs the patient's answer: every medicine (a prescription is not proof it is taken), and a
+                diagnosis recorded long ago that is still listed as active
+2. What can be settled is written in one transaction, with a Provenance naming the source and the hospital.
+   Medicines are written as MedicationStatements, what the patient says they take, never as orders. Nothing in the
+   chart is changed or overwritten.
 
-All matching is plain code. The service token stays on the server.
+All matching is plain code. settled_import does both steps with nobody watching.
 """
 
 from __future__ import annotations
@@ -20,12 +23,11 @@ from __future__ import annotations
 import copy
 import re
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 
 from .loops import doses, ordered_doses
-from .marks import Practitioner
 from .meds import drug_words
-from .record import Record, code_of, day_text, moment, ref_of, text_of
+from .record import IMPORTED_ON, Record, code_of, day_text, moment, ref_of, text_of
 from .surgery import family_of
 from .tools import fold
 
@@ -35,6 +37,7 @@ SERVICE = "National record (simulated)"
 SOURCE_URL = "https://national-record.demo/fhir"
 IMPORT_TAG = {"system": "urn:demo:asklepios", "code": "national-import", "display": "Imported from the national record (simulated)"}
 ORGANIZATION = {"reference": "Organization/org-demo-hospital", "display": "Demo General Hospital"}
+MRN_TYPE = {"coding": [{"system": "http://terminology.hl7.org/CodeSystem/v2-0203", "code": "MR", "display": "Medical record number"}]}
 SECTIONS = {
     "AllergyIntolerance": "allergies",
     "MedicationRequest": "medications",
@@ -269,6 +272,25 @@ class Decision:
     current: bool | None = None  # problems: False imports the diagnosis as resolved; required when it is to be asked
 
 
+def decisions_from_answers(items: list[Item], answers: list[dict]) -> list[Decision]:
+    """The decision per item when the patient's answers are already settled and nobody reviews the import. An answer
+    is {"match": <phrase in the item's name>, "taking": "yes" | "no" | "different", "dose": ...} for a medicine, or
+    {"match": ..., "current": bool} for a problem; a medicine with no answer is taken as listed. What cannot be
+    settled without a person is left out: an item already in the chart, and an allergy entry that differs from it."""
+    decisions = []
+    for item in items:
+        answer = next((answer for answer in answers if fold(answer["match"]) in fold(item.label)), {})
+        if item.status == "duplicate" or (item.section == "allergies" and item.status == "differs"):
+            decisions.append(Decision(item.key, False))
+        elif item.section == "medications":
+            decisions.append(Decision(item.key, True, answer.get("taking", "yes"), answer.get("dose")))
+        elif item.section == "problems" and item.status == "ask":
+            decisions.append(Decision(item.key, True, current=answer.get("current", True)))
+        else:
+            decisions.append(Decision(item.key, True))
+    return decisions
+
+
 class ImportRefused(Exception):
     pass
 
@@ -329,14 +351,13 @@ def import_transaction(
     *,
     patient_id: str,
     existing: bool,
-    practitioner: Practitioner,
-    consent: str,
-    onboarding: str,
-    now: datetime | None = None,
+    taken: datetime,
 ) -> dict:
-    """A FHIR transaction writing what the clinician accepted, the Patient if new, and one Provenance for all of it.
+    """A FHIR transaction writing what was decided, the Patient if new, and one Provenance for all of it. `taken` is
+    when the history was taken with the patient: every item carries that day (IMPORTED_ON).
     Ids come from the national record, so importing the same item again updates it rather than duplicating it."""
-    stamp = (now or datetime.now(timezone.utc)).isoformat(timespec="seconds")
+    stamp = taken.isoformat(timespec="seconds")
+    imported_on = [{"url": IMPORTED_ON, "valueDate": taken.date().isoformat()}]
     by_key = {item.key: item for item in items}
     resources = {ref_of(resource): resource for resource in resources_of(bundle)}
     national_patient = patient_of(bundle)
@@ -374,7 +395,7 @@ def import_transaction(
             "id": patient_id,
             "meta": _meta(national_patient),
             "identifier": [
-                {"use": "usual", "system": MRN_SYSTEM, "value": patient_id.upper()},
+                {"use": "usual", "type": MRN_TYPE, "system": MRN_SYSTEM, "value": patient_id.upper()},
                 {"system": NATIONAL_ID, "value": national_id_of(national_patient)},
             ],
             "active": True,
@@ -388,18 +409,19 @@ def import_transaction(
     entries += written
     if not entries:
         raise ImportRefused("Nothing was selected to import.")
+    for resource in entries:
+        resource["extension"] = [*resource.get("extension", []), *imported_on]
     provenance = {
         "resourceType": "Provenance",
-        "id": f"prov-onboard-{onboarding}",
+        "id": f"prov-national-{patient_id}-{taken:%Y%m%d}",
         "meta": {"tag": [IMPORT_TAG], **({"security": national_patient["meta"]["security"]} if national_patient.get("meta", {}).get("security") else {})},
         "target": [{"reference": f"{resource['resourceType']}/{resource['id']}"} for resource in entries],
         "recorded": stamp,
-        "policy": [f"urn:demo:asklepios:consent:{consent}"],
         "activity": {"coding": [{"system": "http://terminology.hl7.org/CodeSystem/v3-DataOperation", "code": "CREATE", "display": "create"}]},
         "agent": [
             {
-                "type": {"coding": [{"system": "http://terminology.hl7.org/CodeSystem/provenance-participant-type", "code": "verifier"}]},
-                "who": practitioner.reference,
+                "type": {"coding": [{"system": "http://terminology.hl7.org/CodeSystem/provenance-participant-type", "code": "custodian"}]},
+                "who": ORGANIZATION,
             },
             {
                 "type": {"coding": [{"system": "http://terminology.hl7.org/CodeSystem/provenance-participant-type", "code": "informant"}]},
@@ -421,3 +443,20 @@ def import_transaction(
             for resource in entries
         ],
     }
+
+
+def settled_import(
+    bundle: dict,
+    answers: list[dict],
+    *,
+    taken: datetime,
+    record: Record | None = None,
+    history: dict | None = None,
+) -> dict:
+    """The FHIR transaction importing a national summary whose answers are already settled with the patient, with
+    nobody reviewing it: for a new patient, or into `record` (with its surgical `history`) when they are in the chart."""
+    items = review_items(bundle, record, history, taken.date())
+    patient_id = record.id if record else new_patient_id(national_id_of(patient_of(bundle)))
+    return import_transaction(
+        bundle, items, decisions_from_answers(items, answers), patient_id=patient_id, existing=record is not None, taken=taken,
+    )

@@ -13,17 +13,22 @@ import json
 import sys
 import tomllib
 from dataclasses import replace
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from agent.config import Settings
 from agent.llm import LlmClient
-from agent.marks import Practitioner
-from agent.onboard import Decision, ImportRefused, Item, import_transaction, new_patient_id, national_id_of, patient_of, review_items
-from agent.record import Record
+from agent.onboard import (
+    MRN_SYSTEM, Decision, ImportRefused, Item, decisions_from_answers, import_transaction, new_patient_id, national_id_of,
+    patient_of, review_items, settled_import,
+)
+from agent.record import IMPORTED_ON, Record, code_of
 from agent.surgery import SurgeryReader, surgical_history
 
 from .run import ROOT, says
+
+# When the history was taken, for the checks of the import itself: the working day before the gold anchor.
+TAKEN = datetime(2026, 10, 22, 9, 0, tzinfo=timezone(timedelta(hours=3)))
 
 
 def national_bundles(anchor: date) -> dict[str, dict]:
@@ -50,29 +55,12 @@ def check_items(expected: list[dict], items: list[Item]) -> list[str]:
     return problems
 
 
-def decisions_for(items: list[Item], answers: list[dict]) -> list[Decision]:
-    decisions = []
-    for item in items:
-        answer = next((answer for answer in answers if says(item.label, answer["match"])), {})
-        if item.status == "duplicate":
-            decisions.append(Decision(item.key, False))
-        elif item.section == "medications":
-            decisions.append(Decision(item.key, True, answer.get("taking", "yes"), answer.get("dose")))
-        elif item.section == "problems" and item.status == "ask":
-            decisions.append(Decision(item.key, True, current=answer.get("current", True)))
-        else:
-            decisions.append(Decision(item.key, True))
-    return decisions
-
-
 def check_import(bundle: dict, items: list[Item], answers: list[dict], chart: str) -> tuple[list[str], dict]:
     """The import with the patient's answers, and refusals that must hold."""
     problems = []
     national_id = national_id_of(patient_of(bundle))
     patient_id = chart or new_patient_id(national_id)
-    by = Practitioner("pr-aydin", "Dr. Elif Aydın")
-    options = dict(patient_id=patient_id, existing=bool(chart), practitioner=by, consent="test", onboarding="test",
-                   now=datetime(2026, 10, 23, 9, 0, tzinfo=timezone.utc))
+    options = dict(patient_id=patient_id, existing=bool(chart), taken=TAKEN)
     # Refusals: a duplicate imported, a medicine with no answer, a stale diagnosis with no answer.
     for item in items:
         if item.status == "duplicate":
@@ -89,7 +77,7 @@ def check_import(bundle: dict, items: list[Item], answers: list[dict], chart: st
         except ImportRefused:
             pass
 
-    transaction = import_transaction(bundle, items, decisions_for(items, answers), **options)
+    transaction = import_transaction(bundle, items, decisions_from_answers(items, answers), **options)
     written = [entry["resource"] for entry in transaction["entry"]]
     text = json.dumps(transaction)
     national_patient = f"Patient/{patient_of(bundle)['id']}"
@@ -107,6 +95,23 @@ def check_import(bundle: dict, items: list[Item], answers: list[dict], chart: st
     expected_targets = {f"{resource['resourceType']}/{resource['id']}" for resource in written[:-1]}
     if provenance["resourceType"] != "Provenance" or targets != expected_targets:
         problems.append("the Provenance does not cover exactly what was written")
+    patient = next((resource for resource in written if resource["resourceType"] == "Patient"), None)
+    if patient and not any(code_of(item.get("type")) == "MR" and item.get("system") == MRN_SYSTEM for item in patient["identifier"]):
+        problems.append("the Patient's hospital number has no MR type coding")
+    for resource in written[:-1]:
+        days = [item.get("valueDate") for item in resource.get("extension", []) if item.get("url") == IMPORTED_ON]
+        if days != ["2026-10-22"]:
+            problems.append(f"{resource['resourceType']}/{resource['id']}: import day {days}, expected ['2026-10-22']")
+    whos = [agent.get("who", {}) for agent in provenance.get("agent", [])]
+    if "policy" in provenance:
+        problems.append("the Provenance still names a consent request")
+    if not any(who.get("reference") == "Organization/org-demo-hospital" for who in whos):
+        problems.append("the Provenance does not name the hospital")
+    if any(who.get("reference", "").startswith("Practitioner/") for who in whos):
+        problems.append("the Provenance names a clinician")
+    if provenance.get("recorded") != "2026-10-22T09:00:00+03:00":
+        problems.append(f"the Provenance is recorded {provenance.get('recorded')}")
+    problems += check_imported_text(written)
     duplicates = {item.key.split("/")[1] for item in items if item.status == "duplicate"}
     if any(resource["id"] in duplicates for resource in written):
         problems.append("an item already in the chart was written")
@@ -131,11 +136,37 @@ def check_import(bundle: dict, items: list[Item], answers: list[dict], chart: st
     return problems, summary
 
 
+def check_imported_text(written: list[dict]) -> list[str]:
+    """What ASKlepios says about an imported item: the import day from the item, never the load time."""
+    problems = []
+    item = next(resource for resource in written if resource["resourceType"] not in ("Patient", "Provenance"))
+    loaded = item | {"meta": item["meta"] | {"lastUpdated": "2026-11-12T10:00:00+00:00"}}
+    if not (Record.imported_from(loaded) or "").endswith("imported 22 Oct 2026"):
+        problems.append(f"import text: {Record.imported_from(loaded)!r}")
+    old = {key: value for key, value in loaded.items() if key != "extension"}
+    text = Record.imported_from(old)
+    if text is None or not text.startswith("from the national record") or "imported " in text:
+        problems.append(f"an item imported before the extension existed reads {text!r}")
+    return problems
+
+
+def check_unattended(bundles: dict[str, dict], records: dict[str, Record]) -> list[str]:
+    """With nobody to refuse it, "no known allergies" against a chart with allergies is skipped, not fatal."""
+    try:
+        # Murat Özdemir's summary records no known allergies; p-1019 has a penicillin allergy.
+        transaction = settled_import(bundles["00000003002"], [], taken=TAKEN, record=records["p-1019"], history=None)
+    except ImportRefused as error:
+        return [f"the import stopped: {error}"]
+    kinds = [entry["resource"]["resourceType"] for entry in transaction["entry"]]
+    problems = ["no known allergies was written over recorded allergies"] if "AllergyIntolerance" in kinds else []
+    return problems + (["a Patient was written for a patient already in the chart"] if "Patient" in kinds else [])
+
+
 def onboarded_records(anchor: date, expected_path: Path) -> dict[str, Record]:
     """The new patients of onboarding.toml as their charts read after onboarding on the anchor day, with the patient's
     answers given there: for gold questions about imported history."""
     bundles = national_bundles(anchor)
-    imported = datetime(anchor.year, anchor.month, anchor.day, 9, 0, tzinfo=timezone.utc)
+    imported = datetime(anchor.year, anchor.month, anchor.day, 9, 0, tzinfo=timezone(timedelta(hours=3)))
     records = {}
     for want in tomllib.loads(expected_path.read_text(encoding="utf-8"))["record"]:
         if want["chart"]:
@@ -144,15 +175,13 @@ def onboarded_records(anchor: date, expected_path: Path) -> dict[str, Record]:
         items = review_items(bundle, None, None, anchor)
         patient_id = new_patient_id(want["nationalId"])
         transaction = import_transaction(
-            bundle, items, decisions_for(items, want.get("answers", [])), patient_id=patient_id, existing=False,
-            practitioner=Practitioner("pr-aydin", "Dr. Elif Aydın"), consent="gold", onboarding="gold", now=imported,
+            bundle, items, decisions_from_answers(items, want.get("answers", [])), patient_id=patient_id, existing=False,
+            taken=imported,
         )
         found: dict[str, list[dict]] = {}
         patient = None
         for entry in transaction["entry"]:
             resource = entry["resource"]
-            # As the FHIR server would stamp it on import.
-            resource["meta"] = resource.get("meta", {}) | {"lastUpdated": imported.isoformat()}
             if resource["resourceType"] == "Patient":
                 patient = resource
             elif resource["resourceType"] != "Provenance":
@@ -190,9 +219,11 @@ async def run_onboarding(settings: Settings, records: dict[str, Record], anchor:
                 print(f"   - {problem}")
     finally:
         await llm.close()
+    unattended = check_unattended(bundles, records)
+    print("unattended import: " + ("OK" if not unattended else "; ".join(unattended)))
     folder = out / f"{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-onboarding"
     folder.mkdir(parents=True)
-    (folder / "results.json").write_text(json.dumps(results, ensure_ascii=False, indent=1), encoding="utf-8")
+    (folder / "results.json").write_text(json.dumps(results | {"unattended": {"problems": unattended}}, ensure_ascii=False, indent=1), encoding="utf-8")
     failed = sum(bool(result["problems"]) for result in results.values())
     print(f"\n{len(results) - failed}/{len(results)} records as expected. Report: {folder / 'results.json'}")
     return 0
