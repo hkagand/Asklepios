@@ -180,7 +180,7 @@ class Record:
         self.medications = sorted(
             found.get("MedicationRequest", []), key=lambda item: self.medication_period(item)[0] or EARLIEST, reverse=True
         )
-        # What the patient says they take (from onboarding), as opposed to what was ordered.
+        # What the patient says they take (said when their history was taken), as opposed to what was ordered.
         self.statements = sorted(
             found.get("MedicationStatement", []), key=lambda item: moment(item.get("dateAsserted")) or EARLIEST, reverse=True
         )
@@ -625,7 +625,7 @@ class Record:
         return "\n".join(readings) or f"[{ref}] has no numeric value."
 
     def label(self, ref: str) -> str:
-        """A short name for a citation chip; an item imported at onboarding says it is from the national record."""
+        """A short name for a citation chip; an item imported from the national record says so."""
         resource = self.resources.get(ref)
         if resource is None:
             return ref
@@ -697,7 +697,7 @@ class Record:
             status = medication.get("status")
             key = "Active:" if status == "active" else "On hold:" if status == "on-hold" else "Stopped or completed, newest first:"
             groups[key].append(self.medication_line(medication))
-        groups["What the patient says they take (from onboarding; not orders):"] = [self.statement_line(item) for item in self.statements]
+        groups["What the patient says they take (said when their history was taken; not orders):"] = [self.statement_line(item) for item in self.statements]
         lines = [line for title, items in groups.items() if items for line in (title, *items)]
         return lines or ["none recorded"]
 

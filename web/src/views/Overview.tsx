@@ -400,10 +400,10 @@ function Medications({ chart }: { chart: Chart }) {
   )
 }
 
-/** Marks what came from the national record at onboarding; the source drawer shows its provenance. */
+/** Marks what came from the national record before the first visit; the source drawer shows the item itself. */
 function NationalBadge() {
   return (
-    <Badge tone="violet" title="Imported from the national record (simulated) at onboarding">
+    <Badge tone="violet" title="Imported from the national record (simulated) before the first visit">
       National record
     </Badge>
   )
