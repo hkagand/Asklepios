@@ -19,7 +19,7 @@ export function Visits({ chart, selected }: { chart: Chart; selected?: string })
   }
   const current = items.find((item) => item.key === selected) ?? items[0]
   return (
-    <div className="grid items-start gap-4 lg:grid-cols-[22rem_minmax(0,1fr)]">
+    <div className="grid items-start gap-4 @3xl:grid-cols-[22rem_minmax(0,1fr)]">
       <Card flush className="lg:sticky lg:top-18 lg:max-h-[calc(100vh-5.5rem)] lg:overflow-y-auto">
         <ul className="divide-y divide-slate-100">
           {items.map((item) => (

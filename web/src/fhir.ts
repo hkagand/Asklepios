@@ -5,7 +5,8 @@ const BASE = '/fhir'
 async function getJson<T>(url: string, signal?: AbortSignal): Promise<T> {
   let response: Response
   try {
-    response = await fetch(url, { headers: { Accept: 'application/fhir+json' }, signal })
+    // no-cache: HAPI otherwise answers a repeated search from its cache for a minute, hiding a note just signed.
+    response = await fetch(url, { headers: { Accept: 'application/fhir+json', 'Cache-Control': 'no-cache' }, signal })
   } catch (error) {
     if (signal?.aborted) throw error
     throw new Error('Could not reach the FHIR server.', { cause: error })

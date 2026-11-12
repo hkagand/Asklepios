@@ -170,5 +170,6 @@ CLINICIANS: dict[str, Clinician] = {
         Clinician("pr-koc", "Ayhan", "Koç", "Gastroenterology"),
         Clinician("pr-celik", "Burak", "Çelik", "Radiology"),
         Clinician("pr-kilic", "Deniz", "Kılıç", "Pathology"),
+        Clinician("pr-yalcin", "Kerem", "Yalçın", "General Surgery"),
     )
 }

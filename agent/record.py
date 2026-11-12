@@ -8,6 +8,7 @@ answer can point back to its source.
 from __future__ import annotations
 
 import base64
+import os
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
@@ -57,6 +58,13 @@ def text_of(concept: dict | None) -> str:
 
 def code_of(concept: dict | None) -> str | None:
     return first((concept or {}).get("coding")).get("code")
+
+
+def clinic_today() -> date:
+    """Today in clinic time, or the day in AGENT_TODAY (YYYY-MM-DD): a demo cohort generated for one day can then be
+    shown on any later day as it was loaded."""
+    fixed = os.environ.get("AGENT_TODAY")
+    return date.fromisoformat(fixed) if fixed else datetime.now(TZ).date()
 
 
 def moment(value: str | None) -> datetime | None:
@@ -157,7 +165,7 @@ class Record:
     def __init__(self, patient: dict, found: dict[str, list[dict]], today: date | None = None) -> None:
         self.patient = patient
         self.id: str = patient["id"]
-        self.today = today or datetime.now(TZ).date()
+        self.today = today or clinic_today()
         self.resources: dict[str, dict] = {ref_of(patient): patient}
         for items in found.values():
             for item in items:
@@ -170,9 +178,18 @@ class Record:
         self.medications = sorted(
             found.get("MedicationRequest", []), key=lambda item: self.medication_period(item)[0] or EARLIEST, reverse=True
         )
+        # What the patient says they take (from onboarding), as opposed to what was ordered.
+        self.statements = sorted(
+            found.get("MedicationStatement", []), key=lambda item: moment(item.get("dateAsserted")) or EARLIEST, reverse=True
+        )
         self.encounters = sorted(found.get("Encounter", []), key=lambda item: self.encounter_start(item) or EARLIEST, reverse=True)
         self.orders = sorted(found.get("ServiceRequest", []), key=lambda item: moment(item.get("authoredOn")) or EARLIEST, reverse=True)
         self.appointments = sorted(found.get("Appointment", []), key=lambda item: moment(item.get("start")) or EARLIEST)
+        self.procedures = sorted(
+            (item for item in found.get("Procedure", []) if item.get("status") == "completed"),
+            key=lambda item: self.procedure_date(item) or EARLIEST.date(),
+            reverse=True,
+        )
 
         reports = found.get("DiagnosticReport", [])
         self.lab_reports = [report for report in reports if self._is_lab(report)]
@@ -204,6 +221,15 @@ class Record:
         start = moment(bounds.get("start") or medication.get("authoredOn"))
         end = moment(bounds.get("end"))
         return (start.date() if start else None, end.date() if end else None)
+
+    @staticmethod
+    def procedure_date(procedure: dict) -> date | None:
+        """When it was done; a reported year ("1996") counts as 1 January of that year."""
+        performed = moment(procedure.get("performedDateTime") or procedure.get("performedPeriod", {}).get("start"))
+        if performed:
+            return performed.date()
+        year = (procedure.get("performedString") or "")[:4]
+        return date(int(year), 1, 1) if year.isdigit() else None
 
     def _note(self, note: dict) -> Document:
         attachment = first(note.get("content")).get("attachment", {})
@@ -341,6 +367,29 @@ class Record:
             text += f": {appointment['description']}"
         return f"{text} [{ref_of(appointment)}]"
 
+    @staticmethod
+    def imported_from(resource: dict, *, facility: bool = True) -> str | None:
+        """For an item imported at onboarding: "from the national record (simulated)", where it was done or measured,
+        and when it was imported."""
+        if not any(tag.get("code") == "national-import" for tag in resource.get("meta", {}).get("tag", [])):
+            return None
+        parts = ["from the national record (simulated)"]
+        where = resource.get("location", {}).get("display") or next(
+            (performer.get("display") for performer in resource.get("performer", []) if performer.get("display")), None
+        )
+        if facility and where:
+            parts.append(where)
+        imported = moment(resource.get("meta", {}).get("lastUpdated"))
+        if imported:
+            parts.append(f"imported {day_text(imported)}")
+        return ", ".join(parts)
+
+    def _sourced(self, resource: dict, line: str, *, facility: bool = True) -> str:
+        """The line with its id; an imported item's line starts with its source."""
+        source = self.imported_from(resource, facility=facility)
+        lead = f"{source[0].upper()}{source[1:]}: " if source else ""
+        return f"{lead}{line} [{ref_of(resource)}]"
+
     def condition_line(self, condition: dict) -> str:
         concept = condition.get("code", {})
         coding = first(concept.get("coding"))
@@ -361,7 +410,7 @@ class Record:
         asserter = condition.get("asserter", {}).get("display")
         if asserter:
             parts.append(f"recorded by {asserter}")
-        return "; ".join(parts) + f" [{ref_of(condition)}]"
+        return self._sourced(condition, "; ".join(parts), facility=False)
 
     def allergy_line(self, allergy: dict) -> str:
         parts = [text_of(allergy.get("code")) or "Allergy"]
@@ -376,7 +425,8 @@ class Record:
         recorded = moment(allergy.get("recordedDate"))
         if recorded:
             parts.append(f"recorded {day_text(recorded)}")
-        return "; ".join(parts) + f" [{ref_of(allergy)}]"
+        parts += [note["text"].rstrip(".") for note in allergy.get("note", []) if note.get("text")]
+        return self._sourced(allergy, "; ".join(parts))
 
     def medication_line(self, medication: dict) -> str:
         name = text_of(medication.get("medicationCodeableConcept")) or "Medication"
@@ -398,6 +448,58 @@ class Record:
             why = text_of(medication.get("statusReason"))
             parts.append(status.replace("-", " ") + (f": {why}" if why else ""))
         return "; ".join(parts) + f" [{ref_of(medication)}]"
+
+    def procedure_when(self, procedure: dict) -> str:
+        performed = moment(procedure.get("performedDateTime") or procedure.get("performedPeriod", {}).get("start"))
+        return day_text(performed) if performed else procedure.get("performedString") or "date not recorded"
+
+    def procedure_line(self, procedure: dict) -> str:
+        parts = [f"{text_of(procedure.get('code')) or 'Procedure'}, {self.procedure_when(procedure)}"]
+        site = ", ".join(text_of(item) for item in procedure.get("bodySite", []) if text_of(item))
+        if site:
+            parts.append(f"site: {site}")
+        if location := procedure.get("location", {}).get("display"):
+            parts.append(f"at {location}")
+        if procedure.get("asserter", {}).get("reference", "").startswith("Patient/"):
+            parts.append("reported by the patient, not performed here")
+        performers = [item.get("actor", {}).get("display") for item in procedure.get("performer", [])]
+        if any(performers):
+            parts.append("performed by " + ", ".join(name for name in performers if name))
+        outcome = text_of(procedure.get("outcome"))
+        if outcome:
+            parts.append(f"outcome: {outcome}")
+        complications = [text_of(item) for item in procedure.get("complication", []) if text_of(item)]
+        if complications:
+            parts.append("complications: " + ", ".join(complications))
+        devices = [item.get("manipulated", {}).get("display") for item in procedure.get("focalDevice", [])]
+        if any(devices):
+            parts.append("implant: " + ", ".join(device for device in devices if device))
+        note = first(procedure.get("note")).get("text")
+        if note:
+            parts.append(note.rstrip("."))
+        reports = [item.get("reference") for item in procedure.get("report", []) if item.get("reference")]
+        if reports:
+            parts.append("report " + ", ".join(f"[{ref}]" for ref in reports))
+        return self._sourced(procedure, "; ".join(parts), facility=False)
+
+    def statement_line(self, statement: dict) -> str:
+        name = text_of(statement.get("medicationCodeableConcept")) or "Medication"
+        dosage = first(statement.get("dosage")).get("text")
+        notes = [note["text"].rstrip(".") for note in statement.get("note", []) if note.get("text")]
+        listed = next((note.removeprefix("National record: ") for note in notes if note.startswith("National record: ")), None)
+        if statement.get("status") == "stopped":
+            said = "the patient says they no longer take it"
+        elif listed and dosage and dosage not in listed:
+            said = f"the patient says they take {dosage}, which differs from the national record"
+        else:
+            said = f"the patient says they take it{f': {dosage}' if dosage else ''}"
+        parts = [f"{name}: {said}"]
+        if listed:
+            parts.append(f"national record lists {listed}")
+        asserted = moment(statement.get("dateAsserted"))
+        if asserted:
+            parts.append(f"stated {day_text(asserted)}")
+        return self._sourced(statement, "; ".join(parts), facility=False)
 
     def due_text(self, due: date) -> str:
         days = (due - self.today).days
@@ -473,6 +575,8 @@ class Record:
             text += f"; reference {series.range}"
         if len(series.points) > 2:
             text += f"; {len(series.points)} results since {day_text(series.points[0].when)}"
+        if source := self.imported_from(self.resources.get(last.ref, {})):
+            text += f"; latest {source}"
         return text
 
     # ------------------------------------------------------- full renders
@@ -505,9 +609,11 @@ class Record:
             "Condition": self.condition_line,
             "AllergyIntolerance": self.allergy_line,
             "MedicationRequest": self.medication_line,
+            "MedicationStatement": self.statement_line,
             "ServiceRequest": self.order_line,
             "Appointment": self.appointment_line,
             "Encounter": self.encounter_line,
+            "Procedure": self.procedure_line,
             "DiagnosticReport": self.lab_report_text,
         }.get(resource["resourceType"])
         if render:
@@ -516,10 +622,15 @@ class Record:
         return "\n".join(readings) or f"[{ref}] has no numeric value."
 
     def label(self, ref: str) -> str:
-        """A short name for a citation chip."""
+        """A short name for a citation chip; an item imported at onboarding says it is from the national record."""
         resource = self.resources.get(ref)
         if resource is None:
             return ref
+        if self.imported_from(resource):
+            return f"{self._label(ref, resource)} · national record"
+        return self._label(ref, resource)
+
+    def _label(self, ref: str, resource: dict) -> str:
         kind = resource["resourceType"]
         if ref in self.document_by_ref:
             document = self.document_by_ref[ref]
@@ -538,6 +649,8 @@ class Record:
             return f"{text_of(resource.get('code'))} · {day_text(when)}"
         if kind == "MedicationRequest":
             return text_of(resource.get("medicationCodeableConcept")) or "Medication"
+        if kind == "MedicationStatement":
+            return f"Patient-reported: {text_of(resource.get('medicationCodeableConcept')) or 'medication'}"
         if kind == "ServiceRequest":
             ordered = moment(resource.get("authoredOn")) or EARLIEST
             return f"Order: {text_of(resource.get('code')).split(' with ')[0]} · {day_text(ordered)}"
@@ -549,6 +662,8 @@ class Record:
             return text_of(resource.get("code")) or "Allergy"
         if kind == "Appointment":
             return f"Appointment · {day_text(moment(resource.get('start')) or EARLIEST)}"
+        if kind == "Procedure":
+            return f"{text_of(resource.get('code')) or 'Procedure'} · {self.procedure_when(resource)}"
         return "Patient details"
 
     # --------------------------------------------------------------- index
@@ -579,6 +694,7 @@ class Record:
             status = medication.get("status")
             key = "Active:" if status == "active" else "On hold:" if status == "on-hold" else "Stopped or completed, newest first:"
             groups[key].append(self.medication_line(medication))
+        groups["What the patient says they take (from onboarding; not orders):"] = [self.statement_line(item) for item in self.statements]
         lines = [line for title, items in groups.items() if items for line in (title, *items)]
         return lines or ["none recorded"]
 

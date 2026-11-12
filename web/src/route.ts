@@ -1,12 +1,18 @@
 import { useEffect, useState } from 'react'
 
-export const TABS = ['overview', 'labs', 'visits', 'reports'] as const
+export const TABS = ['overview', 'labs', 'visits', 'reports', 'medications', 'visit'] as const
 export type Tab = (typeof TABS)[number]
 
-export type Route = { page: 'worklist' } | { page: 'patient'; id: string; tab: Tab; item?: string }
+export type Route =
+  | { page: 'worklist' }
+  | { page: 'day'; day?: string }
+  | { page: 'patient'; id: string; tab: Tab; item?: string }
+  | { page: 'onboard' }
 
 function parse(hash: string): Route {
   const [page, id, tab, item] = hash.replace(/^#\/?/, '').split('/').map(decodeURIComponent)
+  if (page === 'onboard') return { page: 'onboard' }
+  if (page === 'day') return { page: 'day', day: /^\d{4}-\d{2}-\d{2}$/.test(id ?? '') ? id : undefined }
   if (page === 'patients' && id) {
     const known = (TABS as readonly string[]).includes(tab) ? (tab as Tab) : 'overview'
     return { page: 'patient', id, tab: known, item: item || undefined }

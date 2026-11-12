@@ -1,47 +1,96 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
+import { patientSurgery, patientVisit, startVisit, type SurgicalHistory, type Visit } from '../agent.ts'
 import { Copilot, SparkIcon } from '../components/Copilot.tsx'
+import { useClinician } from '../components/clinician.tsx'
 import { SourceButton } from '../components/source.tsx'
-import { Badge, ErrorPanel, Loading } from '../components/ui.tsx'
-import { isSynthetic, medicalRecordNumber, patientName } from '../fhir.ts'
+import { operationsFact } from '../components/SurgicalHistory.tsx'
+import { ErrorPanel, Loading } from '../components/ui.tsx'
+import { isSynthetic, medicalRecordNumber, patientName, text } from '../fhir.ts'
 import { ageOn, formatDate, formatTime, isoDay, relativeDay, sexLabel, todayIso } from '../format.ts'
 import { loadChart, nextAppointment, openOrders, participant, timeline, type Chart } from '../model.ts'
 import { patientHref, type Tab } from '../route.ts'
-import { useAsync } from '../useAsync.ts'
+import { useAsync, type AsyncState } from '../useAsync.ts'
 import { Labs } from './Labs.tsx'
+import { Medications } from './Medications.tsx'
 import { Overview } from './Overview.tsx'
 import { Reports } from './Reports.tsx'
+import { VisitView } from './Visit.tsx'
 import { Visits } from './Visits.tsx'
 
 export function PatientView({ id, tab, item }: { id: string; tab: Tab; item?: string }) {
   const state = useAsync((signal) => loadChart(id, signal), [id])
+  // The chart read again after a visit closes (a signed note, a cancelled Encounter), shown in place of the first read
+  // without a loading screen.
+  const [freshChart, setFreshChart] = useState<Chart>()
+  const chartState: AsyncState<Chart> = freshChart ? { status: 'ready', data: freshChart } : state
+  // Read once for the band and the overview card.
+  const surgery = useAsync((signal) => patientSurgery(id, signal), [id])
+  const visitState = useAsync((signal) => patientVisit(id, signal), [id])
+  // The visit as last changed here, once anything has changed; until then, as loaded.
+  const [changedVisit, setVisit] = useState<Visit | null>()
+  const visit = changedVisit !== undefined ? changedVisit : visitState.status === 'ready' ? visitState.data : null
+  const { current } = useClinician()
+  const [starting, setStarting] = useState(false)
+  const [visitError, setVisitError] = useState<string>()
+  const begin = async () => {
+    setStarting(true)
+    setVisitError(undefined)
+    try {
+      setVisit(await startVisit(id))
+      window.location.hash = patientHref(id, 'visit')
+    } catch (failure) {
+      setVisitError(failure instanceof Error ? failure.message : String(failure))
+    } finally {
+      setStarting(false)
+    }
+  }
+  const changeVisit = (next: Visit | null) => {
+    setVisit(next)
+    if (next && next.status !== 'open') {
+      loadChart(id, new AbortController().signal).then(setFreshChart, () => {
+        // The chart as first read stays; a reload of the page reads it again.
+      })
+    }
+  }
   const [copilot, setCopilot] = useStoredFlag('copilot-open')
   return (
     <div className="flex items-start">
-      <main className="mx-auto min-w-0 max-w-7xl flex-1 px-6 pb-16 pt-4">
-        <a href="#/" className="text-sm text-slate-500 hover:text-teal-700">
-          ← Worklist
+      <main className="mx-auto min-w-0 max-w-7xl flex-1 px-4 pb-16 pt-4 sm:px-6">
+        <a href="#/" className="text-[13.5px] font-semibold text-slate-500 hover:text-slate-900">
+          ← All appointments
         </a>
-        {state.status === 'loading' && <Loading label="Loading the chart from the FHIR server…" />}
-        {state.status === 'error' && <ErrorPanel error={state.error} />}
-        {state.status === 'ready' && (
+        {chartState.status === 'loading' && <Loading label="Loading the chart from the FHIR server…" />}
+        {chartState.status === 'error' && <ErrorPanel error={chartState.error} />}
+        {chartState.status === 'ready' && (
           <>
-            <PatientHeader chart={state.data} />
-            <TabBar chart={state.data} tab={tab} copilot={copilot} onCopilot={() => setCopilot(!copilot)} />
-            <div className="mt-4">
-              {tab === 'overview' && <Overview chart={state.data} />}
-              {tab === 'labs' && <Labs chart={state.data} selected={item} />}
-              {tab === 'visits' && <Visits chart={state.data} selected={item} />}
-              {tab === 'reports' && <Reports chart={state.data} selected={item} />}
+            <PatientHeader chart={chartState.data} surgery={surgery} />
+            <TabBar
+              chart={chartState.data}
+              tab={tab}
+              copilot={copilot}
+              onCopilot={() => setCopilot(!copilot)}
+              visit={visit}
+              onStartVisit={current ? begin : undefined}
+              starting={starting}
+            />
+            {visitError && <p className="mt-2 rounded-md bg-rose-50 px-3 py-2 text-sm text-rose-800">{visitError}</p>}
+            <div className="@container mt-4">
+              {tab === 'overview' && <Overview chart={chartState.data} surgery={surgery} />}
+              {tab === 'labs' && <Labs chart={chartState.data} selected={item} />}
+              {tab === 'visits' && <Visits chart={chartState.data} selected={item} />}
+              {tab === 'reports' && <Reports chart={chartState.data} selected={item} />}
+              {tab === 'medications' && <Medications chart={chartState.data} />}
+              {tab === 'visit' && <VisitView chart={chartState.data} visit={visit} onChange={changeVisit} onStart={begin} starting={starting} />}
             </div>
           </>
         )}
       </main>
-      {copilot && state.status === 'ready' && (
+      {copilot && chartState.status === 'ready' && (
         <aside
           aria-label="ASKlepios"
           className="fixed bottom-0 right-0 top-14 z-30 w-full max-w-md border-l border-slate-200 shadow-xl lg:sticky lg:z-auto lg:h-[calc(100vh-3.5rem)] lg:w-[26rem] lg:max-w-none lg:shrink-0 lg:shadow-none"
         >
-          <Copilot chart={state.data} onClose={() => setCopilot(false)} />
+          <Copilot chart={chartState.data} onClose={() => setCopilot(false)} />
         </aside>
       )}
     </div>
@@ -57,48 +106,103 @@ function useStoredFlag(key: string): [boolean, (value: boolean) => void] {
   return [value, update]
 }
 
-function PatientHeader({ chart }: { chart: Chart }) {
+function PatientHeader({ chart, surgery }: { chart: Chart; surgery: AsyncState<SurgicalHistory> }) {
   const { patient } = chart
   const today = todayIso()
   const next = nextAppointment(chart.appointments, today)
   const when = next?.start ? relativeDay(isoDay(next.start), today) : ''
+  const allergies = chart.allergies.map((allergy) => text(allergy.code)).filter(Boolean)
+  const known = allergies.filter((name) => !/no known/i.test(name))
+  const operations = operationsFact(chart, surgery)
   return (
-    <header className="mt-3 flex flex-wrap items-start justify-between gap-4 rounded-xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
-      <div className="min-w-0">
-        <div className="flex flex-wrap items-center gap-2">
-          <h1 className="text-2xl font-semibold tracking-tight text-slate-900">{patientName(patient)}</h1>
-          <SourceButton resource={patient} />
-          {isSynthetic(patient) && (
-            <Badge tone="violet" title="Labelled HTEST (test health data)">
-              Synthetic record
-            </Badge>
-          )}
-        </div>
-        <p className="mt-1 text-sm text-slate-700">
-          {ageOn(patient.birthDate, today)} y · {sexLabel(patient.gender)} · MRN{' '}
-          <span className="font-medium">{medicalRecordNumber(patient)}</span> · Born {formatDate(patient.birthDate)}
-        </p>
-        <p className="mt-0.5 text-sm text-slate-500">
-          {patient.address?.[0]?.city} · GP {patient.generalPractitioner?.[0]?.display}
-        </p>
-      </div>
-      {next?.start && (
-        <div className="flex max-w-md items-start gap-2 rounded-lg bg-teal-50 px-4 py-3 ring-1 ring-teal-100">
-          <div className="min-w-0">
-            <p className="text-[11px] font-semibold uppercase tracking-wider text-teal-800">Next appointment · {when}</p>
-            <p className="mt-0.5 text-sm font-medium text-slate-900">
-              {formatDate(next.start)}, {formatTime(next.start)} · {participant(next, 'Practitioner')?.display}
-            </p>
-            <p className="mt-0.5 text-sm text-slate-600">{next.description}</p>
+    <header className="mt-3 overflow-hidden rounded-lg bg-slate-900 text-white">
+      <div className="flex flex-wrap items-start justify-between gap-x-8 gap-y-3 px-5 py-4">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <h1 className="text-[26px] font-extrabold leading-tight tracking-[-0.02em]">{patientName(patient)}</h1>
+            <span className="[&_button]:text-slate-300 [&_button:hover]:bg-white/10 [&_button:hover]:text-white">
+              <SourceButton resource={patient} />
+            </span>
+            {isSynthetic(patient) && (
+              <span className="rounded-sm border border-violet-300/60 px-1.5 text-[11.5px] font-semibold text-violet-200" title="Labelled HTEST (test health data)">
+                Synthetic record
+              </span>
+            )}
           </div>
-          <SourceButton resource={next} />
+          <dl className="mt-1.5 flex flex-wrap gap-x-5 gap-y-1 text-[14px]">
+            <Fact label="Age">
+              {ageOn(patient.birthDate, today)}, {sexLabel(patient.gender).toLowerCase()}
+            </Fact>
+            <Fact label="MRN">
+              <span className="font-mono">{medicalRecordNumber(patient)}</span>
+            </Fact>
+            <Fact label="Born">{formatDate(patient.birthDate)}</Fact>
+            {patient.address?.[0]?.city && <Fact label="Lives in">{patient.address[0].city}</Fact>}
+            {patient.generalPractitioner?.[0]?.display && <Fact label="GP">{patient.generalPractitioner[0].display}</Fact>}
+            {operations && <Fact label="Previous operations">{operations}</Fact>}
+          </dl>
         </div>
-      )}
+        {next?.start && (
+          <div className="flex max-w-md items-start gap-2 border-l-2 border-mark pl-4">
+            <div className="min-w-0">
+              <p className="text-[12.5px] font-semibold text-mark">Next appointment, {when}</p>
+              <p className="mt-0.5 text-[14px] font-semibold">
+                {formatDate(next.start)} at {formatTime(next.start)} with {participant(next, 'Practitioner')?.display}
+              </p>
+              <p className="mt-0.5 text-[13.5px] text-slate-300">{next.description}</p>
+            </div>
+            <span className="[&_button]:text-slate-300 [&_button:hover]:bg-white/10 [&_button:hover]:text-white">
+              <SourceButton resource={next} />
+            </span>
+          </div>
+        )}
+      </div>
+      <div
+        className={`flex flex-wrap items-center gap-x-2 px-5 py-1.5 text-[13.5px] font-semibold ${
+          known.length ? 'bg-rose-600 text-white' : 'bg-slate-800 text-slate-300'
+        }`}
+      >
+        <span>Allergies:</span>
+        <span className={known.length ? '' : 'font-normal'}>
+          {known.length ? known.join(', ') : allergies.length ? allergies.join(', ') : 'Not recorded'}
+        </span>
+        {chart.allergies.map((allergy) => (
+          <span key={allergy.id} className="[&_button]:text-current [&_button:hover]:bg-white/10">
+            <SourceButton resource={allergy} />
+          </span>
+        ))}
+      </div>
     </header>
   )
 }
 
-function TabBar({ chart, tab, copilot, onCopilot }: { chart: Chart; tab: Tab; copilot: boolean; onCopilot: () => void }) {
+function Fact({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="flex items-baseline gap-1.5">
+      <dt className="text-[12.5px] text-slate-400">{label}</dt>
+      <dd className="font-semibold text-white">{children}</dd>
+    </div>
+  )
+}
+
+function TabBar({
+  chart,
+  tab,
+  copilot,
+  onCopilot,
+  visit,
+  onStartVisit,
+  starting,
+}: {
+  chart: Chart
+  tab: Tab
+  copilot: boolean
+  onCopilot: () => void
+  visit: Visit | null
+  onStartVisit?: () => void
+  starting: boolean
+}) {
+  const open = visit?.status === 'open'
   const id = chart.patient.id ?? ''
   const awaiting = openOrders(chart).length
   const tabs: [Tab, string, number | undefined][] = [
@@ -106,39 +210,54 @@ function TabBar({ chart, tab, copilot, onCopilot }: { chart: Chart; tab: Tab; co
     ['labs', 'Labs & vitals', chart.labs.length],
     ['visits', 'Visits & notes', timeline(chart).length],
     ['reports', 'Reports', chart.reports.length],
+    ['medications', 'Medications', chart.medications.filter((medication) => medication.status === 'active').length],
+    ...(open ? ([['visit', 'Visit in progress', visit.jottings.length]] as [Tab, string, number][]) : []),
   ]
   return (
-    <nav className="mt-4 flex items-end gap-1 border-b border-slate-200" aria-label="Chart sections">
+    <nav className="mt-4 flex flex-wrap items-end gap-x-5 gap-y-1 border-b border-slate-300" aria-label="Chart sections">
       {tabs.map(([key, label, count]) => (
         <a
           key={key}
           href={patientHref(id, key)}
           aria-current={key === tab ? 'page' : undefined}
-          className={`-mb-px flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm font-medium ${
-            key === tab ? 'border-teal-700 text-teal-800' : 'border-transparent text-slate-500 hover:text-slate-800'
+          className={`relative flex items-center gap-1.5 py-2.5 text-[14.5px] font-semibold ${
+            key === tab
+              ? 'text-slate-900 after:absolute after:inset-x-0 after:-bottom-px after:h-[3px] after:bg-slate-900'
+              : 'text-slate-500 hover:text-slate-900'
           }`}
         >
           {label}
           {count !== undefined && (
             <span
               title={key === 'overview' ? 'Open orders' : undefined}
-              className={`rounded-full px-1.5 text-[11px] ${key === 'overview' ? 'bg-amber-100 text-amber-800' : 'bg-slate-200/70 text-slate-600'}`}
+              className={`font-mono text-[12px] ${key === 'overview' ? 'mark-soft text-amber-800' : 'text-slate-400'}`}
             >
               {count}
             </span>
           )}
         </a>
       ))}
+      {!open && (
+        <button
+          type="button"
+          onClick={onStartVisit}
+          disabled={!onStartVisit || starting}
+          title={onStartVisit ? 'Start a visit: an agenda from the record, and jottings for the note' : 'Choose who is viewing (top right) first'}
+          className="mb-2 ml-auto inline-flex items-center gap-1.5 rounded-md border border-slate-900 bg-sheet px-3 py-1.5 text-[14px] font-bold text-slate-900 hover:bg-mark-soft disabled:cursor-not-allowed disabled:border-slate-300 disabled:text-slate-400"
+        >
+          {starting ? 'Starting…' : 'Start visit'}
+        </button>
+      )}
       <button
         type="button"
         onClick={onCopilot}
         aria-pressed={copilot}
-        className={`mb-1.5 ml-auto inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium shadow-sm ${
-          copilot ? 'bg-teal-50 text-teal-800 ring-1 ring-teal-200' : 'bg-teal-700 text-white hover:bg-teal-800'
+        className={`mb-2 ${open ? 'ml-auto' : ''} inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[14px] font-bold ${
+          copilot ? 'bg-mark text-slate-900' : 'bg-slate-900 text-white hover:bg-slate-800'
         }`}
       >
-        <SparkIcon />
-        ASKlepios
+        <SparkIcon className={`h-4 w-4 ${copilot ? 'text-slate-900' : 'text-mark'}`} />
+        {copilot ? 'ASKlepios open' : 'Ask ASKlepios'}
       </button>
     </nav>
   )

@@ -1,0 +1,116 @@
+# Expected surgical history per patient. Check with: python -m evals --surgery
+#
+# Uses the anchor and seed in gold.toml. For each patient:
+#   operations   each operation that must be listed. "match" is a phrase from its name, matched like gold.toml
+#                mentions. Optional checks: year, region (abdomen, chest, head_neck, spine_limbs, other), approach,
+#                implant (a phrase), only_in_notes (true when no Procedure record exists), years_differ (the years the
+#                sources give when they disagree), sources (source kinds that must all be among its sources:
+#                "procedure", "note", "report").
+#   none_stated  true when a note says the patient has had no operations.
+# Every listed operation that no expectation matches counts as a false alarm, so a patient with no operations
+# expected must have none listed. Planned operations ("laparoscopic cholecystectomy", "possible conversion to
+# surgery", "port-a-cath insertion" in a plan) and family history must not be listed.
+# Every cohort patient is listed.
+
+[[patient]]
+id = "p-2041"
+operations = [
+  # In the oncology consultation only.
+  { match = "cholecystectomy", year = 2012, region = "abdomen", approach = "laparoscopic", only_in_notes = true },
+  # "Port-a-cath inserted on ..." in a later note; the earlier plan line is not an operation.
+  { match = "port", region = "chest", only_in_notes = true },
+]
+
+[[patient]]
+id = "p-1001"
+operations = []
+
+[[patient]]
+id = "p-1002"
+operations = []
+
+[[patient]]
+id = "p-1003"
+operations = []
+
+[[patient]]
+id = "p-1004"
+operations = []
+
+[[patient]]
+id = "p-1005"
+operations = []
+
+[[patient]]
+id = "p-1006"
+operations = []
+
+[[patient]]
+id = "p-1007"
+operations = []
+
+[[patient]]
+id = "p-1008"
+operations = []
+
+[[patient]]
+id = "p-1009"
+# Not abdominal.
+operations = [
+  { match = "knee replacement", year = 2019, region = "spine_limbs", implant = "prosthesis", sources = ["procedure", "note"] },
+]
+
+[[patient]]
+id = "p-1010"
+operations = []
+
+[[patient]]
+id = "p-1011"
+# The note says 2011, the Procedure record 2012: one entry that shows both.
+operations = [
+  { match = "hysterectomy", region = "abdomen", approach = "open", years_differ = [2011, 2012], sources = ["procedure", "note"] },
+]
+
+[[patient]]
+id = "p-1012"
+operations = []
+
+[[patient]]
+id = "p-1013"
+operations = []
+
+[[patient]]
+id = "p-1014"
+# "No previous operations"; the mother's thyroidectomy is family history.
+operations = []
+none_stated = true
+
+[[patient]]
+id = "p-1015"
+operations = []
+
+[[patient]]
+id = "p-1016"
+operations = []
+
+[[patient]]
+id = "p-1017"
+operations = []
+
+[[patient]]
+id = "p-1018"
+operations = []
+
+[[patient]]
+id = "p-1019"
+operations = []
+
+[[patient]]
+id = "p-2042"
+# The planned laparoscopic cholecystectomy must not be listed.
+operations = [
+  { match = "appendicectomy", year = 1996, region = "abdomen", approach = "open", sources = ["procedure", "note"] },
+  { match = "caesarean", year = 2008, region = "abdomen", only_in_notes = true },
+  { match = "hernia", year = 2015, region = "abdomen", approach = "open", implant = "mesh", sources = ["procedure", "note"] },
+  { match = "ercp", region = "abdomen", approach = "endoscopic", sources = ["procedure", "report"] },
+]

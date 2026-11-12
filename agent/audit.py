@@ -14,10 +14,11 @@ class AuditLog:
         self._path = path
         self._lock = threading.Lock()
 
-    def write(self, *, session: str, patient: str, event: str, **fields: object) -> None:
+    def write(self, *, session: str, patient: str, event: str, user: str | None = None, **fields: object) -> None:
+        """`user` is the acting practitioner the panel names (not an authenticated identity; see app.py)."""
         entry = {
             "time": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
-            "user": "demo-clinician",
+            "user": user or "demo-clinician",
             "session": session,
             "patient": patient,
             "event": event,

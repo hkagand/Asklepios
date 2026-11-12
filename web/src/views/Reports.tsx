@@ -23,7 +23,7 @@ export function Reports({ chart, selected }: { chart: Chart; selected?: string }
   const awaiting = openOrders(chart).filter((order) => !isLabOrder(order))
   const current = chart.reports.find((report) => report.id === selected) ?? chart.reports[0]
   return (
-    <div className="grid items-start gap-4 lg:grid-cols-[22rem_minmax(0,1fr)]">
+    <div className="grid items-start gap-4 @3xl:grid-cols-[22rem_minmax(0,1fr)]">
       <div className="space-y-4">
         {awaiting.length > 0 && (
           <Card title="Awaiting" subtitle="Requested, with no report on file" flush>
@@ -104,7 +104,7 @@ function ReportDetail({ report }: { report: fhir4.DiagnosticReport }) {
     >
       {report.conclusion && (
         <div className="mb-4 rounded-lg bg-amber-50 px-3 py-2 ring-1 ring-amber-100">
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-amber-800">Conclusion</p>
+          <p className="text-[11px] font-semibold text-amber-800">Conclusion</p>
           <p className="mt-0.5 text-sm text-slate-900">{report.conclusion}</p>
         </div>
       )}

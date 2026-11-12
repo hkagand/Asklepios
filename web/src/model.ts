@@ -1,5 +1,5 @@
-import { code, read, refId, search, text } from './fhir.ts'
-import { isoDay, todayIso, toTime } from './format.ts'
+import { code, read, refId, search, text, type Resource } from './fhir.ts'
+import { isoDay, now as clockNow, todayIso, toTime } from './format.ts'
 
 export type Flag = 'H' | 'L'
 
@@ -27,6 +27,8 @@ export interface Chart {
   patient: fhir4.Patient
   conditions: fhir4.Condition[]
   medications: fhir4.MedicationRequest[]
+  /** What the patient says they take, recorded at onboarding: not orders. */
+  statements: fhir4.MedicationStatement[]
   allergies: fhir4.AllergyIntolerance[]
   encounters: fhir4.Encounter[]
   notes: fhir4.DocumentReference[]
@@ -34,6 +36,7 @@ export interface Chart {
   reports: fhir4.DiagnosticReport[]
   orders: fhir4.ServiceRequest[]
   appointments: fhir4.Appointment[]
+  procedures: fhir4.Procedure[]
   observations: Map<string, fhir4.Observation>
   labs: Series[]
   vitals: Series[]
@@ -58,12 +61,35 @@ const newestFirst =
   (a: T, b: T) =>
     time(b) - time(a)
 
-export const encounterStart = (encounter: fhir4.Encounter): number => toTime(encounter.period?.start)
+/** Every resource of the chart by "Type/id", the form citations and open loops use. */
+export function resourceIndex(chart: Chart): Map<string, Resource> {
+  const all: Resource[] = [
+    chart.patient,
+    ...chart.conditions,
+    ...chart.medications,
+    ...chart.statements,
+    ...chart.allergies,
+    ...chart.encounters,
+    ...chart.notes,
+    ...chart.labReports,
+    ...chart.reports,
+    ...chart.orders,
+    ...chart.appointments,
+    ...chart.procedures,
+    ...chart.observations.values(),
+  ]
+  return new Map(all.map((resource) => [`${resource.resourceType}/${resource.id}`, resource]))
+}
+
+export const encounterStart =(encounter: fhir4.Encounter): number => toTime(encounter.period?.start)
+/** When a procedure was done; a reported year such as "1996" counts as its first day. */
+export const procedureTime = (procedure: fhir4.Procedure): number =>
+  toTime(procedure.performedDateTime ?? procedure.performedPeriod?.start ?? procedure.performedString?.slice(0, 4))
 export const reportTime = (report: fhir4.DiagnosticReport): number => toTime(report.effectiveDateTime ?? report.issued)
 
 export async function loadChart(id: string, signal: AbortSignal): Promise<Chart> {
   const byPatient = { patient: id }
-  const [patient, conditions, medications, allergies, observations, diagnosticReports, notes, encounters, orders, appointments] =
+  const [patient, conditions, medications, allergies, observations, diagnosticReports, notes, encounters, orders, appointments, procedures, statements] =
     await Promise.all([
       read<fhir4.Patient>('Patient', id, signal),
       search<fhir4.Condition>('Condition', byPatient, signal),
@@ -75,6 +101,8 @@ export async function loadChart(id: string, signal: AbortSignal): Promise<Chart>
       search<fhir4.Encounter>('Encounter', byPatient, signal),
       search<fhir4.ServiceRequest>('ServiceRequest', byPatient, signal),
       search<fhir4.Appointment>('Appointment', byPatient, signal),
+      search<fhir4.Procedure>('Procedure', byPatient, signal),
+      search<fhir4.MedicationStatement>('MedicationStatement', byPatient, signal),
     ])
   const isLab = (report: fhir4.DiagnosticReport) => report.category?.some((category) => code(category) === 'LAB') ?? false
   const labs = new Map<string, Series>()
@@ -96,6 +124,7 @@ export async function loadChart(id: string, signal: AbortSignal): Promise<Chart>
     patient,
     conditions: sortConditions(conditions),
     medications: medications.sort(newestFirst((medication) => toTime(medication.authoredOn))),
+    statements: statements.sort(newestFirst((statement) => toTime(statement.dateAsserted))),
     allergies,
     encounters: encounters.sort(newestFirst(encounterStart)),
     notes: notes.sort(newestFirst((note) => toTime(note.date))),
@@ -103,6 +132,7 @@ export async function loadChart(id: string, signal: AbortSignal): Promise<Chart>
     reports: diagnosticReports.filter((report) => !isLab(report)).sort(newestFirst(reportTime)),
     orders,
     appointments: appointments.sort((a, b) => toTime(a.start) - toTime(b.start)),
+    procedures: procedures.sort(newestFirst(procedureTime)),
     observations: new Map(observations.map((observation) => [observation.id ?? '', observation])),
     labs: finish(labs),
     vitals: finish(vitals),
@@ -172,6 +202,10 @@ function sortConditions(conditions: fhir4.Condition[]): fhir4.Condition[] {
   )
 }
 
+/** Imported from the national record (simulated) at onboarding. */
+export const isImported = (resource: { meta?: fhir4.Meta }): boolean =>
+  resource.meta?.tag?.some((tag) => tag.code === 'national-import') ?? false
+
 export const isActive = (condition: fhir4.Condition): boolean => code(condition.clinicalStatus) === 'active'
 
 // ------------------------------------------------------------ derived views
@@ -182,7 +216,7 @@ export interface Change {
   baseline?: Point
 }
 
-export function lastVisit(chart: Chart, now = Date.now()): fhir4.Encounter | undefined {
+export function lastVisit(chart: Chart, now = clockNow()): fhir4.Encounter | undefined {
   return chart.encounters.find((encounter) => encounterStart(encounter) < now)
 }
 
@@ -223,7 +257,7 @@ export interface VisitItem {
   notes: fhir4.DocumentReference[]
 }
 
-export function timeline(chart: Chart, now = Date.now()): VisitItem[] {
+export function timeline(chart: Chart, now = clockNow()): VisitItem[] {
   const items: VisitItem[] = chart.encounters
     .filter((encounter) => encounterStart(encounter) < now)
     .map((encounter) => ({ key: encounter.id ?? '', time: encounterStart(encounter), encounter, notes: [] }))

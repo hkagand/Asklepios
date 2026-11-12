@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { agentHealth, ask, type AgentEvent, type Answer, type Block, type Step } from '../agent.ts'
+import { agentHealth, ask, patientBrief, type AgentEvent, type Answer, type Block, type PreparedBrief, type Step } from '../agent.ts'
+import { formatDate, formatTime } from '../format.ts'
 import { read, type Resource } from '../fhir.ts'
-import type { Chart } from '../model.ts'
+import { resourceIndex, type Chart } from '../model.ts'
 import { useAsync } from '../useAsync.ts'
 import { useSource } from './source.tsx'
 
@@ -29,6 +30,7 @@ export function Copilot({ chart, onClose }: { chart: Chart; onClose: () => void 
   const controller = useRef<AbortController | null>(null)
   const scroller = useRef<HTMLDivElement>(null)
   const health = useAsync(agentHealth, [])
+  const prepared = useAsync((signal) => patientBrief(chart.patient.id ?? '', signal), [chart.patient.id])
   const resources = useMemo(() => resourceIndex(chart), [chart])
   const running = turns.at(-1)?.running ?? false
   const firstName = chart.patient.name?.[0]?.given?.[0] ?? 'this patient'
@@ -65,14 +67,14 @@ export function Copilot({ chart, onClose }: { chart: Chart; onClose: () => void 
   }
 
   return (
-    <div className="flex h-full flex-col bg-white">
+    <div className="flex h-full flex-col bg-sheet">
       <header className="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-3">
         <div className="flex min-w-0 items-center gap-2.5">
-          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-teal-700 text-white">
+          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-md bg-slate-900 text-mark">
             <SparkIcon />
           </span>
           <div className="min-w-0">
-            <p className="text-sm font-semibold text-slate-900">ASKlepios</p>
+            <p className="text-[15px] font-extrabold tracking-[-0.01em] text-slate-900">ASKlepios</p>
             <p className="truncate text-xs text-slate-500">
               Reads only {firstName}’s record{health.status === 'ready' && ` · ${health.data.model}`}
             </p>
@@ -98,6 +100,9 @@ export function Copilot({ chart, onClose }: { chart: Chart; onClose: () => void 
       </header>
 
       <div ref={scroller} className="flex-1 space-y-6 overflow-y-auto px-4 py-4">
+        {prepared.status === 'ready' && prepared.data.brief && (
+          <PreparedBriefView brief={prepared.data.brief} resources={resources} />
+        )}
         {health.status === 'error' && (
           <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-800 ring-1 ring-rose-200">{health.error.message}</p>
         )}
@@ -115,7 +120,7 @@ export function Copilot({ chart, onClose }: { chart: Chart; onClose: () => void 
           void send(draft)
         }}
       >
-        <div className="flex items-end gap-2 rounded-xl border border-slate-300 bg-white py-1.5 pl-3 pr-1.5 focus-within:border-teal-600 focus-within:ring-1 focus-within:ring-teal-600">
+        <div className="flex items-end gap-2 rounded-md border border-slate-300 bg-sheet py-1.5 pl-3 pr-1.5 focus-within:border-slate-900 focus-within:ring-1 focus-within:ring-slate-900">
           <textarea
             value={draft}
             rows={1}
@@ -133,7 +138,7 @@ export function Copilot({ chart, onClose }: { chart: Chart; onClose: () => void 
             <button
               type="button"
               onClick={() => controller.current?.abort()}
-              className="rounded-lg bg-slate-100 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-200"
+              className="rounded-md bg-slate-100 px-3 py-1.5 text-[14px] font-semibold text-slate-700 hover:bg-slate-200"
             >
               Stop
             </button>
@@ -141,7 +146,7 @@ export function Copilot({ chart, onClose }: { chart: Chart; onClose: () => void 
             <button
               type="submit"
               disabled={!draft.trim()}
-              className="rounded-lg bg-teal-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-teal-800 disabled:bg-slate-200 disabled:text-slate-400"
+              className="rounded-md bg-slate-900 px-3 py-1.5 text-[14px] font-bold text-white hover:bg-slate-800 disabled:bg-slate-200 disabled:text-slate-400"
             >
               Ask
             </button>
@@ -155,27 +160,35 @@ export function Copilot({ chart, onClose }: { chart: Chart; onClose: () => void 
   )
 }
 
+/** The brief prepared before the clinic (agent/briefs.py), shown above the conversation. */
+function PreparedBriefView({ brief, resources }: { brief: NonNullable<PreparedBrief['brief']>; resources: Map<string, Resource> }) {
+  const [open, setOpen] = useState(true)
+  return (
+    <section className="rounded-md border-l-[3px] border-mark bg-paper p-3">
+      <button type="button" onClick={() => setOpen(!open)} className="flex w-full items-baseline justify-between gap-2 text-left">
+        <span className="text-[13px] font-bold text-slate-900">Prepared brief</span>
+        <span className="text-[11px] text-slate-500">
+          {formatDate(brief.preparedAt)} {formatTime(brief.preparedAt)} {open ? '▴' : '▾'}
+        </span>
+      </button>
+      {!brief.current && (
+        <p className="mt-1.5 rounded bg-amber-50 px-2 py-1 text-xs text-amber-800 ring-1 ring-amber-200">
+          The chart has changed since this brief was prepared. Prepare it again from My day, or ask below.
+        </p>
+      )}
+      {open && (
+        <div className="mt-2">
+          <AnswerView answer={brief.answer} resources={resources} />
+        </div>
+      )}
+    </section>
+  )
+}
+
 function apply(turn: Turn, event: AgentEvent): Turn {
   if (event.type === 'step') return { ...turn, steps: [...turn.steps, event.step] }
   if (event.type === 'answer') return { ...turn, answer: event.answer, running: false }
   return { ...turn, error: event.message, running: false }
-}
-
-function resourceIndex(chart: Chart): Map<string, Resource> {
-  const all: Resource[] = [
-    chart.patient,
-    ...chart.conditions,
-    ...chart.medications,
-    ...chart.allergies,
-    ...chart.encounters,
-    ...chart.notes,
-    ...chart.labReports,
-    ...chart.reports,
-    ...chart.orders,
-    ...chart.appointments,
-    ...chart.observations.values(),
-  ]
-  return new Map(all.map((resource) => [`${resource.resourceType}/${resource.id}`, resource]))
 }
 
 function Intro({ firstName, onPick }: { firstName: string; onPick: (question: string) => void }) {
@@ -185,14 +198,14 @@ function Intro({ firstName, onPick }: { firstName: string; onPick: (question: st
         Ask about {firstName}’s history, results, treatments and anything still pending. Every statement links to the
         part of the record it came from.
       </p>
-      <p className="mt-5 text-[11px] font-semibold uppercase tracking-wider text-slate-400">Try</p>
+      <p className="mt-5 text-[12.5px] font-semibold text-slate-500">Try asking</p>
       <div className="mt-2 flex flex-col items-start gap-2">
         {STARTERS.map((question) => (
           <button
             key={question}
             type="button"
             onClick={() => onPick(question)}
-            className="rounded-full border border-teal-200 bg-teal-50 px-3 py-1.5 text-left text-[13px] text-teal-900 hover:border-teal-300 hover:bg-teal-100"
+            className="rounded-md border border-slate-300 bg-sheet px-3 py-1.5 text-left text-[13.5px] font-semibold text-slate-800 hover:border-slate-900 hover:bg-mark-soft"
           >
             {question}
           </button>
@@ -206,7 +219,7 @@ function TurnView({ turn, resources }: { turn: Turn; resources: Map<string, Reso
   return (
     <section>
       <div className="flex justify-end">
-        <p className="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-teal-700 px-3.5 py-2 text-sm text-white">
+        <p className="max-w-[85%] whitespace-pre-wrap rounded-lg rounded-br-sm bg-slate-900 px-3.5 py-2 text-[14px] text-white">
           {turn.question}
         </p>
       </div>
@@ -231,7 +244,7 @@ function Progress({ steps }: { steps: Step[] }) {
         </li>
       ))}
       <li className="flex items-center gap-2">
-        <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-slate-300 border-t-teal-700" />
+        <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-slate-300 border-t-slate-900" />
         {steps.length === 0 ? 'Reading the chart…' : 'Working…'}
       </li>
     </ul>
@@ -245,7 +258,7 @@ function AnswerView({ answer, resources }: { answer: Answer; resources: Map<stri
   const blocks = answer.blocks.filter((block) => showHidden || block.status !== 'unsupported')
   return (
     <div>
-      <div className="space-y-2 text-[13.5px] leading-relaxed text-slate-800">
+      <div className="space-y-2 text-[14px] leading-relaxed text-slate-800">
         {group(blocks).map((item, index) =>
           Array.isArray(item) ? (
             <ul key={index} className="space-y-1.5">
@@ -261,7 +274,7 @@ function AnswerView({ answer, resources }: { answer: Answer; resources: Map<stri
               ))}
             </ul>
           ) : item.kind === 'heading' ? (
-            <p key={index} className="pt-1 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+            <p key={index} className="pt-1.5 text-[13px] font-bold text-slate-900">
               <BlockContent block={item} answer={answer} resources={resources} />
             </p>
           ) : (
@@ -349,6 +362,7 @@ const TYPE_DOTS: Record<string, string> = {
   MedicationRequest: 'bg-amber-500',
   ServiceRequest: 'bg-slate-400',
   Condition: 'bg-rose-400',
+  Procedure: 'bg-slate-700',
 }
 
 function Citation({ reference, label, resource }: { reference: string; label?: string; resource?: Resource }) {
@@ -359,7 +373,7 @@ function Citation({ reference, label, resource }: { reference: string; label?: s
       type="button"
       title={`${label ?? reference}\n${reference}`}
       onClick={async () => open(resource ?? (await read<Resource>(type as Resource['resourceType'], id)))}
-      className="mx-0.5 inline-flex max-w-[15rem] items-center gap-1 rounded border border-slate-200 bg-slate-50 px-1.5 align-[1px] text-[11px] leading-[18px] text-slate-600 hover:border-teal-300 hover:bg-teal-50 hover:text-teal-800"
+      className="mx-0.5 inline-flex max-w-[15rem] items-center gap-1 rounded-sm bg-mark-soft px-1.5 align-[1px] text-[11.5px] font-semibold leading-[19px] text-slate-800 hover:bg-mark hover:text-slate-900"
     >
       <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${TYPE_DOTS[type] ?? 'bg-slate-400'}`} />
       <span className="truncate">{label ?? reference}</span>

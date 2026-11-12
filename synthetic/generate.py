@@ -18,6 +18,7 @@ from pathlib import Path
 
 from chart import shared_resources, transaction
 from cohort import build_cohort
+from national import national_records
 
 
 def write(path: Path, bundle: dict) -> None:
@@ -50,6 +51,15 @@ def main() -> None:
     for resource_type, count in sorted(totals.items()):
         print(f"  {resource_type:<20} {count:>6}")
     print(f"Bundles written to {args.out}")
+
+    # The simulated national record service reads these; they are not loaded into HAPI.
+    national = args.out / "national"
+    national.mkdir(exist_ok=True)
+    for old in national.glob("*.json"):
+        old.unlink()
+    for record in national_records(args.anchor):
+        write(national / f"{record['identifier']['value']}.json", record)
+    print(f"{len(list(national.glob('*.json')))} national records written to {national}")
 
 
 if __name__ == "__main__":

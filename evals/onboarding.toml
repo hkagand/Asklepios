@@ -1,0 +1,52 @@
+# Expected onboarding review per national record. Check with: python -m evals --onboarding
+#
+# Uses the anchor and seed in gold.toml: the cohort and the national records (synthetic/national.py) are rebuilt in
+# memory. For each record:
+#   nationalId  the record in the simulated national record service
+#   chart       our patient id when the patient is already in the chart, "" for a new patient
+#   items       review items that must have this status: "match" is a phrase from the item's name, "section" one of
+#               allergies, medications, problems, procedures, results. "critical" and "stale" are checked when given.
+#               Every item not listed must have status "new".
+#   answers     what the patient says, used to check the import: medicines {match, taking = "yes" | "no" |
+#               "different", dose}, problems {match, current = true | false}. Unlisted medicines are answered "yes".
+# Statuses: new, duplicate, differs, ask (see agent/onboard.py).
+
+[[record]]
+nationalId = "00000003001"
+chart = ""
+# New patient: the allergy she may not mention, a statin not renewed for two years, childhood asthma still active.
+items = [
+  { section = "allergies", match = "penicillin", status = "new", critical = true },
+  { section = "problems", match = "asthma", status = "ask", stale = true },
+  { section = "medications", match = "amlodipine", status = "ask", stale = false },
+  { section = "medications", match = "metformin", status = "ask", stale = false },
+  { section = "medications", match = "atorvastatin", status = "ask", stale = true },
+  { section = "procedures", match = "cholecystectomy", status = "new" },
+]
+answers = [
+  { match = "atorvastatin", taking = "no" },
+  { match = "asthma", current = false },
+]
+
+[[record]]
+nationalId = "00000003002"
+chart = ""
+items = [
+  { section = "medications", match = "ramipril", status = "ask" },
+  { section = "procedures", match = "knee arthroscopy", status = "new" },
+]
+answers = [
+  { match = "ramipril", taking = "different", dose = "10 mg once daily" },
+]
+
+[[record]]
+nationalId = "00000002042"
+chart = "p-2042"
+# Already in the chart: duplicates are recognised; the caesarean section, which the chart has only in notes, is new.
+items = [
+  { section = "allergies", match = "no known allergies", status = "duplicate" },
+  { section = "procedures", match = "appendicectomy", status = "duplicate" },
+  { section = "procedures", match = "hernia", status = "duplicate" },
+  { section = "procedures", match = "caesarean", status = "new" },
+]
+answers = []

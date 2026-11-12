@@ -89,7 +89,7 @@ function SourceDrawer({ resource, onClose }: { resource: Resource; onClose: () =
       <aside className="relative flex h-full w-full max-w-2xl flex-col bg-white shadow-2xl">
         <header className="flex items-center justify-between gap-4 border-b border-slate-200 px-5 py-3">
           <div className="min-w-0">
-            <p className="text-xs font-medium uppercase tracking-wide text-slate-500">FHIR source</p>
+            <p className="text-xs font-medium text-slate-500">FHIR source</p>
             <p className="truncate font-mono text-sm text-slate-900">
               {resource.resourceType}/{resource.id}
             </p>
