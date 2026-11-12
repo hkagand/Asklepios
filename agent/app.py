@@ -23,11 +23,6 @@ GET  /api/visits/{visit_id}/considerations         the clinical model's latest c
                                                    each change to the jottings. POST makes them now and waits.
 POST /api/visits/{visit_id}/considerations/feedback  {"index", "text", "useful"}: the clinician's verdict on one
 
-Onboarding from the national record service (simulated; onboard.py), all for the acting practitioner:
-POST /api/onboarding/consent                       {"nationalId", "name", "birthDate"}: the patient is texted a code
-POST /api/onboarding/consent/{request_id}/confirm  {"code"}: reads the summary; returns the items for review
-GET  /api/onboarding/{onboarding_id}               the review again
-POST /api/onboarding/{onboarding_id}/accept        {"decisions": [{"key", "import", "taking", "dose", "current"}]}
 GET /api/clinicians/{practitioner_id}/day?day=... a clinician's day: appointments, open loops, medications, briefs.
 POST /api/clinicians/{practitioner_id}/briefs?day=... starts preparing that day's briefs (briefs.py).
 GET /api/patients/{patient_id}/brief the patient's prepared brief, and whether the chart has changed since.
@@ -51,13 +46,12 @@ import asyncio
 import json
 import os
 import re
-import secrets
 import time
 from collections import Counter
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import replace
-from datetime import date, datetime, timezone
+from datetime import date
 from typing import Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException
@@ -74,19 +68,6 @@ from .loops import Loop, open_loops
 from .marks import REVIEWABLE, Mark, Practitioner, communication, mark_of, marks_of, now_text, ours, review_task
 from .briefs import Briefs, appointments_on, next_clinic_day, patient_of
 from .meds import DISCREPANCIES, MedicationReader, reconcile
-from .onboard import (
-    NATIONAL_ID,
-    Decision,
-    ImportRefused,
-    NationalClient,
-    NationalError,
-    import_transaction,
-    new_patient_id,
-    review_items,
-)
-from .onboard import SERVICE as ONBOARDING_SOURCE
-# Not briefs.patient_of (an appointment's patient id), which the day and briefs endpoints use.
-from .onboard import patient_of as national_patient_of
 from .plans import PlanExtractor
 from .surgery import SurgeryReader, surgical_history
 from .considerations import consider, signature
@@ -116,8 +97,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.plans = plans
     app.state.medicines = medicines
     app.state.surgery = surgery
-    app.state.national = NationalClient(settings.national_base_url)
-    app.state.onboardings = {}
     app.state.visits = VisitStore(settings.plan_cache.parent / "visits")
     app.state.extraction = extraction
     # The second, clinical model (considerations.py), when one is configured.
@@ -134,7 +113,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.brief_gate = asyncio.Semaphore(3)
     app.state.resetting = asyncio.Lock()
     yield
-    await app.state.national.close()
     await fhir.close()
     await llm.close()
     await extraction.close()
@@ -344,155 +322,6 @@ async def surgery(patient_id: str, practitioner: Practitioner | None = Depends(a
         operations=len(history["operations"]), unread=history["unread"],
     )
     return history
-
-# ------------------------------------------------------------------- onboarding
-
-class ConsentBody(BaseModel):
-    national_id: str = Field(alias="nationalId", pattern=r"^\d{11}$")
-    name: str = Field(min_length=1, max_length=200)
-    birth_date: date = Field(alias="birthDate")
-
-
-class CodeBody(BaseModel):
-    code: str = Field(pattern=r"^\d{6}$")
-
-
-class DecisionBody(BaseModel):
-    key: str = Field(max_length=200)
-    import_it: bool = Field(alias="import")
-    taking: Literal["yes", "no", "different"] | None = None
-    dose: str | None = Field(default=None, max_length=200)
-    current: bool | None = None
-
-
-class AcceptBody(BaseModel):
-    decisions: list[DecisionBody] = Field(min_length=1, max_length=300)
-
-
-def _onboarding_view(session: dict) -> dict:
-    national = national_patient_of(session["bundle"])
-    return {
-        "onboarding": session["id"],
-        "patient": {
-            "name": (national.get("name") or [{}])[0].get("text"),
-            "birthDate": national.get("birthDate"),
-            "gender": national.get("gender"),
-            "nationalId": session["nationalId"],
-            "existing": session["existing"],
-            "id": session["patientId"],
-        },
-        "source": {"service": ONBOARDING_SOURCE, "summaryDate": session["bundle"].get("timestamp")},
-        "expiresAt": session["expiresAt"],
-        "items": [item.as_json() for item in session["items"]],
-        "imported": session.get("imported"),
-    }
-
-
-def _national_error(error: NationalError) -> HTTPException:
-    return HTTPException(status_code=error.status if error.status < 500 else 502, detail=error.detail)
-
-
-@app.post("/api/onboarding/consent")
-async def onboarding_consent(body: ConsentBody, practitioner: Practitioner | None = Depends(acting)) -> dict:
-    """Asks the national record service to text the patient a code; nothing is read before the patient gives it."""
-    clinician = required(practitioner)
-    try:
-        sent = await app.state.national.request_consent(
-            body.national_id, body.name, body.birth_date.isoformat(), f"{clinician.name}, Demo General Hospital"
-        )
-    except NationalError as error:
-        app.state.audit.write(session="-", patient="-", event="onboarding-consent-refused", user=clinician.id, status=error.status)
-        raise _national_error(error) from error
-    app.state.audit.write(session="-", patient="-", event="onboarding-consent-requested", user=clinician.id, request=sent["requestId"])
-    return sent
-
-
-@app.post("/api/onboarding/consent/{request_id}/confirm")
-async def onboarding_confirm(request_id: str, body: CodeBody, practitioner: Practitioner | None = Depends(acting)) -> dict:
-    """With the patient's code: reads their national summary and lists every item for review against our chart."""
-    clinician = required(practitioner)
-    state = app.state
-    if not FHIR_ID.fullmatch(request_id):
-        raise HTTPException(status_code=400, detail="Invalid request id.")
-    try:
-        grant = await state.national.confirm(request_id, body.code)
-        bundle = await state.national.summary(grant["nationalId"], grant["accessToken"])
-    except NationalError as error:
-        state.audit.write(session="-", patient="-", event="onboarding-code-refused", user=clinician.id, status=error.status)
-        raise _national_error(error) from error
-    national_id = grant["nationalId"]
-    try:
-        found = await state.fhir.search("Patient", {"identifier": f"{NATIONAL_ID}|{national_id}"})
-    except FhirError as error:
-        raise HTTPException(status_code=502, detail=str(error)) from error
-    record, history = None, None
-    if found:
-        record = await _record(found[0]["id"])
-        history = await surgical_history(record, state.surgery)
-    items = review_items(bundle, record, history, clinic_today())
-    session = {
-        "id": secrets.token_hex(8),
-        "nationalId": national_id,
-        "consent": request_id,
-        "bundle": bundle,
-        "existing": bool(found),
-        "patientId": found[0]["id"] if found else new_patient_id(national_id),
-        "items": items,
-        "expiresAt": grant["expiresAt"],
-        "by": clinician.id,
-    }
-    state.onboardings[session["id"]] = session
-    state.audit.write(
-        session="-", patient=session["patientId"], event="onboarding-summary-read", user=clinician.id,
-        onboarding=session["id"], existing=session["existing"], statuses=dict(Counter(item.status for item in items)),
-    )
-    return _onboarding_view(session)
-
-
-def _onboarding(onboarding_id: str) -> dict:
-    session = app.state.onboardings.get(onboarding_id)
-    if session is None:
-        raise HTTPException(status_code=404, detail="No such onboarding; request consent again.")
-    if datetime.fromisoformat(session["expiresAt"]) < datetime.now(timezone.utc):
-        del app.state.onboardings[onboarding_id]
-        raise HTTPException(status_code=410, detail="The patient's consent has expired; request it again.")
-    return session
-
-
-@app.get("/api/onboarding/{onboarding_id}")
-async def onboarding_review(onboarding_id: str, practitioner: Practitioner | None = Depends(acting)) -> dict:
-    required(practitioner)
-    return _onboarding_view(_onboarding(onboarding_id))
-
-
-@app.post("/api/onboarding/{onboarding_id}/accept")
-async def onboarding_accept(onboarding_id: str, body: AcceptBody, practitioner: Practitioner | None = Depends(acting)) -> dict:
-    """Writes what the clinician accepted, with a Provenance; nothing already in the chart is changed."""
-    clinician = required(practitioner)
-    session = _onboarding(onboarding_id)
-    decisions = [
-        Decision(item.key, item.import_it, item.taking, item.dose.strip() if item.dose else None, item.current)
-        for item in body.decisions
-    ]
-    try:
-        transaction = import_transaction(
-            session["bundle"], session["items"], decisions, patient_id=session["patientId"], existing=session["existing"],
-            practitioner=clinician, consent=session["consent"], onboarding=session["id"],
-        )
-    except ImportRefused as error:
-        raise HTTPException(status_code=422, detail=str(error)) from error
-    try:
-        await app.state.fhir.transaction(transaction)
-    except FhirError as error:
-        raise HTTPException(status_code=502, detail=str(error)) from error
-    written = [f"{entry['resource']['resourceType']}/{entry['resource']['id']}" for entry in transaction["entry"]]
-    session["existing"] = True
-    session["imported"] = written
-    app.state.audit.write(
-        session="-", patient=session["patientId"], event="onboarding-imported", user=clinician.id, onboarding=session["id"],
-        written=written,
-    )
-    return {"patient": session["patientId"], "written": written[:-1], "provenance": written[-1]}
 
 # ------------------------------------------------------------------- visits
 
@@ -822,8 +651,7 @@ async def cancel_visit(visit_id: str, practitioner: Practitioner | None = Depend
 
 @app.post("/api/demo/reset")
 async def demo_reset(practitioner: Practitioner | None = Depends(acting)) -> dict:
-    """Puts the demo back to the synthetic data as loaded (demo.py): the FHIR server, visits, onboarding and chat
-    sessions, and the national record service's requests and messages."""
+    """Puts the demo back to the synthetic data as loaded (demo.py): the FHIR server, visits and chat sessions."""
     state = app.state
     if not state.settings.demo_reset:
         raise HTTPException(status_code=403, detail="The demo reset is off; set AGENT_DEMO_RESET=1 in agent/.env to turn it on.")
@@ -840,13 +668,7 @@ async def demo_reset(practitioner: Practitioner | None = Depends(acting)) -> dic
         except FhirError as error:
             raise HTTPException(status_code=502, detail=str(error)) from error
         done["visits"] = state.visits.clear()
-        state.onboardings.clear()
         state.sessions = Sessions(state.fhir, state.plans, state.medicines, state.surgery)
-        try:
-            await state.national.reset()
-            done["national"] = "reset"
-        except NationalError as error:
-            done["national"] = f"not reset: {error.detail}"
         done["seconds"] = round(time.perf_counter() - started, 1)
     state.audit.write(session="-", patient="-", event="demo-reset", user=practitioner.id if practitioner else None, **done)
     return done

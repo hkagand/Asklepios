@@ -22,8 +22,6 @@ import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 
-import httpx
-
 from .loops import doses, ordered_doses
 from .marks import Practitioner
 from .meds import drug_words
@@ -50,51 +48,6 @@ STALE_DIAGNOSIS = timedelta(days=10 * 365)
 # A prescription not renewed for this long may no longer be taken.
 STALE_PRESCRIPTION = timedelta(days=365)
 STATUSES = ("new", "duplicate", "differs", "ask")
-
-
-class NationalError(Exception):
-    def __init__(self, status: int, detail: str) -> None:
-        super().__init__(detail)
-        self.status = status
-        self.detail = detail
-
-
-class NationalClient:
-    """The simulated national record service (national/app.py)."""
-
-    def __init__(self, base_url: str) -> None:
-        self.base_url = base_url.rstrip("/")
-        self._client = httpx.AsyncClient(timeout=20)
-
-    async def close(self) -> None:
-        await self._client.aclose()
-
-    async def _send(self, method: str, path: str, **options: object) -> dict:
-        try:
-            response = await self._client.request(method, f"{self.base_url}{path}", **options)
-        except httpx.HTTPError as error:
-            raise NationalError(502, f"The national record service is not reachable at {self.base_url}. Start it with: python -m national") from error
-        if response.is_error:
-            detail = response.json().get("detail") if response.headers.get("content-type", "").startswith("application/json") else response.text
-            raise NationalError(response.status_code, str(detail))
-        return response.json()
-
-    async def request_consent(self, national_id: str, name: str, birth_date: str, requester: str) -> dict:
-        body = {"nationalId": national_id, "name": name, "birthDate": birth_date, "requester": requester}
-        return await self._send("POST", "/consent-requests", json=body)
-
-    async def confirm(self, request_id: str, code: str) -> dict:
-        return await self._send("POST", f"/consent-requests/{request_id}/confirm", json={"code": code})
-
-    async def reset(self) -> dict:
-        """Forgets every consent request, token, message and log entry (the demo reset)."""
-        return await self._send("POST", "/demo/reset")
-
-    async def summary(self, national_id: str, token: str) -> dict:
-        return await self._send(
-            "GET", "/fhir/Patient/$summary", params={"identifier": f"{NATIONAL_ID}|{national_id}"},
-            headers={"Authorization": f"Bearer {token}"},
-        )
 
 
 # ------------------------------------------------------------------- review
