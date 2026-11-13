@@ -229,7 +229,12 @@ PAST_CONTEXT = (
 PAST_EVENTS = tuple(re.compile(pattern) for pattern in (
     # English
     r"\b(admitted|admissions?|hospitali[sz](ed|ations?)|hospital stays?)\b",  # stays in hospital
-    r"\b(been|was|were|stayed) in (the |a )?hospital\b",  # "has she been in hospital before"
+    # "has she been in hospital before", "was she in hospital last year"; not "is she in hospital now?"
+    r"^(?!(is|are)\b)(?!.*\b(now|currently|today)\b).*\bin (the |a )?hospital\b",
+    r"(?<!family )\bhistory of\b",  # "any history of bleeding?"; not the family's
+    r"\btransfus\w*",  # a transfusion
+    # What a diagnostic procedure found: "what did the colonoscopy find?"
+    r"\b(colonoscop|sigmoidoscop|gastroscop|endoscop|bronchoscop|cystoscop|biops|angiogra|aspiration)\w*\b.*\b(find|found|show|showed|shown)\b",
     r"\bafter (an? |the |any |his |her )?(procedure|operation|surgery)",  # events after a procedure or operation
     r"\b(an(a)?esthe\w*|intubat\w*|difficult airway)\b",  # anaesthesia
     r"\b(need|should|must)( i| we)? (to )?know\b",  # "anything I should know about ...", "what should I know"

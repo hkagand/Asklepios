@@ -605,6 +605,7 @@ PRE_READ = (
     "Hiç hastaneye yatırıldı mı?", "Has she been in hospital before?", "Any previous biopsies?",
     # A capital İ lower-cases to "i" and a combining dot: both spellings must fire.
     "İşlemden sonra kanama oldu mu?", "işlemden sonra kanama oldu mu?",
+    "Any history of bleeding?", "Did he have a transfusion?", "What did the colonoscopy find?", "Was she in hospital last year?",
 )
 # Questions about current results, medicines, orders or the visit, and about which operations the patient has had
 # (answered from SURGICAL HISTORY: the gold questions of category surgery among them): left to the model.
@@ -622,6 +623,8 @@ NO_PRE_READ = (
     "Is the procedure ordered yet?", "When is her procedure scheduled?", "Has her potassium ever been high?",
     "Has the eGFR ever been below 30?", "Has she ever taken metformin?", "Daha önce HbA1c kaç idi?",
     "Daha önce hangi ilaçları kullandı?", "Any diabetic complications?", "Any airway disease?",
+    # The present, the family's history, and a current report are not the patient's past admissions.
+    "Is she in hospital now?", "Family history of diabetes?", "What does the echo show?",
 )
 
 
