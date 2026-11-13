@@ -729,7 +729,7 @@ patient = "p-2044"
 category = "epicrisis"
 question = "Anything in his earlier admissions that matters before I prescribe an anti-inflammatory?"
 expected = "Does not say yes or no: the decision is the physician's. In Nov 2019 he was admitted with a bleeding duodenal ulcer (Forrest IIa) while on aspirin and clopidogrel: endoscopic haemostasis, two units of red cells transfused, clopidogrel stopped for good, aspirin continued with long-term pantoprazole, and the discharge advice was no anti-inflammatory painkillers. He also has two coronary stents and stays on aspirin."
-mentions = [["ulcer"], ["bleed*", "haemorrhag*", "hemorrhag*", "melaena", "melena"], ["transfus*", "units of red cells", "red cell*"], ["clopidogrel was stopped", "stopped clopidogrel", "clopidogrel stopped", "cessation of clopidogrel", "clopidogrel discontinued", "discontinued clopidogrel", "clopidogrel was discontinued"]]
+mentions = [["ulcer"], ["bleed*", "haemorrhag*", "hemorrhag*", "melaena", "melena"], ["transfus*", "units of red cells", "red cell*"], ["clopidogrel was stopped", "stopped clopidogrel", "clopidogrel stopped", "cessation of clopidogrel", "clopidogrel discontinued", "discontinued clopidogrel", "clopidogrel was discontinued", "stopping of clopidogrel"]]
 cites = [["DocumentReference/epi-p-2044-004"]]
 avoid = ["should not prescribe", "you can prescribe", "do not prescribe", "should not be prescribed", "safe to prescribe", "avoid prescribing", "can be prescribed"]
 
@@ -739,7 +739,7 @@ patient = "p-2044"
 category = "epicrisis"
 question = "What stents does he have, and when were they placed?"
 expected = "Two drug-eluting coronary stents: one to the right coronary artery on 23 Oct 2018, by primary PCI for an inferior ST-elevation myocardial infarction (complicated by a right femoral puncture-site haematoma), and a planned one to the left anterior descending artery on 11 Feb 2019. Both were patent at angiography on 18 Oct 2024."
-mentions = [["right coronary", "rca"], ["left anterior descending", "lad"], ["23 oct 2018", "23 october 2018"], ["11 feb 2019", "11 february 2019"]]
+mentions = [["right coronary", "right-coronary", "rca"], ["left anterior descending", "left-anterior-descending", "lad"], ["23 oct 2018", "23 october 2018"], ["11 feb 2019", "11 february 2019"]]
 cites = [["DocumentReference/epi-p-2044-001"], ["DocumentReference/epi-p-2044-002"]]
 
 [[case]]
@@ -786,5 +786,5 @@ patient = "p-1014"
 category = "epicrisis"
 question = "Has she had any operations?"
 expected = "No operations are recorded: no procedure records, and none of her notes or her 7 epicrisis reports (2017 to 2024: medical admissions and a spontaneous vaginal delivery) mentions one. Operations done elsewhere may not be in the record."
-mentions = [["no operations", "no operation", "none recorded", "not recorded", "no record", "no recorded", "no surgical", "no surgery", "no surgeries", "no procedure"], ["procedure record*", "epicrisis", "report*", "notes", "note"]]
+mentions = [["no operations", "no operation", "none recorded", "not recorded", "no record", "no recorded", "no surgical", "no surgery", "no surgeries", "no procedure", "no operative procedure*", "not had any surgical operations documented", "not had any surgical operations recorded"], ["procedure record*", "epicrisis", "report*", "notes", "note"]]
 avoid = ["has never had", "never had any", "never had surgery", "never been operated", "caesarean", "cesarean", "yes,", "yes:"]
