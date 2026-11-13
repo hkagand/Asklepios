@@ -60,6 +60,7 @@ PROBLEM_NAMES = {
     "K80.2": "gallstones",
     "C73": "papillary thyroid carcinoma",
     "E89.0": "hypothyroidism after thyroidectomy",
+    "I25.1": "coronary artery disease",
 }
 # Operations a patient had elsewhere, known only from a note, by story: (year, words for a past history).
 OUTSIDE_OPERATIONS = {
@@ -70,7 +71,7 @@ OUTSIDE_OPERATIONS = {
 KIDNEY_SENSITIVE = ("metformin", "ramipril", "losartan", "empagliflozin", "dapagliflozin")
 
 
-def _name_of(order: dict) -> str:
+def name_of(order: dict) -> str:
     """"Sodium bicarbonate 500 mg tablet" -> "Sodium bicarbonate"."""
     text = re.sub(r"\(.*?\)", "", order["medicationCodeableConcept"]["text"])
     return re.split(r"\d", text)[0].strip().removesuffix(" IV").strip()
@@ -100,6 +101,11 @@ class Patient:
     operations: list[tuple[date, str]]  # earlier operations to list in a past history, oldest first
     mention_operations: bool  # p-1011: her hysterectomy's year is disputed, so no report names it
     notes: str  # the text of the chart's notes, to read what they say about the patient
+    # Problems on the list that are treated and over (a showcase patient's cancer, a healed ulcer), by code: (words for
+    # the opening line, the sentence for the past history). A report names them as history, not as a discharge
+    # diagnosis.
+    treated: dict[str, tuple[str, str]] = field(default_factory=dict)
+    habits: str = ""  # a showcase patient's smoking and drinking, for the past history
 
     @classmethod
     def of(cls, chart: PatientChart, story: str, variant: int, closed: bool) -> Patient:
@@ -166,7 +172,7 @@ class Patient:
 
     def medicine_names(self) -> set[str]:
         """Every medicine the chart orders, lower case: no short course may share a name with one of them."""
-        return {_name_of(order).lower() for order in self.orders}
+        return {name_of(order).lower() for order in self.orders}
 
     def no_nsaid(self, day: date) -> bool:
         return self.kidney_disease(day) or self.has("I50", day) or self.age(day) >= 65 or "nsaid" in self.notes.lower()
@@ -187,7 +193,11 @@ class Patient:
 
     def known(self, day: date) -> str:
         """" with hypertension and type 2 diabetes", or "" when no problem is recorded yet."""
-        names = [PROBLEM_NAMES.get(item["code"]["coding"][0]["code"], item["code"]["coding"][0]["display"].lower()) for item in self.problems(day)]
+        names = [
+            self.treated[code][0] if code in self.treated else PROBLEM_NAMES.get(code, item["code"]["coding"][0]["display"].lower())
+            for item in self.problems(day)
+            for code in [item["code"]["coding"][0]["code"]]
+        ]
         names = list(dict.fromkeys(names))
         if not names:
             return ""
@@ -236,11 +246,14 @@ class Ctx:
         problems = []
         for item in p.problems(day):
             code = item["code"]["coding"][0]["code"]
+            if code in p.treated:
+                problems.append(p.treated[code][1])
+                continue
             name = PROBLEM_NAMES.get(code, item["code"].get("text", item["code"]["coding"][0]["display"]))
             onset = date.fromisoformat(item["onsetDateTime"][:10])
             problems.append(f"{name[:1].upper()}{name[1:]} since {onset.year}.")
         lines.append(" ".join(dict.fromkeys(problems)) if problems else "No chronic illnesses.")
-        medicines = [f"{_name_of(order).lower()} {order['dosageInstruction'][0]['text'].replace(' orally', '')}" for order in p.medicines(day)]
+        medicines = [f"{name_of(order).lower()} {order['dosageInstruction'][0]['text'].replace(' orally', '')}" for order in p.medicines(day)]
         lines.append(("Regular medicines: " + "; ".join(medicines) + ".") if medicines else "No regular medicines.")
         lines.append(f"Allergy: {p.allergy[0].lower()} ({p.allergy[1].lower()})." if p.allergy else "No known drug allergies.")
         if p.mention_operations:
@@ -258,6 +271,8 @@ class Ctx:
             lines.append("Ex-smoker (20 pack-years, stopped in 2010).")
         elif p.story == "gallstone_disease":
             lines.append("No alcohol.")
+        elif p.habits:
+            lines.append(p.habits)
         lines += extra or []
         return " ".join(lines)
 
@@ -265,7 +280,7 @@ class Ctx:
         """A line for each regular medicine active on the discharge day."""
         lines = []
         for order in self.p.medicines(discharged):
-            name = _name_of(order)
+            name = name_of(order)
             dose = order["dosageInstruction"][0]["text"]
             if name.lower() in hold and restart:
                 lines.append(f"{name} {dose}: withheld in hospital; restart on {day_text(restart)} if eating and drinking normally")
@@ -304,7 +319,7 @@ class Ctx:
         found = []
         for item in self.p.problems(self.admitted):
             coding = item["code"]["coding"][0]
-            if coding["code"] not in [code for code, _ in found]:
+            if coding["code"] not in [code for code, _ in found] and coding["code"] not in self.p.treated:
                 found.append((coding["code"], coding["display"]))
         return found
 
@@ -322,7 +337,7 @@ class Ctx:
         return f"{team}; {self.pick(*ANAESTHETISTS)} (anaesthetist)" if anaesthetist else team
 
 
-def _join(*parts: str) -> str:
+def join(*parts: str) -> str:
     return " ".join(part.strip() for part in parts if part and part.strip())
 
 
@@ -396,18 +411,18 @@ def pneumonia(c: Ctx) -> Admission:
         admitted=c.admitted,
         discharged=discharged,
         **c.ward("Chest Diseases", "Internal Medicine"),
-        complaint=_join(
+        complaint=join(
             f"{c.opening()}, admitted with {rng.randint(3, 5)} days of fever, cough with {sputum} sputum and",
             f"{side}-sided pleuritic chest pain.",
             c.pick("Breathless on walking across the room.", "Increasingly breathless over the last day.", "Off food and drinking little."),
         ),
         past_history=c.past(),
-        examination=_join(
+        examination=join(
             c.vitals(temp=(38.2, 39.4), pulse=(96, 114), rr=(20, 26), spo2=(90, 93)),
             f"Dull to percussion with bronchial breathing and coarse crackles over the {side} {lobe} zone.",
             "Alert and oriented.",
         ),
-        course=_join(
+        course=join(
             f"Chest X-ray: consolidation of the {side} {lobe} lobe; no effusion.",
             f"WBC {_number(rng.uniform(13.5, 19.5))} ×10³/µL with neutrophilia, CRP {rng.randint(130, 260)} mg/L, creatinine {_number(c.creatinine(), 2)} mg/dL.",
             organism,
@@ -423,7 +438,7 @@ def pneumonia(c: Ctx) -> Admission:
             "Paracetamol 1 g orally up to four times daily as needed",
             *c.continuing(discharged),
         ),
-        recommendations=_join(
+        recommendations=join(
             "Family doctor review in one week. Chest X-ray in six weeks to confirm resolution.",
             "Smoking cessation strongly advised; referred to the stop-smoking clinic." if p.smoker(c.admitted) else "",
             "Return if fever recurs or breathing worsens.",
@@ -463,18 +478,18 @@ def covid(c: Ctx) -> Admission:
         admitted=c.admitted,
         discharged=discharged,
         **c.ward("Infectious Diseases", "Chest Diseases"),
-        complaint=_join(
+        complaint=join(
             f"{c.opening()}. Fever, dry cough, aching muscles and loss of taste and smell since {day_text(onset)};",
             f"breathless for the last {rng.randint(2, 4)} days.",
             f"SARS-CoV-2 PCR on a nasopharyngeal swab positive on {day_text(c.admitted - timedelta(days=rng.randint(1, 3)))}.",
             c.pick("A household contact had tested positive the week before.", "Several colleagues at work had been infected." if c.age < 60 else "", ""),
         ),
         past_history=c.past(),
-        examination=_join(
+        examination=join(
             c.vitals(temp=(37.8, 38.9), pulse=(92, 110), rr=(22, 28), spo2=(88, 93)),
             "Fine crackles at both bases. Speaking in full sentences.",
         ),
-        course=_join(
+        course=join(
             imaging,
             f"Lymphocytes {_number(rng.uniform(0.5, 0.9))} ×10³/µL, CRP {rng.randint(55, 140)} mg/L, D-dimer "
             f"{_number(rng.uniform(0.7, 1.6))} mg/L, ferritin {rng.randint(420, 980)} ng/mL.",
@@ -489,7 +504,7 @@ def covid(c: Ctx) -> Admission:
             "Paracetamol 1 g orally up to three times daily as needed",
             *c.continuing(discharged),
         ),
-        recommendations=_join(
+        recommendations=join(
             "Isolate at home until 10 days from the start of symptoms.",
             "Check oxygen saturation at home twice daily; return if it falls below 93% or breathing worsens.",
             f"Chest {'X-ray' if p.story in NO_ABDOMINAL_IMAGING else 'imaging'} and clinic review in 8 weeks.",
@@ -510,7 +525,7 @@ def gastroenteritis(c: Ctx) -> Admission:
         "after eating chicken at a roadside restaurant",
         "two days after a grandchild with a stomach bug stayed over" if c.age >= 50 else "after a work canteen lunch; colleagues were ill too",
     )
-    held = [order for order in p.medicines(c.admitted) if _name_of(order).lower() in KIDNEY_SENSITIVE]
+    held = [order for order in p.medicines(c.admitted) if name_of(order).lower() in KIDNEY_SENSITIVE]
     restart = discharged + timedelta(days=2)
     if cause == "salmonella":
         organism, code = "Stool culture grew Salmonella enteritidis.", ("A02.0", "Salmonella enteritis")
@@ -528,21 +543,21 @@ def gastroenteritis(c: Ctx) -> Admission:
         admitted=c.admitted,
         discharged=discharged,
         **c.ward("Internal Medicine", "Infectious Diseases"),
-        complaint=_join(
+        complaint=join(
             f"{c.opening()}. {rng.randint(2, 3)} days of profuse watery diarrhoea, {rng.randint(6, 12)} times a day, and vomiting,",
             f"{onset_story}. Unable to keep fluids down; dizzy on standing. Crampy abdominal pain. No blood in the stool.",
         ),
         past_history=c.past(),
-        examination=_join(
+        examination=join(
             c.vitals(temp=(37.3, 38.4), pulse=(102, 118), sbp=(92, 108)),
             "Dry mucous membranes, reduced skin turgor. Abdomen soft, mildly tender throughout, no guarding; active bowel sounds.",
         ),
-        course=_join(
+        course=join(
             f"Creatinine {_number(peak, 2)} mg/dL, sodium {rng.randint(133, 137)} mmol/L, potassium {_number(rng.uniform(3.2, 3.6))} mmol/L, "
             f"CRP {rng.randint(20, 90)} mg/L.",
             organism,
             "Intravenous 0.9% sodium chloride with potassium and antiemetics.",
-            ("Held on admission: " + ", ".join(_name_of(order).lower() for order in held) + ".") if held else "",
+            ("Held on admission: " + ", ".join(name_of(order).lower() for order in held) + ".") if held else "",
             "Treated with ciprofloxacin given age and comorbidity." if treat_salmonella else "No antibiotics were needed.",
             f"Diarrhoea settled by day {rng.randint(2, 3)}; eating and drinking normally before discharge.",
         ),
@@ -553,7 +568,7 @@ def gastroenteritis(c: Ctx) -> Admission:
             *((f"{c.free('Ciprofloxacin')} 500 mg orally twice daily for {rng.randint(3, 4)} more days",) if treat_salmonella else ()),
             *c.continuing(discharged, hold=KIDNEY_SENSITIVE, restart=restart),
         ),
-        recommendations=_join(
+        recommendations=join(
             "Hand hygiene at home; do not prepare food for others for 48 hours after the last loose stool.",
             f"Kidney function and potassium with the family doctor on {day_text(restart)}." if held or c.complicated else "",
             "Return if unable to drink or if blood appears in the stool.",
@@ -581,16 +596,16 @@ def pyelonephritis(c: Ctx) -> Admission:
         admitted=c.admitted,
         discharged=discharged,
         **ward,
-        complaint=_join(
+        complaint=join(
             f"{c.opening()}. {rng.randint(2, 4)} days of burning on passing urine and frequency, then fever with rigors,",
             f"{side} loin pain and vomiting since {c.pick('the previous evening', 'the morning of admission')}.",
         ),
         past_history=c.past(),
-        examination=_join(
+        examination=join(
             c.vitals(temp=(38.6, 39.6), pulse=(102, 120), sbp=(100, 118)),
             f"Flushed. Tender {side} renal angle; abdomen soft, no peritonism.",
         ),
-        course=_join(
+        course=join(
             "Urinalysis: leucocytes 3+, nitrites positive.",
             f"WBC {_number(rng.uniform(14.5, 21.0))} ×10³/µL, CRP {rng.randint(140, 280)} mg/L, creatinine {_number(base * rng.uniform(1.05, 1.25), 2)} mg/dL.",
             "Prompt response to treatment, so no imaging was needed." if p.story in NO_ABDOMINAL_IMAGING else "Renal ultrasound: no hydronephrosis or stones.",
@@ -606,7 +621,7 @@ def pyelonephritis(c: Ctx) -> Admission:
             "Paracetamol 1 g orally up to four times daily as needed",
             *c.continuing(discharged),
         ),
-        recommendations=_join(
+        recommendations=join(
             "Drink at least 2 litres a day.",
             "Repeat urine culture only if symptoms return; return with fever or loin pain.",
             "Kidney function with the next routine bloods." if p.kidney_disease(c.admitted) else "",
@@ -645,18 +660,18 @@ def cellulitis(c: Ctx) -> Admission:
         admitted=c.admitted,
         discharged=discharged,
         **c.ward("Infectious Diseases", "Internal Medicine"),
-        complaint=_join(
+        complaint=join(
             f"{c.opening()}. {rng.randint(2, 4)} days of spreading redness, swelling and pain of the {side} lower leg,",
             f"{start}, with fever and shivering since the day before admission.",
         ),
         past_history=c.past(),
-        examination=_join(
+        examination=join(
             c.vitals(temp=(37.9, 38.9), pulse=(90, 108)),
             f"Hot, tender, red swelling of the {side} shin from the ankle to below the knee; edge marked. No blisters, crepitus or fluctuance.",
             "Macerated, scaling skin between the fourth and fifth toes." if portal == "tinea" else "",
             "Foot pulses palpable.",
         ),
-        course=_join(
+        course=join(
             f"WBC {_number(rng.uniform(12.0, 16.5))} ×10³/µL, CRP {rng.randint(90, 210)} mg/L. Blood cultures negative.",
             "Doppler ultrasound of the leg veins: no deep vein thrombosis.",
             f"Treated with intravenous {'clindamycin' if allergic else 'cefazolin'}, leg elevation and analgesia.",
@@ -678,7 +693,7 @@ def cellulitis(c: Ctx) -> Admission:
             "Paracetamol 1 g orally up to four times daily as needed",
             *c.continuing(discharged),
         ),
-        recommendations=_join(
+        recommendations=join(
             "Keep the leg elevated when sitting. Family doctor review at the end of the antibiotic course.",
             "Keep the skin between the toes dry; continue the cream for two weeks after the rash clears." if portal == "tinea" else "",
             "Return if redness spreads again or fever returns.",
@@ -709,17 +724,17 @@ def renal_colic(c: Ctx) -> Admission:
         discharged=discharged,
         service="Urology",
         doctor=UROLOGY,
-        complaint=_join(
+        complaint=join(
             f"{c.opening()}. Sudden severe colicky {side} loin pain radiating to the groin since {c.pick('the early morning', 'the evening before admission', 'midday')},",
             "with nausea and vomiting. Pink urine once. No fever.",
             c.pick("A similar but milder episode some years ago settled at home.", "No previous stones.", ""),
         ),
         past_history=c.past(),
-        examination=_join(
+        examination=join(
             c.vitals(pulse=(88, 106)),
             f"Restless, unable to find a comfortable position. {side.capitalize()} renal angle tender; abdomen soft, no peritonism.",
         ),
-        course=_join(
+        course=join(
             f"Urinalysis: blood 3+, nitrites negative. WBC {_number(rng.uniform(8.0, 11.0))} ×10³/µL, CRP {rng.randint(3, 14)} mg/L, "
             f"creatinine {_number(c.creatinine(), 2)} mg/dL.",
             f"Non-contrast CT of the kidneys, ureters and bladder: {size} mm calculus in the {level} {side} ureter with mild hydronephrosis.",
@@ -735,7 +750,7 @@ def renal_colic(c: Ctx) -> Admission:
             *((f"{c.free('Diclofenac')} 50 mg orally up to three times daily with food, for up to 5 days if pain returns",) if nsaid else ()),
             *c.continuing(discharged),
         ),
-        recommendations=_join(
+        recommendations=join(
             "Drink 2.5–3 litres a day. Stone analysis result to the family doctor.",
             "Urology clinic in 6 weeks with an ultrasound of the kidneys.",
         ),
@@ -774,17 +789,17 @@ def head_injury(c: Ctx) -> Admission:
         discharged=discharged,
         service="Neurosurgery",
         doctor=NEUROSURGERY,
-        complaint=_join(
+        complaint=join(
             f"{c.opening()}, who {how}. Lost consciousness for under a minute according to a witness; no memory of {event} itself.",
             f"Headache and {rng.randint(2, 3)} episodes of vomiting since. Not taking blood thinners.",
         ),
         past_history=c.past(),
-        examination=_join(
+        examination=join(
             c.vitals(),
             f"GCS 15 (14 on the ambulance record). {rng.randint(2, 4)} cm scalp swelling over the {side} {region} region, skin intact.",
             "Pupils equal and reactive; no focal neurological deficit. Cervical spine not tender, full painless movement.",
         ),
-        course=_join(
+        course=join(
             "CT head within an hour of arrival: no intracranial haemorrhage and no skull fracture; soft-tissue swelling only.",
             "Admitted for neurological observation because of the loss of consciousness and repeated vomiting.",
             "GCS 15 throughout; no further vomiting; headache eased with paracetamol.",
@@ -792,7 +807,7 @@ def head_injury(c: Ctx) -> Admission:
         admission_diagnoses=(("S06.0", "Head injury with brief loss of consciousness"),),
         discharge_diagnoses=(("S06.0", "Concussion"), ("S00.0", f"Scalp haematoma, {side} {region}"), *extra, *c.chronic()),
         prescription=("Paracetamol 1 g orally up to four times daily as needed for headache", *c.continuing(discharged)),
-        recommendations=_join(
+        recommendations=join(
             "Head injury advice sheet given. An adult to stay with the patient for the first 24 hours at home.",
             "No driving or contact sport for one week. Return at once with worsening headache, vomiting, drowsiness, confusion or weakness.",
         ),
@@ -817,17 +832,17 @@ def fracture_treated_without_surgery(c: Ctx) -> Admission:
             discharged=discharged,
             service="Orthopaedics and Traumatology",
             doctor=ORTHOPAEDICS,
-            complaint=_join(
+            complaint=join(
                 f"{c.opening()}. {c.pick('Slipped on a wet floor at home', 'Tripped on an uneven pavement', 'Missed a step on the stairs')}",
                 f"and fell onto the {side} side; pain and swelling of the shoulder, unable to lift the arm.",
             ),
             past_history=c.past(),
-            examination=_join(
+            examination=join(
                 c.vitals(pulse=(78, 96)),
                 f"Bruising over the {side} upper arm; tender over the proximal humerus. Radial pulse present; sensation over the",
                 "badge area and the hand intact.",
             ),
-            course=_join(
+            course=join(
                 f"X-ray: minimally displaced two-part fracture of the surgical neck of the {side} humerus.",
                 "Treated without surgery in a collar-and-cuff sling.",
                 f"Admitted for pain control and because {p.he()} could not manage at home with one arm; seen daily by the physiotherapist.",
@@ -841,7 +856,7 @@ def fracture_treated_without_surgery(c: Ctx) -> Admission:
                 *(("Lactulose 15 mL orally twice daily while taking tramadol",) if c.complicated else ()),
                 *c.continuing(discharged),
             ),
-            recommendations=_join(
+            recommendations=join(
                 "Sling for three weeks; pendulum exercises from day 7 as shown by the physiotherapist.",
                 "Fracture clinic in one week with a repeat X-ray.",
             ),
@@ -864,16 +879,16 @@ def fracture_treated_without_surgery(c: Ctx) -> Admission:
         discharged=discharged,
         service="Thoracic Surgery",
         doctor=THORACIC,
-        complaint=_join(
+        complaint=join(
             f"{c.opening()}. {c.pick('Fell from a ladder while picking fruit', 'Fell down the last few stairs at home', 'Slipped in the bath')}",
             f"and struck the {side} side of the chest. Sharp pain on breathing and coughing.",
         ),
         past_history=c.past(),
-        examination=_join(
+        examination=join(
             c.vitals(pulse=(84, 102), rr=(18, 24), spo2=(94, 97)),
             f"Tender over the {side} lateral chest wall; no surgical emphysema; breath sounds present on both sides.",
         ),
-        course=_join(
+        course=join(
             f"Chest X-ray{'' if p.story in NO_ABDOMINAL_IMAGING else ' and CT'}: fractures of the {side} {ribs} ribs laterally, no pneumothorax, haemothorax or lung contusion.",
             "Admitted for analgesia and breathing exercises: regular paracetamol, short-acting opioid for breakthrough pain,",
             "incentive spirometry and physiotherapy. Coughing effectively and walking around the ward before discharge.",
@@ -887,7 +902,7 @@ def fracture_treated_without_surgery(c: Ctx) -> Admission:
             *((f"{antibiotic} {'100 mg twice daily' if antibiotic == 'Doxycycline' else '500 mg twice daily' if antibiotic == 'Clarithromycin' else '1 g twice daily'} orally for {rng.randint(3, 5)} more days",) if c.complicated else ()),
             *c.continuing(discharged),
         ),
-        recommendations=_join(
+        recommendations=join(
             "Deep-breathing exercises every hour while awake; do not strap the chest.",
             "Return with fever, worsening breathlessness or coughing blood. Family doctor review in one week.",
         ),
@@ -912,19 +927,19 @@ def vertigo(c: Ctx) -> Admission:
         discharged=discharged,
         service="Neurology",
         doctor=NEUROLOGY,
-        complaint=_join(
+        complaint=join(
             f"{c.opening()}. Woke with severe spinning vertigo, nausea and repeated vomiting, worse with any head movement; unable to stand.",
             "No hearing loss, tinnitus, headache, double vision, slurred speech, weakness or numbness.",
             c.pick("A cold the week before.", "Otherwise well beforehand.", "A sore throat and runny nose ten days earlier."),
         ),
         past_history=c.past(),
-        examination=_join(
+        examination=join(
             c.vitals(pulse=(72, 92)),
             f"Horizontal-torsional nystagmus beating to the {other}, suppressed by fixation; abnormal head impulse test to the {side};",
             "no skew deviation (HINTS examination consistent with a peripheral cause). Hearing normal to whisper. No limb ataxia;",
             "cranial nerves otherwise normal. Unable to walk unaided.",
         ),
-        course=_join(
+        course=join(
             "MRI of the brain with diffusion-weighted imaging, given the vascular risk factors: no infarct." if vascular else "",
             "Intravenous fluids, metoclopramide and dimenhydrinate for 48 hours, then early vestibular rehabilitation with the physiotherapist.",
             f"Vomiting stopped on day {rng.randint(1, 2)}; walking independently with mild unsteadiness before discharge.",
@@ -932,7 +947,7 @@ def vertigo(c: Ctx) -> Admission:
         admission_diagnoses=(("R42", "Acute vertigo"),),
         discharge_diagnoses=(("H81.2", f"Vestibular neuronitis, {side}"), *extra, *c.chronic()),
         prescription=("Dimenhydrinate 50 mg orally up to three times daily as needed, for no more than 3 days", *c.continuing(discharged)),
-        recommendations=_join(
+        recommendations=join(
             "Vestibular exercises three times a day as taught. Do not drive until the dizziness has settled.",
             "Neurology clinic in 4 weeks. Return at once with weakness, numbness, slurred speech or a new severe headache.",
         ),
@@ -965,16 +980,16 @@ def childbirth(c: Ctx) -> Admission:
         discharged=discharged,
         service="Obstetrics and Gynaecology",
         doctor=OBSTETRICS,
-        complaint=_join(
+        complaint=join(
             f"{c.age}-year-old woman, gravida {gravida} para {previous}, at {weeks} weeks, admitted in spontaneous labour.",
             "Uncomplicated pregnancy with normal screening and anomaly scans.",
         ),
         past_history=c.past(["Previous delivery: spontaneous vaginal birth." if previous == 1 else f"Previous deliveries: {previous} spontaneous vaginal births." if previous else "First pregnancy."]),
-        examination=_join(
+        examination=join(
             c.vitals(sbp=(108, 124), pulse=(78, 92)),
             f"Contractions every 3–4 minutes. Cephalic presentation; cervix {rng.randint(4, 6)} cm dilated. Cardiotocography reassuring.",
         ),
-        course=_join(
+        course=join(
             f"Spontaneous vaginal delivery after a labour of {rng.randint(5, 11)} hours{c.pick(' with epidural analgesia', '')}:",
             f"live {baby}, {weight} g, Apgar {rng.randint(8, 9)} and {rng.randint(9, 10)}. Perineum intact. Placenta and membranes complete.",
             "Breastfeeding established. Mother and baby discharged together.",
@@ -986,7 +1001,7 @@ def childbirth(c: Ctx) -> Admission:
             *(("Iron(III) hydroxide polymaltose 100 mg orally once daily for 3 months",) if c.complicated else ()),
             *c.continuing(discharged),
         ),
-        recommendations=_join(
+        recommendations=join(
             "Postnatal check with the family doctor and midwife at 6 weeks, with a full blood count." if c.complicated
             else "Postnatal check with the family doctor and midwife at 6 weeks.",
             "Contraception discussed. Return with heavy bleeding, fever or calf pain.",
@@ -1018,16 +1033,16 @@ def bleeding_ulcer(c: Ctx) -> Admission:
         discharged=discharged,
         service="Gastroenterology",
         doctor=KOC,
-        complaint=_join(
+        complaint=join(
             f"{c.opening()}. {rng.randint(2, 3)} black, tarry stools over a day and dizziness on standing; {c.pick('burning upper abdominal pain for several weeks', 'no abdominal pain')}.",
             f"Took ibuprofen 400 mg three times a day for a week for back pain." if nsaid_history else "No anti-inflammatory or blood-thinning medicines.",
         ),
         past_history=c.past(),
-        examination=_join(
+        examination=join(
             c.vitals(pulse=(100, 114), sbp=(98, 112)),
             "Pale. Epigastric tenderness, no guarding. Melaena on rectal examination.",
         ),
-        course=_join(
+        course=join(
             f"Hb {_number(hb)} g/dL, urea raised, creatinine {_number(base * rng.uniform(1.05, 1.2), 2)} mg/dL; Glasgow-Blatchford score {rng.randint(7, 10)}.",
             "Intravenous fluids and a pantoprazole infusion. Gastroscopy the next morning (see the procedure report).",
             f"No further bleeding; Hb steady at {_number(hb_low)} g/dL; no transfusion needed. Eating normally from day {rng.randint(2, 3)}.",
@@ -1045,7 +1060,7 @@ def bleeding_ulcer(c: Ctx) -> Admission:
             f"{c.free('Metronidazole')} 500 mg orally three times daily for 14 days",
             *c.continuing(discharged),
         ),
-        recommendations=_join(
+        recommendations=join(
             "Avoid anti-inflammatory painkillers; paracetamol is safe.",
             "Urea breath test 4 weeks after finishing pantoprazole to confirm eradication. Full blood count with the family doctor in 2 weeks.",
         ),
@@ -1060,7 +1075,7 @@ def bleeding_ulcer(c: Ctx) -> Admission:
             team=f"{KOC} (endoscopist)",
             anaesthesia="Conscious sedation (midazolam 2 mg intravenously) and lidocaine throat spray",
             wound_class="Not applicable",
-            note=_join(
+            note=join(
                 "Oesophagus normal. Stomach: some altered blood, mild antral erythema; no ulcer. Two antral biopsies for rapid urease test.",
                 f"Duodenal bulb: {size} mm ulcer on the anterior wall with a clean base; no visible vessel, no adherent clot, no active bleeding.",
                 "Second part of the duodenum normal. No endoscopic treatment needed.",
@@ -1079,7 +1094,7 @@ def colonoscopy(c: Ctx) -> Admission:
     size = rng.randint(4, 9)  # small: hyperplastic polyps of 10 mm or more would need surveillance
     scope = c.admitted + timedelta(days=1)
     discharged = scope if not c.complicated else scope + timedelta(days=rng.randint(1, 2))
-    held = [order for order in p.medicines(c.admitted) if _name_of(order).lower() in ("metformin", "empagliflozin", "dapagliflozin")]
+    held = [order for order in p.medicines(c.admitted) if name_of(order).lower() in ("metformin", "empagliflozin", "dapagliflozin")]
     polyps = "one polyp" if count == 1 else f"{count} polyps"
     plural = "s" if count > 1 else ""
     procedure_complications, extra = "None", []
@@ -1096,21 +1111,21 @@ def colonoscopy(c: Ctx) -> Admission:
         discharged=discharged,
         service="Gastroenterology",
         doctor=KOC,
-        complaint=_join(
+        complaint=join(
             f"{c.opening()}. Positive faecal immunochemical test at bowel cancer screening; no symptoms, no rectal bleeding, weight steady.",
             "Admitted the day before for supervised bowel preparation" + (" because of the diabetes medicines." if held else "."),
         ),
         past_history=c.past(),
-        examination=_join(c.vitals(), "Abdomen soft, non-tender. Rectal examination normal."),
-        course=_join(
+        examination=join(c.vitals(), "Abdomen soft, non-tender. Rectal examination normal."),
+        course=join(
             "Bowel preparation completed overnight; colonoscopy the next morning (see the procedure report).",
-            ("Held during the preparation and restarted with the first meal: " + ", ".join(_name_of(order).lower() for order in held) + ".") if held else "",
+            ("Held during the preparation and restarted with the first meal: " + ", ".join(name_of(order).lower() for order in held) + ".") if held else "",
             "Home the same afternoon." if not c.complicated else "Kept in after the bleeding, which stopped without treatment; eating normally before discharge.",
         ),
         admission_diagnoses=(("R19.5", "Positive faecal immunochemical test"),),
         discharge_diagnoses=(("K63.5", f"Hyperplastic polyp{plural} of the {site}, removed"), *extra, *c.chronic()),
         prescription=tuple(c.continuing(discharged)),
-        recommendations=_join(
+        recommendations=join(
             f"Histology: hyperplastic polyp{plural}, no dysplasia; no surveillance colonoscopy needed.",
             "Return to the national screening programme in 10 years. Return with heavy rectal bleeding, dizziness or abdominal pain.",
         ),
@@ -1125,7 +1140,7 @@ def colonoscopy(c: Ctx) -> Admission:
             team=f"{KOC} (endoscopist)",
             anaesthesia=f"Deep sedation with propofol ({c.pick(*ANAESTHETISTS)})",
             wound_class="Not applicable",
-            note=_join(
+            note=join(
                 f"Bowel preparation good (Boston score {rng.randint(7, 9)}). Caecum reached, identified by the appendiceal orifice and",
                 f"ileocaecal valve; terminal ileum normal. {polyps.capitalize()} in the {site}, sessile, up to {size} mm, removed by cold",
                 "snare and retrieved. Remaining colon normal. Withdrawal time 9 minutes.",
@@ -1141,7 +1156,7 @@ def angiography(c: Ctx) -> Admission:
     rng, p = c.rng, c.p
     performed = c.admitted + timedelta(days=1)
     discharged = performed + timedelta(days=rng.randint(0, 1)) if not c.complicated else performed + timedelta(days=1)
-    held = [order for order in p.medicines(c.admitted) if _name_of(order).lower() == "metformin"]
+    held = [order for order in p.medicines(c.admitted) if name_of(order).lower() == "metformin"]
     restart = performed + timedelta(days=2)
     risks = [
         name for name, present in (
@@ -1165,13 +1180,13 @@ def angiography(c: Ctx) -> Admission:
         discharged=discharged,
         service="Cardiology",
         doctor=KARA,
-        complaint=_join(
+        complaint=join(
             f"{c.opening()}. {c.pick('Two', 'Three')} episodes of central chest tightness at rest over {rng.randint(2, 4)} days, each lasting",
             f"{c.pick('10 to 20', 'about 15', '15 to 30')} minutes, {c.pick('spreading to the left arm', 'with sweating', 'spreading to the jaw')}; the last on the morning of admission.",
         ),
         past_history=c.past(),
-        examination=_join(c.vitals(), "Pain-free on arrival. Heart sounds normal, no murmur; chest clear; no leg swelling."),
-        course=_join(
+        examination=join(c.vitals(), "Pain-free on arrival. Heart sounds normal, no murmur; chest clear; no leg swelling."),
+        course=join(
             "ECG: sinus rhythm, no acute ST-segment changes.",
             f"High-sensitivity troponin T {rng.randint(5, 9)} and {rng.randint(6, 10)} ng/L at 0 and 3 hours (below the 99th percentile).",
             f"Because of {reason}, coronary angiography on day 2 (see the procedure report): no significant coronary stenosis.",
@@ -1186,7 +1201,7 @@ def angiography(c: Ctx) -> Admission:
             "Pantoprazole 40 mg orally once daily before breakfast for 4 weeks",
             *c.continuing(discharged, hold=("metformin",), restart=restart),
         ),
-        recommendations=_join(
+        recommendations=join(
             "Keep the wrist dressing dry for 24 hours; no heavy lifting with the right arm for 3 days.",
             "Family doctor review in 4 weeks. Return at once if chest pain recurs at rest.",
         ),
@@ -1201,7 +1216,7 @@ def angiography(c: Ctx) -> Admission:
             team=f"{KARA} (interventional cardiologist)",
             anaesthesia="Local anaesthesia (lidocaine 2%) at the puncture site",
             wound_class="Clean",
-            note=_join(
+            note=join(
                 "Right radial access with a 6F sheath; intra-arterial verapamil and heparin. Left main stem normal. Left anterior",
                 f"descending, circumflex and right coronary arteries smooth{c.pick(', with minor wall irregularities', '')} and without",
                 f"significant stenosis; right-dominant circulation. Contrast {rng.randint(60, 90)} mL. Sheath removed; radial compression band applied.",
@@ -1255,16 +1270,16 @@ def appendicectomy(c: Ctx) -> Admission:
         discharged=discharged,
         service="General Surgery",
         doctor=YALCIN,
-        complaint=_join(
+        complaint=join(
             f"{c.opening()}. {rng.randint(14, 30)} hours of pain that began around the navel and moved to the right lower abdomen,",
             "with loss of appetite, nausea and one episode of vomiting.",
         ),
         past_history=c.past(),
-        examination=_join(
+        examination=join(
             c.vitals(temp=(37.5, 38.3), pulse=(88, 106)),
             "Tender in the right iliac fossa with guarding and rebound tenderness; Rovsing's sign positive.",
         ),
-        course=_join(
+        course=join(
             f"WBC {_number(rng.uniform(12.5, 16.8))} ×10³/µL with neutrophilia, CRP {rng.randint(35, 120)} mg/L.",
             imaging,
             f"{name} on {day_text(performed)} (see the operation report), with {prophylaxis}.",
@@ -1278,7 +1293,7 @@ def appendicectomy(c: Ctx) -> Admission:
             *oral,
             *c.continuing(discharged),
         ),
-        recommendations=_join(
+        recommendations=join(
             "Wound check with the family doctor on day 7–10; absorbable sutures, no removal needed.",
             "No heavy lifting for 2 weeks. Histology reviewed: no further follow-up needed.",
         ),
@@ -1293,7 +1308,7 @@ def appendicectomy(c: Ctx) -> Admission:
             team=c.team(YALCIN),
             anaesthesia="General anaesthesia with endotracheal intubation",
             wound_class="Clean-contaminated",
-            note=_join(
+            note=join(
                 "Open (Hasson) entry at the umbilicus, 12 mm port; two 5 mm ports in the left iliac fossa and suprapubic region.",
                 f"Inflamed, swollen appendix{c.pick(' with fibrinous exudate', '')}, not perforated; {c.pick('a little', 'about 20 mL of')} serous",
                 "fluid in the pelvis, aspirated. Mesoappendix divided with diathermy; base secured with two endoloops and divided;",
@@ -1327,14 +1342,14 @@ def inguinal_hernia(c: Ctx) -> Admission:
         discharged=discharged,
         service="General Surgery",
         doctor=YALCIN,
-        complaint=_join(
+        complaint=join(
             f"{c.opening()}, admitted electively for repair of a {side} inguinal hernia.",
             f"Groin swelling for {c.pick('about a year', 'two years', 'eighteen months')}, aching {'after long walks' if c.age >= 62 else 'at the end of the working day'}; always",
             "reducible, no episodes of obstruction.",
         ),
         past_history=c.past(),
-        examination=_join(c.vitals(), f"Reducible {side} inguinal hernia with a cough impulse, not extending into the scrotum. Other side normal."),
-        course=_join(
+        examination=join(c.vitals(), f"Reducible {side} inguinal hernia with a cough impulse, not extending into the scrotum. Other side normal."),
+        course=join(
             f"{name} (Lichtenstein) under spinal anaesthesia on the day of admission (see the operation report).",
             "Walking and passing urine within six hours." if not c.complicated else "",
             home,
@@ -1354,7 +1369,7 @@ def inguinal_hernia(c: Ctx) -> Admission:
             team=c.team(YALCIN),
             anaesthesia="Spinal anaesthesia",
             wound_class="Clean",
-            note=_join(
+            note=join(
                 f"{side.capitalize()} groin crease incision. External oblique opened; ilioinguinal nerve identified and preserved.",
                 "Indirect sac dissected off the cord and reduced." if sac == "indirect" else "Direct bulge of the posterior wall reduced and imbricated.",
                 "Posterior wall reinforced with a 6 × 11 cm polypropylene mesh, sutured to the inguinal ligament with continuous",
@@ -1379,13 +1394,13 @@ def septoplasty(c: Ctx) -> Admission:
         discharged=discharged,
         service="Otorhinolaryngology",
         doctor=ENT,
-        complaint=_join(
+        complaint=join(
             f"{c.opening()}, admitted electively. Long-standing {side}-sided nasal blockage, worse at night, with mouth breathing and",
             f"snoring; no better after three months of a steroid nasal spray. {c.pick('Broke the nose playing football as a teenager.', 'No nasal injury remembered.')}",
         ),
         past_history=c.past(),
-        examination=_join(c.vitals(), f"Septum deviated to the {side} with a bony spur touching the inferior turbinate. No polyps. Ears and throat normal."),
-        course=_join(
+        examination=join(c.vitals(), f"Septum deviated to the {side} with a bony spur touching the inferior turbinate. No polyps. Ears and throat normal."),
+        course=join(
             "Septoplasty under general anaesthesia on the day of admission (see the operation report).",
             "Packs removed the next morning; breathing through the nose better." if not c.complicated else "",
         ),
@@ -1408,7 +1423,7 @@ def septoplasty(c: Ctx) -> Admission:
             team=c.team(ENT),
             anaesthesia="General anaesthesia with endotracheal intubation",
             wound_class="Clean-contaminated",
-            note=_join(
+            note=join(
                 "Hemitransfixion incision; mucoperichondrial and mucoperiosteal flaps raised on both sides. Deviated part of the",
                 "quadrilateral cartilage and the bony spur of the vomer removed; caudal strut preserved. Flaps re-approximated with",
                 "a quilting suture; incision closed. Nasal packs on both sides.",
@@ -1434,18 +1449,18 @@ def carpal_tunnel(c: Ctx) -> Admission:
         discharged=discharged,
         service="Orthopaedics and Traumatology",
         doctor=ORTHOPAEDICS,
-        complaint=_join(
+        complaint=join(
             f"{c.opening()}, admitted as a day case. {rng.randint(8, 18)} months of numbness and tingling in the {side} thumb, index and",
             "middle fingers, waking at night; no better with a night splint. Nerve conduction studies: moderate median nerve compression",
             "at the wrist.",
         ),
         past_history=c.past(),
-        examination=_join(c.vitals(), f"Positive Tinel's and Phalen's signs at the {side} wrist; no thenar wasting; thumb abduction strong."),
-        course=_join(f"{name} under local anaesthesia (see the operation report).", "Home the same day." if not c.complicated else ""),
+        examination=join(c.vitals(), f"Positive Tinel's and Phalen's signs at the {side} wrist; no thenar wasting; thumb abduction strong."),
+        course=join(f"{name} under local anaesthesia (see the operation report).", "Home the same day." if not c.complicated else ""),
         admission_diagnoses=(("G56.0", f"Carpal tunnel syndrome, {side}"),),
         discharge_diagnoses=(("G56.0", f"Carpal tunnel syndrome, {side}, released"), *extra, *c.chronic()),
         prescription=("Paracetamol 1 g orally up to four times daily as needed", *c.continuing(discharged)),
-        recommendations=_join(
+        recommendations=join(
             "Keep the hand raised for 48 hours and move the fingers often. Keep the dressing dry.",
             "Sutures out at the family doctor's on day 12. Hand clinic in 6 weeks.",
         ),
@@ -1460,7 +1475,7 @@ def carpal_tunnel(c: Ctx) -> Admission:
             team=c.team(ORTHOPAEDICS, anaesthetist=False),
             anaesthesia="Local anaesthesia (lidocaine 1% with adrenaline), no tourniquet",
             wound_class="Clean",
-            note=_join(
+            note=join(
                 "3 cm palmar incision in line with the radial border of the ring finger. Palmar fascia and transverse carpal ligament",
                 "divided completely under direct vision. Median nerve flattened and reddened beneath the ligament; motor branch intact.",
                 "Skin closed with interrupted nylon sutures; soft bulky dressing.",
@@ -1496,11 +1511,11 @@ def fracture_fixation(c: Ctx) -> Admission:
             doctor=ORTHOPAEDICS,
             complaint=f"{c.opening()}. {how}; immediate pain and swelling of the {side} ankle, unable to bear weight.",
             past_history=c.past(),
-            examination=_join(
+            examination=join(
                 c.vitals(pulse=(80, 98)),
                 f"Swelling and bruising over the {side} lateral malleolus, tender; skin intact; foot pulses and sensation normal.",
             ),
-            course=_join(
+            course=join(
                 f"X-ray: displaced Weber B fracture of the {side} lateral malleolus with lateral shift of the talus.",
                 f"Backslab and elevation until the swelling settled; operation on {day_text(performed)} (see the operation report).",
                 "Prophylactic enoxaparin while in plaster. Walking with crutches without putting weight on the leg before discharge.",
@@ -1513,7 +1528,7 @@ def fracture_fixation(c: Ctx) -> Admission:
                 *oral,
                 *c.continuing(discharged),
             ),
-            recommendations=_join(
+            recommendations=join(
                 "No weight on the leg for 6 weeks; keep it raised. Fracture clinic in 2 weeks for the wound and an X-ray.",
                 "The plate and screws stay in unless they cause trouble.",
             ),
@@ -1528,7 +1543,7 @@ def fracture_fixation(c: Ctx) -> Admission:
                 team=c.team(ORTHOPAEDICS),
                 anaesthesia="Spinal anaesthesia; thigh tourniquet",
                 wound_class="Clean",
-                note=_join(
+                note=join(
                     "Lateral approach; superficial peroneal nerve protected. Oblique fracture reduced and held with a lag screw, then",
                     "neutralised with a one-third tubular plate and screws. Syndesmosis stable on the hook test. Fluoroscopy confirmed",
                     "reduction and a congruent mortise. Wound closed in layers; below-knee backslab.",
@@ -1547,11 +1562,11 @@ def fracture_fixation(c: Ctx) -> Admission:
         doctor=ORTHOPAEDICS,
         complaint=f"{c.opening()}. {how} onto an outstretched {side} hand; pain, swelling and deformity of the wrist.",
         past_history=c.past(),
-        examination=_join(
+        examination=join(
             c.vitals(pulse=(80, 98)),
             f"Dinner-fork deformity of the {side} wrist; skin intact; radial pulse present; sensation in the fingers normal.",
         ),
-        course=_join(
+        course=join(
             f"X-ray: dorsally displaced, intra-articular fracture of the {side} distal radius with shortening.",
             f"Backslab and elevation; operation on {day_text(performed)} (see the operation report).",
             "Fingers moving well and the hand warm before discharge.",
@@ -1559,7 +1574,7 @@ def fracture_fixation(c: Ctx) -> Admission:
         admission_diagnoses=(("S52.5", f"Fracture of the {side} distal radius"),),
         discharge_diagnoses=(("S52.5", f"Fracture of the lower end of the {side} radius, intra-articular, fixed"), *extra, *c.chronic()),
         prescription=("Paracetamol 1 g orally four times daily as needed", *c.continuing(discharged)),
-        recommendations=_join(
+        recommendations=join(
             "Keep the hand raised; move the fingers often. Fracture clinic in 2 weeks for the wound and an X-ray; hand therapy from then.",
             "The plate stays in unless it causes trouble.",
         ),
@@ -1574,7 +1589,7 @@ def fracture_fixation(c: Ctx) -> Admission:
             team=c.team(ORTHOPAEDICS),
             anaesthesia="Infraclavicular brachial plexus block with sedation; arm tourniquet",
             wound_class="Clean",
-            note=_join(
+            note=join(
                 "Volar (modified Henry) approach through the flexor carpi radialis sheath; pronator quadratus elevated. Fracture",
                 "reduced under fluoroscopy and fixed with a volar locking plate and screws; joint surface restored. Pronator",
                 "quadratus repaired; skin closed. Volar plaster slab.",
@@ -1599,16 +1614,16 @@ def knee_replacement(c: Ctx, procedure: dict) -> Admission:
         discharged=discharged,
         service="Orthopaedics and Traumatology",
         doctor=ORTHOPAEDICS,
-        complaint=_join(
+        complaint=join(
             f"{c.opening()}, admitted electively for a right total knee replacement. Several years of right knee pain, now at night",
             "and limiting walking to a few hundred metres despite painkillers, physiotherapy and steroid injections.",
         ),
         past_history=c.past(),
-        examination=_join(
+        examination=join(
             c.vitals(),
             "Right knee: varus deformity, crepitus, fixed flexion of 10°, flexion to 100°. Ligaments stable. Foot pulses normal.",
         ),
-        course=_join(
+        course=join(
             "X-rays: advanced osteoarthritis of the right knee with loss of the medial joint space and osteophytes.",
             f"Right total knee replacement on {day_text(performed)} (see the operation report).",
             "Walking with a frame on day 1 and with crutches on day 3; flexion to 90° at discharge. Wound clean and dry.",
@@ -1621,7 +1636,7 @@ def knee_replacement(c: Ctx, procedure: dict) -> Admission:
             f"{c.free('Tramadol')} 50 mg orally up to three times daily as needed for 7 days",
             *c.continuing(discharged),
         ),
-        recommendations=_join(
+        recommendations=join(
             "Physiotherapy exercises daily; crutches for about 6 weeks. Clips out at the family doctor's on day 14.",
             "Orthopaedic clinic in 6 weeks with an X-ray.",
         ),
@@ -1635,7 +1650,7 @@ def knee_replacement(c: Ctx, procedure: dict) -> Admission:
             team=c.team(ORTHOPAEDICS),
             anaesthesia="Spinal anaesthesia with an adductor canal block",
             wound_class="Clean",
-            note=_join(
+            note=join(
                 "Thigh tourniquet. Midline incision and medial parapatellar arthrotomy. Bone cuts with intramedullary femoral and",
                 "extramedullary tibial guides; balanced in flexion and extension. Cemented posterior-stabilised femoral and tibial",
                 f"components with a polyethylene insert; patella not resurfaced. Layered closure; skin clips. Tourniquet time {rng.randint(70, 90)} minutes.",
@@ -1663,21 +1678,21 @@ def ercp(c: Ctx, procedure: dict) -> Admission:
         discharged=c.admitted,
         service="Gastroenterology",
         doctor=KOC,
-        complaint=_join(
+        complaint=join(
             f"{c.age}-year-old woman with three months of biliary-type pain and obstructive jaundice, now settling, admitted as a day case.",
             f"Ultrasound on {day_text(ultrasound)}: gallstones and a 9 mm common bile duct. MRCP on {day_text(mrcp)}: 7 mm stone in the",
             "distal common bile duct.",
         ),
         past_history=c.past(),
-        examination=_join(c.vitals(), "Mild scleral icterus. Abdomen soft, mildly tender in the right upper quadrant."),
-        course=_join(
+        examination=join(c.vitals(), "Mild scleral icterus. Abdomen soft, mildly tender in the right upper quadrant."),
+        course=join(
             "ERCP in the morning (see the procedure report): biliary sphincterotomy and balloon extraction of the stone; duct clear.",
             "Comfortable afterwards, tolerating fluids, no abdominal pain. Home the same evening.",
         ),
         admission_diagnoses=(("K80.5", "Choledocholithiasis"),),
         discharge_diagnoses=(("K80.5", "Common bile duct stone, cleared at ERCP"), *c.chronic()),
         prescription=("Paracetamol 1 g orally up to four times daily as needed",),
-        recommendations=_join(
+        recommendations=join(
             "Referred to general surgery for laparoscopic cholecystectomy, ideally within 6–8 weeks. Low-fat diet meanwhile.",
             "Return at once with abdominal pain, fever or yellowing of the eyes.",
         ),
@@ -1691,7 +1706,7 @@ def ercp(c: Ctx, procedure: dict) -> Admission:
             team=f"{KOC} (endoscopist)",
             anaesthesia=f"Deep sedation with propofol ({c.pick(*ANAESTHETISTS)})",
             wound_class="Not applicable",
-            note=_join(
+            note=join(
                 "Normal papilla. Selective biliary cannulation. Cholangiogram: 7 mm filling defect in the distal common bile duct; duct",
                 "9 mm. Biliary sphincterotomy; stone extracted with a balloon; occlusion cholangiogram shows a clear duct. No",
                 "pancreatic duct cannulation. No immediate bleeding.",

@@ -150,3 +150,13 @@ operations = [
   { match = "cholecystectomy", year = 2021, region = "abdomen", approach = "laparoscopic", sources = ["procedure", "epicrisis"] },
   { match = "radius", year = 2024, region = "spine_limbs", approach = "open", implant = "plate", sources = ["procedure", "epicrisis"] },
 ]
+
+[[patient]]
+id = "p-2044"
+# The two stents are operations here; the coronary angiography and the gastroscopy with clips are diagnostic
+# procedures, not operations.
+operations = [
+  { match = "right coronary", year = 2018, region = "chest", approach = "percutaneous", implant = "stent", sources = ["procedure", "epicrisis"] },
+  { match = "left anterior descending", year = 2019, region = "chest", approach = "percutaneous", implant = "stent", sources = ["procedure", "epicrisis"] },
+  { match = "hernia", year = 2021, region = "abdomen", approach = "open", implant = "mesh", sources = ["procedure", "epicrisis"] },
+]

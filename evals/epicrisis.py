@@ -582,8 +582,10 @@ def check_background(anchors: list[date], seed: int) -> list[str]:
 REQUIRED = {
     "p-2043": [("fine-needle aspiration", "thyroid"), ("total thyroidectomy", "hypocalc"), ("total thyroidectomy", "vocal cord"),
                ("radioiodine", ""), ("fine-needle aspiration", "lymph node"), ("cholecystectomy", ""), ("wrist", "plate"), ("pneumonia", "")],
+    "p-2044": [("stent", "haematoma"), ("stent", "elective"), ("duodenal ulcer", "transfus"), ("clopidogrel", "stopped"),
+               ("inguinal hernia", "aspirin"), ("angiograph", "patent"), ("pneumonia", "")],
 }
-ACTIVE_MEDICINE = {"p-2043": "levothyroxine"}
+ACTIVE_MEDICINE = {"p-2043": "levothyroxine", "p-2044": "aspirin"}
 
 
 def _overlaps(first: dict, second: dict) -> bool:
@@ -622,6 +624,9 @@ def check_showcase(charts: dict, records: dict[str, Record], anchor: date) -> li
             if not any(first in item.text.lower() and second in item.text.lower() for item in found.values()):
                 problems.append(f"{pid}: no report holds both {first!r} and {second!r}")
         problems += _prescription_problems(pid, resources, found)
+        # An echocardiogram's findings belong to a report on the chart (the heart-failure patients have them).
+        if not any(item["resourceType"] == "DiagnosticReport" and "echocardiogra" in item["code"].get("text", "").lower() for item in resources):
+            problems += [f"{pid}: {ref} mentions an echocardiogram the chart has no report of" for ref, item in found.items() if "echocardiogra" in item.text.lower()]
         tagged_procedures = {item["id"] for item in resources if item["resourceType"] == "Procedure" and tagged(item)}
         problems += _procedure_problems(pid, docs, found, tagged_procedures)
         operations = [item for item in found.values() if "OPERATION REPORT" in item.text.splitlines()]

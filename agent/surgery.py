@@ -87,6 +87,8 @@ FAMILIES: dict[str, tuple[str, ...]] = {
     "colectomy": ("colectom", "hemicolectom", "anterior resection", "hartmann"),
     "mastectomy": ("mastectom",),
     "coronary bypass": ("cabg", "coronary artery bypass"),
+    # Two stents a year apart stay apart by side: the right coronary artery, the left anterior descending artery.
+    "coronary stent": ("percutaneous coronary", "pci", "coronary stent", "coronary artery stent", "drug-eluting stent"),
 }
 APPROACH_WORDS = (
     ("laparoscopic", ("laparoscop",)),
@@ -325,6 +327,11 @@ class Entry:
         years = [item.when.year for item in self.mentions if item.when.year]
         return not mention.when.year or not years or all(abs(mention.when.year - year) <= 1 for year in years)
 
+    def distance(self, mention: Mention) -> int:
+        """Years between the mention and the entry's first dated mention; 0 when either has no year."""
+        year = next((item.when.year for item in self.mentions if item.when.year), None)
+        return abs(mention.when.year - year) if mention.when.year and year else 0
+
     def as_json(self) -> dict:
         mentions = self.mentions
         procedures = [item for item in mentions if item.source["kind"] == "procedure"]
@@ -420,7 +427,8 @@ def from_document(record: Record, document: Document, operation: Operation) -> M
         family=family_of(operation.name),
         region=region_of(operation.name, operation.quote),
         approach=operation.approach or approach_of(operation.name),
-        side=operation.side,
+        # A record's side is read from its name ("right coronary artery"); a document's, when the reader gives none, too.
+        side=operation.side or next((side for side in SIDES if _has(fold(operation.name), side)), None),
         when=when,
         elsewhere=operation.elsewhere,
         here=here,
@@ -471,7 +479,9 @@ async def surgical_history(record: Record, reader: SurgeryReader) -> dict:
 
     entries: list[Entry] = []
     for mention in mentions:  # Procedure records first, then documents oldest first
-        entry = next((entry for entry in entries if entry.fits(mention)), None)
+        fitting = [entry for entry in entries if entry.fits(mention)]
+        # Of two that fit, the one from the mention's own year (a stent in 2018 and another in 2019).
+        entry = min(fitting, key=lambda entry: entry.distance(mention), default=None)
         if entry is None:
             entries.append(Entry([mention]))
         else:
