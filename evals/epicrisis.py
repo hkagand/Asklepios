@@ -384,7 +384,8 @@ DIAGNOSTIC_NAMES = (
     "Polyp removal", "Endoscopic polypectomy", "Colonoscopy with polypectomy", "Colonoscopy", "Gastroscopy",
     "Upper gastrointestinal endoscopy", "Fine-needle aspiration of a thyroid nodule", "Core biopsy", "Kidney biopsy",
     "Diagnostic coronary angiography", "Coronary angiography", "Cystoscopy", "Hysteroscopy with endometrial sampling",
-    "Bronchoscopy", "Sigmoidoscopy", "Bone marrow biopsy", "Lumbar puncture", "Endoscopic haemostasis",
+    "Bronchoscopy", "Sigmoidoscopy", "Bone marrow biopsy", "Lumbar puncture", "Endoscopic haemostasis", "Endoscopic haemostasis with clips",
+    "Gastroscopy with adrenaline injection and clips",
 )
 OPERATION_NAMES = (
     "ERCP with biliary sphincterotomy and balloon stone extraction", "Coronary angiography with stent to the right coronary artery",
@@ -395,6 +396,8 @@ OPERATION_NAMES = (
     "Angiographic embolisation", "Endoscopic stone removal", "Endoscopic sinus surgery with polypectomy",
     "Laparoscopic sleeve gastrectomy", "Transurethral resection of the prostate", "Cystoscopy with ureteric stent insertion",
     "Hysteroscopic myomectomy",
+    "Surgical haemostasis", "Return to theatre for haemostasis", "Exploration of neck wound and haemostasis",
+    "Re-exploration for bleeding", "Evacuation of haematoma",
 )
 
 

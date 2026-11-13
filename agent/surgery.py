@@ -486,7 +486,7 @@ def text_for_reading(document: Document) -> str:
 # whose name names a diagnostic procedure and nothing operative is not an operation. Kept narrow on purpose.
 DIAGNOSTIC_WORDS = re.compile(
     r"polypectom|polyp removal|(?:colon|gastr|sigmoid|cyst|hyster|bronch)oscopy|endoscopy|biops|fine[- ]needle|angiogra|"
-    r"lumbar puncture|(?:haem|hem)ostasis",
+    r"lumbar puncture|endoscopic (?:haem|hem)ostasis",
     re.IGNORECASE,
 )
 # Any sign of an intervention keeps the name: when in doubt an operation stays listed. Polypectomy and polyp removal are
