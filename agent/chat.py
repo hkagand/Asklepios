@@ -215,12 +215,30 @@ class Sessions:
             del self._items[key]
 
 
+def has_read_epicrisis(session: Session) -> bool:
+    """Whether the conversation already holds a read_epicrisis result, made by the model or in code."""
+    calls = {
+        call["id"]
+        for message in session.messages
+        if message["role"] == "assistant"
+        for call in message.get("tool_calls") or []
+        if call["function"]["name"] == "read_epicrisis"
+    }
+    return any(message["role"] == "tool" and message.get("tool_call_id") in calls for message in session.messages)
+
+
 def pre_reads(session: Session, question: str) -> bool:
     """Whether the epicrisis reports are read in code before the model's first step: the question is about the
-    patient's past, the patient has reports, and the session offers read_epicrisis (not when they are in the prompt).
-    Left to itself, the model often answers such questions from the index lines without reading the reports."""
+    patient's past, the patient has reports, the session offers read_epicrisis (not when they are in the prompt), and
+    the conversation does not already hold them. Left to itself, the model often answers such questions from the index
+    lines without reading the reports."""
     offered = any(spec["function"]["name"] == "read_epicrisis" for spec in session.specs)
-    return offered and epicrisis.about_the_past(question) and bool(epicrisis.reports(session.record))
+    return (
+        offered
+        and epicrisis.about_the_past(question)
+        and bool(epicrisis.reports(session.record))
+        and not has_read_epicrisis(session)
+    )
 
 
 async def run_turn(

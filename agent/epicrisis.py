@@ -170,44 +170,67 @@ def read_all(record: Record, limit: int = MAX_CHARS) -> list[str]:
     return [summary, *blocks]
 
 
-# Which questions are about the patient's past, which the reports answer. Each pattern is matched against the
-# lower-cased question; a word that also asks about results, medicines or orders ("previous", "last", "prior HbA1c")
-# is not here. Questions about which operations the patient has had are answered from SURGICAL HISTORY, so a question
-# that names an operation (OPERATIONS) is about the past only through a word of PAST_EVENTS.
+# Which questions are about the patient's past, which the reports answer. Each pattern is matched against the question
+# as lower() leaves it after "İ" is made "i", so a Turkish "ı" may also be written "i" (from a capital "I"): patterns
+# match both. A word that also asks about results, medicines or orders ("previous", "last", "prior HbA1c") is not here.
+# Questions about which operations the patient has had are answered from SURGICAL HISTORY, so a question that names an
+# operation (OPERATIONS) is about the past only through PAST_EVENTS.
+
+# The past, an operation, a procedure or anaesthesia: what ties a general word ("complications", "a biopsy") to the past.
+PAST_CONTEXT = (
+    r"(\b(previous\w*|prior|earlier|past|before|ever|history|after|operations?|operated|surger(y|ies)|surgical|procedures?"
+    r"|an(a)?esthe\w*|admi(tted|ssions?)|hospital\w*)\b|\b(önce\w*|geçmiş\w*|sonra\w*|ameliyat\w*|operasyon\w*|işlem\w*"
+    r"|anestezi\w*|yat[ıi]\w*|geçir\w*|h[ıi]ç)\b)"
+)
 PAST_EVENTS = tuple(re.compile(pattern) for pattern in (
     # English
     r"\b(admitted|admissions?|hospitali[sz](ed|ations?)|hospital stays?)\b",  # stays in hospital
-    r"\bcomplications?\b",  # what went wrong
+    r"\b(been|was|were|stayed) in (the |a )?hospital\b",  # "has she been in hospital before"
     r"\bafter (an? |the |any |his |her )?(procedure|operation|surgery)",  # events after a procedure or operation
-    r"\b(an(a)?esthe\w*|intubat\w*|airway)\b",  # anaesthesia
-    r"\b(need|should|must) to know\b|\bshould know\b",  # "anything I should know about ..."
+    r"\b(an(a)?esthe\w*|intubat\w*|difficult airway)\b",  # anaesthesia
+    r"\b(need|should|must)( i| we)? (to )?know\b",  # "anything I should know about ...", "what should I know"
+    r"\b(should|need to|must) be aware of\b",  # "anything I should be aware of"
+    r"\bpast (medical )?history\b",
     # Turkish
-    r"\byat(ış\w*|tı\w*|mış\w*)",  # yatış, yattı, yatmış: admitted
-    r"\bkomplikasyon\w*",  # complication
+    r"\byat([ıi]ş\w*|t[ıi]\w*|m[ıi]ş\w*|[ıi]r\w*)",  # yatış, yattı, yatmış, yatırıldı: admitted
     r"\b(işlem|ameliyat)\w* sonra",  # after a procedure or operation
     r"\b(anestezi\w*|entübasyon\w*)",  # anaesthesia
-    r"\bbilmem gereken\b",  # "what I need to know"
+    r"\bbilme(m|miz) gereken\b",  # "what I (we) need to know"
+    # Complications, the airway, a procedure or a biopsy, each with the past, an operation, a procedure or
+    # anaesthesia somewhere in the question: not "any diabetic complications?", "when is her procedure scheduled?".
+    rf"\b(complications?|airway|procedures?|biops\w*|komplikasyon\w*|biyopsi\w*)\b(?=.*{PAST_CONTEXT})",
+    rf"{PAST_CONTEXT}.*\b(complications?|airway|procedures?|biops\w*|komplikasyon\w*|biyopsi\w*)",
 ))
-# Asks about the past too, unless the question names an operation.
+# Asks about the past too, unless the question names an operation, a result or a medicine ("has her potassium ever
+# been high?", "daha önce hangi ilaçları kullandı?": the chart's results and medicines answer those).
 PAST_WORDS = tuple(re.compile(pattern) for pattern in (
-    r"\bprocedures?\b",  # English: a procedure
     r"\bever\b",  # English: "has he ever ..."
-    r"\bişlem\w*",  # Turkish: a procedure
     r"\bgeçir(di|miş)\w*",  # Turkish: "inme geçirdi mi", had (an illness)
     r"\bdaha önce\b",  # Turkish: before, previously ("daha önceki" is left out: "the previous value")
 ))
 # An operation, or a surgical specialty ("hepatobiliary surgery", "genel cerrahi").
 OPERATIONS = re.compile(r"\b(operations?|operated|surger(y|ies)|surgical|ameliyat\w*|operasyon\w*|cerrahi\w*)")
+# A result or a medicine.
+RESULTS_OR_MEDICINES = re.compile(
+    r"\b(results?|values?|levels?|tests?|labs?|readings?|high|low|elevated|raised|above|below|normal|abnormal|hba1c|a1c"
+    r"|tsh|e?gfr|potassium|sodium|creatinine|glucose|sugar|cholesterol|ldl|hdl|ha?emoglobin|inr|ferritin|blood pressure"
+    r"|take|takes|taken|taking|took|medicines?|medications?|drugs?|doses?|dosage|prescribed|prescriptions?|pills?|tablets?)\b"
+    r"|\b(sonuç\w*|değer\w*|düzey\w*|seviye\w*|yüksek\w*|düşük\w*|kaç|potasyum\w*|sodyum\w*|kreatinin\w*|glukoz\w*"
+    r"|şeker\w*|kolesterol\w*|hemoglobin\w*|[ıi]laç\w*|kullan\w*|doz\w*|reçete\w*)"
+)
 
 
 def about_the_past(question: str) -> bool:
     """True when the question asks about the patient's past: earlier admissions, complications, anaesthesia, events
     after a procedure, "has he ever ...", "anything I should know about ...", in English or Turkish. Not for a
-    question about which operations the patient has had (SURGICAL HISTORY answers those)."""
-    text = question.lower()
+    question about which operations the patient has had (SURGICAL HISTORY answers those), nor about results, medicines
+    or orders."""
+    text = question.replace("İ", "i").lower()
     if any(pattern.search(text) for pattern in PAST_EVENTS):
         return True
-    return not OPERATIONS.search(text) and any(pattern.search(text) for pattern in PAST_WORDS)
+    if OPERATIONS.search(text) or RESULTS_OR_MEDICINES.search(text):
+        return False
+    return any(pattern.search(text) for pattern in PAST_WORDS)
 
 
 def index_section(record: Record, *, full: bool = False) -> str:

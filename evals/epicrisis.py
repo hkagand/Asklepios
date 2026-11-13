@@ -543,6 +543,11 @@ PRE_READ = (
     "Was she ever hospitalised?", "Any problems with anesthesia in the past?", "Anything I should know about his heart?",
     "Hastaneye hiç yattı mı?", "Önceki yatışlarında komplikasyon gelişti mi?", "Ameliyattan sonra komplikasyon oldu mu?",
     "Anestezi ile ilgili bir sorun yaşadı mı?", "Hiç inme geçirdi mi?",
+    "What should I know about her heart?", "Any past history I should be aware of?",
+    "Anything important in her past medical history?", "Kalbiyle ilgili bilmemiz gereken bir şey var mı?",
+    "Hiç hastaneye yatırıldı mı?", "Has she been in hospital before?", "Any previous biopsies?",
+    # A capital İ lower-cases to "i" and a combining dot: both spellings must fire.
+    "İşlemden sonra kanama oldu mu?", "işlemden sonra kanama oldu mu?",
 )
 # Questions about current results, medicines, orders or the visit, and about which operations the patient has had
 # (answered from SURGICAL HISTORY: the gold questions of category surgery among them): left to the model.
@@ -555,6 +560,11 @@ NO_PRE_READ = (
     "Has he had any abdominal operations?", "Has he had any operations before?", "When did she have her hysterectomy?",
     "What did hepatobiliary surgery say about resection?", "Has she had any operations?", "Has he ever had surgery?",
     "Daha önce ameliyat oldu mu?", "Genel cerrahi ne dedi?",
+    # A procedure that is ordered or due, "ever" or "daha önce" with a result or a medicine, complications or the
+    # airway without the past, an operation, a procedure or anaesthesia.
+    "Is the procedure ordered yet?", "When is her procedure scheduled?", "Has her potassium ever been high?",
+    "Has the eGFR ever been below 30?", "Has she ever taken metformin?", "Daha önce HbA1c kaç idi?",
+    "Daha önce hangi ilaçları kullandı?", "Any diabetic complications?", "Any airway disease?",
 )
 
 
@@ -569,6 +579,49 @@ def check_pre_read(record: Record, record_without: Record) -> list[str]:
     problems += [f"pre-read: {question!r}" for question in NO_PRE_READ if pre_reads(session, question)]
     problems += [f"pre-read without reports: {question!r}" for question in PRE_READ if pre_reads(without, question)]
     problems += [f"pre-read with the reports in the prompt: {question!r}" for question in PRE_READ if pre_reads(in_prompt, question)]
+    # A conversation that already holds a read_epicrisis result is not given the reports again.
+    read = start_session("check", record)
+    call = {"id": "call-0", "type": "function", "function": {"name": "read_epicrisis", "arguments": "{}"}}
+    read.messages += [
+        {"role": "user", "content": PRE_READ[0]},
+        {"role": "assistant", "content": None, "tool_calls": [call]},
+        {"role": "tool", "tool_call_id": "call-0", "content": tools.run(record, "read_epicrisis", "{}").text},
+        {"role": "assistant", "content": "Answered."},
+    ]
+    problems += [f"pre-read again after a read_epicrisis result: {question!r}" for question in PRE_READ if pre_reads(read, question)]
+    return problems
+
+
+async def check_read_once(record: Record) -> list[str]:
+    """Through run_turn with a stub in place of the model: a past question pre-reads the reports once, and a second
+    past question in the same conversation adds no further read_epicrisis result."""
+    import tempfile
+
+    from agent.audit import AuditLog
+    from agent.chat import run_turn
+
+    class Model:
+        model = "stub"
+
+        async def chat(self, messages: list[dict], *, tools: list[dict], tool_choice: str, **_: object) -> tuple[dict, dict]:
+            return {"role": "assistant", "content": "Nothing more to add."}, {}
+
+    def results(session) -> int:
+        ids = {
+            call["id"] for message in session.messages if message["role"] == "assistant"
+            for call in message.get("tool_calls") or [] if call["function"]["name"] == "read_epicrisis"
+        }
+        return sum(message["role"] == "tool" and message["tool_call_id"] in ids for message in session.messages)
+
+    problems = []
+    session = start_session("check", record)
+    with tempfile.TemporaryDirectory() as folder:
+        audit = AuditLog(Path(folder) / "audit.jsonl")
+        for number, question in enumerate(("Has he been admitted to hospital before, and for what?", "Any problems with anesthesia in the past?"), 1):
+            async for _ in run_turn(session, question, llm=Model(), audit=audit, max_steps=2):
+                pass
+            if (found := results(session)) != 1:
+                problems.append(f"after question {number}, {found} read_epicrisis results in the session, expected 1")
     return problems
 
 
@@ -1033,6 +1086,7 @@ async def run_epicrisis(settings, records, anchor: date, seed: int, out: Path) -
         "merging": await check_merging(chart, documents),
         "none on file": check_none_on_file(imported_records(anchor)["p-3001"]),
         "pre-read": check_pre_read(record, imported_records(anchor)["p-3001"]),
+        "read once": await check_read_once(record),
         "units": check_units(),
     }
     for name, problems in checks.items():
