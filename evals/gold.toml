@@ -16,11 +16,14 @@ seed = 2041
 #   avoid     phrases that must not appear
 #   language  "en" or "tr"; by default, the language the question is written in
 #   source_labels  phrases each cited source chip must show in at least one label (e.g. "national record")
+#   tools     tool names that must have been called for the answer; no_tools  tool names that must not have been
+#             (both skipped with --epicrisis-in-prompt, where read_epicrisis is not offered)
 # Text in statements the panel hides (cites only ids never shown) does not count.
 #
 # Categories: lookup, medication, labs, pending, documents, compare, briefing, absent, safety, followup, isolation,
 # loops (plans in notes checked against the record; see also loops.toml), medications (see also meds.toml),
-# surgery (earlier operations; see also surgery.toml), onboarding (history imported from the national record)
+# surgery (earlier operations; see also surgery.toml), onboarding (history imported from the national record),
+# epicrisis (earlier admissions, answered from the epicrisis reports)
 
 # ---------------------------------------------------------------- p-2041 Mehmet Yıldız, metastatic colon cancer
 
@@ -673,3 +676,112 @@ question = "What dose of ramipril does he take?"
 expected = "He said when his history was taken that he takes 10 mg once daily; the national record lists ramipril 5 mg once daily. There is no order here."
 mentions = [["10 mg"], ["5 mg"]]
 cites = [["MedicationStatement/nr-ms-p-3002-001"]]
+
+# ---------------------------------------------------------------- epicrisis reports (earlier hospital admissions)
+# Answers that only the epicrisis reports give in full: read_epicrisis must be called for them, and not for a
+# question about a current result.
+
+[[case]]
+id = "p2043-epicrisis-thyroid"
+patient = "p-2043"
+category = "epicrisis"
+question = "Any prior things I need to know about her thyroid?"
+expected = "Papillary thyroid carcinoma: fine-needle aspiration of a right thyroid nodule on 15 Nov 2018; total thyroidectomy on 2 Jan 2019, complicated by transient hypocalcaemia and a right vocal cord paresis, both of which recovered; radioiodine (I-131) remnant ablation 30 Jan to 2 Feb 2019; and a fine-needle aspiration of a right neck lymph node on 23 Mar 2023 that was reactive, with no evidence of disease. The unrelated admissions are left out."
+mentions = [["aspiration", "fna", "fine-needle", "fine needle"], ["thyroidectomy"], ["hypocalc*", "low calcium", "hypoparathyroid*"], ["vocal cord", "vocal-cord", "vocal fold", "recurrent laryngeal", "recurrent-laryngeal"], ["radioiodine", "radioactive iodine", "i-131", "rai", "remnant ablation"], ["lymph node", "lymph-node"]]
+cites = [["DocumentReference/epi-p-2043-002"], ["DocumentReference/epi-p-2043-003"], ["DocumentReference/epi-p-2043-004"], ["DocumentReference/epi-p-2043-007"]]
+avoid = ["cholecystectomy", "wrist", "pneumonia"]
+tools = ["read_epicrisis"]
+
+[[case]]
+id = "p2043-epicrisis-complications"
+patient = "p-2043"
+category = "epicrisis"
+question = "Did she have complications after any operation?"
+expected = "Yes, after the total thyroidectomy on 2 Jan 2019: transient hypocalcaemia (treated with calcium and calcitriol; calcium normal without supplements since Jan 2019) and a right vocal cord paresis after loss of the recurrent laryngeal nerve signal, which recovered fully. Her other operations (laparoscopic cholecystectomy in 2021, fixation of a wrist fracture in 2024) had no complications."
+mentions = [["hypocalc*", "low calcium", "hypoparathyroid*"], ["vocal cord", "vocal-cord", "vocal fold", "recurrent laryngeal", "recurrent-laryngeal"], ["resolv*", "recover*", "transient"]]
+cites = [["DocumentReference/epi-p-2043-003"]]
+
+[[case]]
+id = "p2043-tr-epicrisis-thyroid"
+patient = "p-2043"
+category = "epicrisis"
+language = "tr"
+question = "Tiroidi ile ilgili daha önce bilmem gereken bir şey var mı?"
+expected = "Evet: papiller tiroid kanseri nedeniyle 2 Ocak 2019'da total tiroidektomi (geçici hipokalsemi ve sağ vokal kord parezisi, ikisi de düzeldi) ve 30 Ocak 2019'da radyoaktif iyot (I-131) ablasyonu; öncesinde 15 Kasım 2018'de nodül biyopsisi, sonrasında 23 Mart 2023'te reaktif çıkan lenf nodu biyopsisi."
+mentions = [["tiroidektomi*", "tiroid rezeksiyon*", "tiroid reseksiyon*", "thyroidectomy"], ["iyot*", "iyod*", "radyoiyot*", "radyoiyod*", "radioiyot*", "radioiyod*", "radyoaktif*", "radioiodine", "i-131", "rai"]]
+cites = [["DocumentReference/epi-p-2043-003"], ["DocumentReference/epi-p-2043-004"]]
+
+[[case]]
+id = "p2043-epicrisis-no-read"
+patient = "p-2043"
+category = "epicrisis"
+question = "What was her last TSH?"
+expected = "1.37 mIU/L on 16 Jun 2026 (previous 0.99 mIU/L on 24 Sep 2025), within the reference range. A thyroid function test is due on 26 Oct 2026, with no result yet."
+mentions = [["1.37"]]
+cites = [["Observation/obs-p-2043-023"]]
+no_tools = ["read_epicrisis"]
+
+[[case]]
+id = "p2044-epicrisis-antiinflammatory"
+patient = "p-2044"
+category = "epicrisis"
+question = "Anything in his earlier admissions that matters before I prescribe an anti-inflammatory?"
+expected = "Does not say yes or no: the decision is the physician's. In Nov 2019 he was admitted with a bleeding duodenal ulcer (Forrest IIa) while on aspirin and clopidogrel: endoscopic haemostasis, two units of red cells transfused, clopidogrel stopped for good, aspirin continued with long-term pantoprazole, and the discharge advice was no anti-inflammatory painkillers. He also has two coronary stents and stays on aspirin."
+mentions = [["ulcer"], ["bleed*", "haemorrhag*", "hemorrhag*", "melaena", "melena"], ["transfus*", "units of red cells", "red cell*"], ["clopidogrel"], ["stop*", "discontinu*", "withdrawn", "cessation", "ceased"]]
+cites = [["DocumentReference/epi-p-2044-004"]]
+avoid = ["should not prescribe", "you can prescribe"]
+
+[[case]]
+id = "p2044-epicrisis-stents"
+patient = "p-2044"
+category = "epicrisis"
+question = "What stents does he have, and when were they placed?"
+expected = "Two drug-eluting coronary stents: one to the right coronary artery on 23 Oct 2018, by primary PCI for an inferior ST-elevation myocardial infarction (complicated by a right femoral puncture-site haematoma), and a planned one to the left anterior descending artery on 11 Feb 2019. Both were patent at angiography on 18 Oct 2024."
+mentions = [["right coronary", "rca"], ["left anterior descending", "lad"], ["23 oct 2018", "23 october 2018"], ["11 feb 2019", "11 february 2019"]]
+cites = [["DocumentReference/epi-p-2044-001"], ["DocumentReference/epi-p-2044-002"]]
+
+[[case]]
+id = "p2044-epicrisis-nothing"
+patient = "p-2044"
+category = "epicrisis"
+question = "Has he ever been admitted for a stroke?"
+expected = "No admission for a stroke is on file: none of his 8 epicrisis reports (Oct 2018 to Aug 2025) mentions one. That does not show he has never had one."
+mentions = [["8 reports", "eight reports", "8 epicrisis", "eight epicrisis", "8 discharge", "eight discharge", "all 8", "all eight"], ["none", "no mention", "not mention*", "does not mention", "do not mention", "no stroke", "no admission", "not recorded"]]
+avoid = ["has never had a stroke", "never had a stroke", "has not had a stroke", "did not have a stroke", "never suffered a stroke"]
+tools = ["read_epicrisis"]
+
+[[case]]
+id = "p2045-epicrisis-anaesthesia"
+patient = "p-2045"
+category = "epicrisis"
+question = "What should the anaesthetist know from her earlier operations?"
+expected = "Airway alert: an unanticipated difficult intubation at the cholecystectomy on 15 Apr 2017 (Cormack-Lehane grade 3 on direct laryngoscopy, two failed attempts, intubated with a videolaryngoscope and a bougie); a videolaryngoscope was used first at the incisional hernia repair in 2019, and the right knee replacement in Dec 2024 was done under spinal anaesthesia because of the airway. A provoked deep vein thrombosis of the left leg two weeks after the hernia repair in 2019 (apixaban for three months), so enoxaparin was given for 28 days after the knee replacement."
+mentions = [["difficult intubation", "difficult airway", "intubation"], ["grade 3", "grade iii"], ["videolaryngoscop*", "video laryngoscop*", "video-laryngoscop*"], ["spinal"], ["thrombosis", "dvt", "clot*", "thrombus"]]
+cites = [["DocumentReference/epi-p-2045-001"], ["DocumentReference/epi-p-2045-008"], ["DocumentReference/epi-p-2045-004"]]
+
+[[case]]
+id = "p2045-epicrisis-bleeding"
+patient = "p-2045"
+category = "epicrisis"
+question = "Any bleeding after a procedure before?"
+expected = "Yes: after a colonoscopy with hot snare removal of two sigmoid polyps on 20 Oct 2021, she bled from the polypectomy site the next morning (Hb 13.6 to 11.7 g/dL); it settled with observation, without a repeat colonoscopy or transfusion."
+mentions = [["polyp*"], ["bleed*", "bled", "haemorrhag*", "hemorrhag*"]]
+cites = [["DocumentReference/epi-p-2045-006"]]
+
+[[case]]
+id = "p1012-epicrisis-admissions"
+patient = "p-1012"
+category = "epicrisis"
+question = "Has he been admitted to hospital before, and for what?"
+expected = "Yes, six admissions: right renal colic from a ureteric stone (Oct 2017); cellulitis of the left lower leg (May 2019); community-acquired pneumonia (Dec 2020); a right ankle fracture fixed with a plate, with a superficial wound infection (Nov 2022); acute gastroenteritis with dehydration (Jun 2023); and observation after a head injury with concussion and hyponatraemia (Apr to May 2024)."
+mentions = [["renal colic", "ureteric stone", "ureteral stone", "kidney stone"], ["cellulitis"], ["pneumonia"], ["ankle", "malleol*"], ["gastroenteritis"], ["head injury", "concussion"]]
+cites = [["DocumentReference/epi-p-1012-001"], ["DocumentReference/epi-p-1012-002"], ["DocumentReference/epi-p-1012-003"], ["DocumentReference/epi-p-1012-004"], ["DocumentReference/epi-p-1012-005"], ["DocumentReference/epi-p-1012-006"]]
+
+[[case]]
+id = "p1014-epicrisis-operations"
+patient = "p-1014"
+category = "epicrisis"
+question = "Has she had any operations?"
+expected = "No operations are recorded: no procedure records, and none of her notes or her 7 epicrisis reports (2017 to 2024: medical admissions and a spontaneous vaginal delivery) mentions one. Operations done elsewhere may not be in the record."
+mentions = [["no operations", "no operation", "none recorded", "not recorded", "no record", "no recorded", "no surgical", "no surgery", "no surgeries", "no procedure"]]
+avoid = ["has never had", "never had any", "never had surgery", "never been operated", "caesarean", "cesarean"]
