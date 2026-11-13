@@ -23,6 +23,7 @@ import re
 from dataclasses import asdict, dataclass, field, replace
 from datetime import date
 
+from .epicrisis import HEADINGS as REPORT_HEADINGS
 from .llm import LlmError
 from .plans import NoteReader, plain
 from .record import Document, Record, day_text, moment, ref_of, text_of
@@ -439,10 +440,10 @@ def from_procedure(record: Record, procedure: dict) -> Mention:
         elsewhere=outside,
         here=not outside,
         complications=tuple(text_of(item) for item in procedure.get("complication", []) if text_of(item)),
-        implants=tuple(
+        implants=lasting(tuple(
             item.get("manipulated", {}).get("display", "") for item in procedure.get("focalDevice", [])
             if item.get("manipulated", {}).get("display")
-        ),
+        )),
         source={"ref": ref, "kind": "procedure", "label": record.label(ref), "quote": None},
     )
 
@@ -463,7 +464,7 @@ def from_document(record: Record, document: Document, operation: Operation) -> M
         elsewhere=operation.elsewhere,
         here=here,
         complications=operation.complications,
-        implants=operation.implants,
+        implants=lasting(operation.implants),
         source={
             "ref": document.ref, "kind": document.kind, "label": record.label(document.ref), "quote": operation.quote,
             "date": document.when.date().isoformat(),
@@ -473,12 +474,21 @@ def from_document(record: Record, document: Document, operation: Operation) -> M
 
 def text_for_reading(document: Document) -> str:
     """The text the reader is given. An epicrisis report ends before its PROCEDURE REPORT block: a diagnostic
-    procedure (endoscopy, angiography, polyp removal) is not an operation. An OPERATION REPORT block is kept."""
+    procedure (endoscopy, angiography, polyp removal) is not an operation. An OPERATION REPORT block is kept. Its PAST
+    AND FAMILY HISTORY block is left out: it repeats earlier operations, which are read from their own reports (and a
+    paraphrase there would add a source, a wording or a complication that belongs to another operation)."""
     if document.kind != "epicrisis":
         return document.text
-    lines = document.text.split("\n")
-    cut = next((index for index, line in enumerate(lines) if line == "PROCEDURE REPORT"), None)
-    return document.text if cut is None else "\n".join(lines[:cut]).rstrip() + "\n"
+    kept, skipping = [], False
+    for line in document.text.split("\n"):
+        heading = line.strip()
+        if heading == "PROCEDURE REPORT":
+            break
+        if heading in REPORT_HEADINGS:
+            skipping = heading == "PAST AND FAMILY HISTORY"
+        if not skipping:
+            kept.append(line)
+    return "\n".join(kept).rstrip() + "\n"
 
 
 # The reader is a model, and its instruction to leave out diagnostic tests, biopsies and polyp removal is not reliably
@@ -504,6 +514,18 @@ OPERATIVE_WORDS = re.compile(
     r"sentinel|\bcone\b|\bopen\b|turbt|lithotrips|\bd ?& ?c\b|curettage|\bpeg\b|laparoscop",
     re.IGNORECASE,
 )
+
+
+# Devices that come out again (or dissolve) are not implants, though the reader lists them when a report names them
+# ("subhepatic drain; skin clips"): the drain was removed on day 3. A name with a lasting device stays ("mesh fixed with
+# tacks", "port with its catheter").
+TEMPORARY_DEVICE = re.compile(r"\b(?:drains?|clips?|sutures?|staples?|packs?|packing|catheters?)\b", re.IGNORECASE)
+LASTING_DEVICE = re.compile(r"mesh|prosthe|port|stent|plate|screw|nail|wire|pacemaker|defibrillator|valve|graft|implant|component|lens", re.IGNORECASE)
+
+
+def lasting(implants: tuple[str, ...]) -> tuple[str, ...]:
+    """The implants that stay in the body: without drains, clips, sutures, staples, packs and catheters."""
+    return tuple(item for item in implants if not TEMPORARY_DEVICE.search(item) or LASTING_DEVICE.search(item))
 
 
 def _gut_polyp(name: str) -> bool:

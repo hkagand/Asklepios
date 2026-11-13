@@ -6,7 +6,8 @@
 #                implant (a phrase), only_in_notes (true when no Procedure record exists), years_differ (the years the
 #                sources give when they disagree), sources (source kinds that must all be among its sources:
 #                "procedure", "note", "report", "epicrisis"; an epicrisis is a hospital discharge report, whose operation
-#                report states the operation on its own date).
+#                report states the operation on its own date), no_implant and no_complication (phrases that none of its
+#                implants or complications may say: a temporary device, another operation's complication).
 #   none_stated  true when a note says the patient has had no operations.
 # Every listed operation that no expectation matches counts as a false alarm, so a patient with no operations
 # expected must have none listed. Planned operations ("laparoscopic cholecystectomy", "possible conversion to
@@ -146,9 +147,9 @@ operations = [
 id = "p-2043"
 # The thyroid and neck lymph node aspirations are diagnostic procedures and the radioiodine a medicine: not operations.
 operations = [
-  { match = "thyroidectomy", year = 2019, region = "head_neck", sources = ["procedure", "epicrisis"] },
-  { match = "cholecystectomy", year = 2021, region = "abdomen", approach = "laparoscopic", sources = ["procedure", "epicrisis"] },
-  { match = "radius", year = 2024, region = "spine_limbs", approach = "open", implant = "plate", sources = ["procedure", "epicrisis"] },
+  { match = "thyroidectomy", year = 2019, region = "head_neck", sources = ["procedure", "epicrisis"], no_implant = ["drain*"] },
+  { match = "cholecystectomy", year = 2021, region = "abdomen", approach = "laparoscopic", sources = ["procedure", "epicrisis"], no_implant = ["drain*", "clip*"], no_complication = ["hypocalc*", "vocal cord*"] },
+  { match = "radius", year = 2024, region = "spine_limbs", approach = "open", implant = "plate", sources = ["procedure", "epicrisis"], no_complication = ["hypocalc*", "vocal cord*"] },
 ]
 
 [[patient]]
@@ -156,9 +157,9 @@ id = "p-2044"
 # The two stents are operations here; the coronary angiography and the gastroscopy with clips are diagnostic
 # procedures, not operations.
 operations = [
-  { match = "right coronary", year = 2018, region = "chest", approach = "percutaneous", implant = "stent", sources = ["procedure", "epicrisis"] },
-  { match = "left anterior descending", year = 2019, region = "chest", approach = "percutaneous", implant = "stent", sources = ["procedure", "epicrisis"] },
-  { match = "hernia", year = 2021, region = "abdomen", approach = "open", implant = "mesh", sources = ["procedure", "epicrisis"] },
+  { match = "right coronary", year = 2018, region = "chest", approach = "percutaneous", implant = "stent", sources = ["procedure", "epicrisis"], no_complication = ["ulcer*"] },
+  { match = "left anterior descending", year = 2019, region = "chest", approach = "percutaneous", implant = "stent", sources = ["procedure", "epicrisis"], no_complication = ["haematoma*", "ulcer*"] },
+  { match = "hernia", year = 2021, region = "abdomen", approach = "open", implant = "mesh", sources = ["procedure", "epicrisis"], no_implant = ["drain*"], no_complication = ["haematoma*", "ulcer*"] },
 ]
 
 [[patient]]
@@ -166,7 +167,7 @@ id = "p-2045"
 # The cholecystectomy was started laparoscopically and converted to open: its approach is open. The colonoscopy with
 # polyp removal is a diagnostic procedure, not an operation; the repair of the recurrent hernia is only planned.
 operations = [
-  { match = "cholecystectomy", year = 2017, region = "abdomen", approach = "open", sources = ["procedure", "epicrisis"] },
-  { match = "hernia", year = 2019, region = "abdomen", approach = "open", implant = "mesh", sources = ["procedure", "epicrisis"] },
-  { match = "knee replacement", year = 2024, region = "spine_limbs", implant = "prosthesis", sources = ["procedure", "epicrisis"] },
+  { match = "cholecystectomy", year = 2017, region = "abdomen", approach = "open", sources = ["procedure", "epicrisis"], no_implant = ["drain*", "clip*"], no_complication = ["thrombos*", "polyp*"] },
+  { match = "hernia", year = 2019, region = "abdomen", approach = "open", implant = "mesh", sources = ["procedure", "epicrisis"], no_implant = ["drain*"], no_complication = ["wound infection*", "polyp*"] },
+  { match = "knee replacement", year = 2024, region = "spine_limbs", implant = "prosthesis", sources = ["procedure", "epicrisis"], no_implant = ["drain*"], no_complication = ["wound infection*", "thrombos*", "polyp*"] },
 ]

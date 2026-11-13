@@ -380,6 +380,26 @@ def check_surgery_text(record: Record, documents: dict[str, dict]) -> list[str]:
     given = text_for_reading(operation)
     if "OPERATION REPORT" not in given.splitlines() or "OPERATION NOTE" not in given.splitlines() or "Uneventful." not in given:
         problems.append("operation: the reader is not given the operation report with its note")
+
+    # The PAST AND FAMILY HISTORY block repeats earlier operations: the reader reads each from its own report.
+    past = "Previous operations: open appendicectomy (2001)."
+    text = operation.text.replace("PAST AND FAMILY HISTORY\nNone.\n", f"PAST AND FAMILY HISTORY\n{past}\n")
+    if text == operation.text:
+        problems.append("operation: could not write a past operation into PAST AND FAMILY HISTORY")
+    # The same, with trailing spaces after the headings and CRLF line endings.
+    spaced = re.sub(r"(?m)^([A-Z][A-Z -]+)$", r"\1  ", text).replace("\n", "\r\n")
+    diagnostic_spaced = re.sub(r"(?m)^([A-Z][A-Z -]+)$", r"\1  ", diagnostic.text).replace("\n", "\r\n")
+    for label, written in (("operation", text), ("operation, spaced", spaced)):
+        given = text_for_reading(_with_text(record, operation.ref, written).document_by_ref[operation.ref])
+        lines = [line.strip() for line in given.splitlines()]
+        if "PAST AND FAMILY HISTORY" in lines or past in given:
+            problems.append(f"{label}: the reader is given the PAST AND FAMILY HISTORY block")
+        missing = [heading for heading in HEADINGS + ("OPERATION REPORT", "OPERATION NOTE") if heading != "PAST AND FAMILY HISTORY" and heading not in lines]
+        if missing or "Uneventful." not in given or "Treated with antibiotics." not in given:
+            problems.append(f"{label}: the reader is not given the rest of the report (missing {missing})")
+    given = text_for_reading(_with_text(record, diagnostic.ref, diagnostic_spaced).document_by_ref[diagnostic.ref])
+    if "PROCEDURE REPORT" in [line.strip() for line in given.splitlines()]:
+        problems.append("diagnostic, spaced: the reader is given the PROCEDURE REPORT block")
     return problems
 
 
@@ -472,6 +492,21 @@ async def check_surgery_filter(chart, documents: dict[str, dict]) -> list[str]:
     if not (last.startswith("- Not counted as operations: ") and "polyp removal (" in last and "endoscopic polypectomy (" in last):
         problems.append(f"the index section's last line is {last!r}, expected the operations not counted")
     return problems
+
+
+async def check_implants(chart, documents: dict[str, dict]) -> list[str]:
+    """Drains, clips, sutures, staples, packs and catheters are not implants: of "subhepatic drain; skin clips;
+    polypropylene mesh" only the mesh is listed."""
+    from dataclasses import replace
+
+    from agent.surgery import surgical_history
+
+    operation = replace(_stub_operation("Open incisional hernia repair"), implants=("subhepatic drain", "skin clips", "polypropylene mesh"))
+    record = record_of(chart, date(2026, 11, 13))
+    record.procedures = []
+    history = await surgical_history(record, _stub_reader(f"DocumentReference/{documents['operation']['id']}", operation))
+    implants = [item["implants"] for item in history["operations"]]
+    return [] if implants == [["polypropylene mesh"]] else [f"the implants listed are {implants}, expected only the mesh"]
 
 
 STENT_NAMES = (
@@ -1146,6 +1181,7 @@ async def run_epicrisis(settings, records, anchor: date, seed: int, out: Path) -
         "surgery text": check_surgery_text(record, documents),
         "diagnostic names": check_diagnostic_names(records),
         "surgery filter": await check_surgery_filter(chart, documents),
+        "implants": await check_implants(chart, documents),
         "stent family": await check_stent_family(chart, documents),
         "merging": await check_merging(chart, documents),
         "none on file": check_none_on_file(imported_records(anchor)["p-3001"]),

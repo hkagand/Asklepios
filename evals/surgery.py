@@ -33,6 +33,9 @@ def wrong(item: dict, operation: dict) -> list[str]:
         problems.append(f"approach {operation['approach']}, expected {item['approach']}")
     if "implant" in item and not any(says(implant, item["implant"]) for implant in operation["implants"]):
         problems.append(f"implants {operation['implants']}, expected {item['implant']}")
+    for key, field in (("no_implant", "implants"), ("no_complication", "complications")):
+        if forbidden := [text for text in operation[field] if any(says(text, phrase) for phrase in item.get(key, []))]:
+            problems.append(f"{field} {forbidden}, none may say {item[key]}")
     if "only_in_notes" in item and operation["onlyInNotes"] != item["only_in_notes"]:
         problems.append(f"only in notes {operation['onlyInNotes']}, expected {item['only_in_notes']}")
     if "years_differ" in item and operation["yearsDiffer"] != item["years_differ"]:

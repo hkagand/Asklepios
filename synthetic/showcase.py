@@ -1449,7 +1449,8 @@ def repeated_surgery(s: Story) -> None:
                     f"{t.cholecystectomy.year}; a videolaryngoscope was needed in {t.cholecystectomy.year} and "
                     f"{t.hernia.year}; her knee was replaced under spinal anaesthesia in {t.knee.year} for that reason); a "
                     f"provoked deep vein thrombosis after the hernia repair in {t.hernia.year}, so extended thromboprophylaxis "
-                    "after the operation; a wound infection after the first operation; bleeding after a polyp removal in "
+                    f"after the operation; a wound infection after the cholecystectomy in {t.cholecystectomy.year}; "
+                    "bleeding after a polyp removal in "
                     f"{(t.colonoscopy + timedelta(days=1)).year}, which settled without transfusion.",
                     "Hypertension on amlodipine 5 mg once daily; blood pressure controlled.",
                 ]),
