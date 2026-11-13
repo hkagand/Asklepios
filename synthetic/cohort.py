@@ -2514,4 +2514,16 @@ def build_cohort(anchor: date, seed: int = 2041) -> list[PatientChart]:
     second.resources[0]["identifier"].append({"system": NATIONAL_ID, "value": "00000002042"})
     add_background(second, gallstone_disease.__name__, 0, anchor, seed)
     charts.append(second)
+
+    # The showcase patients (synthetic/showcase.py), each with its own random numbers; their reports are their own.
+    from showcase import thyroid_cancer, thyroid_cancer_reports  # showcase.py builds on this module
+
+    third = PatientChart(
+        number=2043, given="Melahat", family="Tozkoparan", gender="female", birth_date=date(anchor.year - 54, 2, 7),
+        city="Ankara", gp=AYDIN,
+    )
+    # 15:30 is not among CLINIC_TIMES, so no other appointment with Dr. Selin Arslan is at that time.
+    thyroid_cancer(Story(random.Random(seed + 2), anchor, third, at(add_workdays(anchor, 5), 15, 30)))
+    thyroid_cancer_reports(third, anchor, seed)
+    charts.append(third)
     return charts

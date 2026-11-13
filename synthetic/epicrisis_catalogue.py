@@ -58,6 +58,8 @@ PROBLEM_NAMES = {
     "N92.0": "heavy menstrual bleeding",
     "D25.9": "a uterine fibroid",
     "K80.2": "gallstones",
+    "C73": "papillary thyroid carcinoma",
+    "E89.0": "hypothyroidism after thyroidectomy",
 }
 # Operations a patient had elsewhere, known only from a note, by story: (year, words for a past history).
 OUTSIDE_OPERATIONS = {

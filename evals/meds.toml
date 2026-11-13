@@ -95,3 +95,8 @@ findings = []
 id = "p-2042"
 # No medication orders and none taken per the notes.
 findings = []
+
+[[patient]]
+id = "p-2043"
+# Levothyroxine 100 micrograms in every note, as ordered.
+findings = []

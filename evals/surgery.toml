@@ -141,3 +141,12 @@ operations = [
   { match = "hernia", year = 2015, region = "abdomen", approach = "open", implant = "mesh", sources = ["procedure", "note"] },
   { match = "ercp", region = "abdomen", approach = "endoscopic", sources = ["procedure", "report", "epicrisis"] },
 ]
+
+[[patient]]
+id = "p-2043"
+# The thyroid and neck lymph node aspirations are diagnostic procedures and the radioiodine a medicine: not operations.
+operations = [
+  { match = "thyroidectomy", year = 2019, region = "head_neck", sources = ["procedure", "epicrisis"] },
+  { match = "cholecystectomy", year = 2021, region = "abdomen", approach = "laparoscopic", sources = ["procedure", "epicrisis"] },
+  { match = "radius", year = 2024, region = "spine_limbs", approach = "open", implant = "plate", sources = ["procedure", "epicrisis"] },
+]

@@ -151,3 +151,11 @@ items = [
   { match = "liver tests", status = "to_review" },
   { match = "general surgery referral", status = ["pending", "done"] },
 ]
+
+[[patient]]
+id = "p-2043"
+# Treated thyroid cancer; the pre-visit thyroid tests are ordered and the endocrinology visit booked, both after the anchor.
+items = [
+  { match = "tsh", status = "pending" },
+  { match = "endocrinology follow-up", status = "pending" },
+]

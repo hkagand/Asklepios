@@ -425,6 +425,43 @@ def _words(text: str) -> set[str]:
     return set(re.findall(r"[a-z]+", text.lower())) - STOP_WORDS
 
 
+def _procedure_problems(pid: str, docs: list[dict], found: dict, tagged_procedures: set[str]) -> list[str]:
+    """A procedure report has no tagged Procedure; each tagged Procedure is cited by exactly one operation report."""
+    problems = []
+    for doc in docs:
+        ref = f"DocumentReference/{doc['id']}"
+        text = found[ref].text
+        related = [item["reference"].split("/", 1)[1] for item in doc.get("context", {}).get("related", [])]
+        if "PROCEDURE REPORT" in text.splitlines() and any(key in tagged_procedures for key in related):
+            problems.append(f"{pid}: {ref} is a procedure report with a tagged Procedure")
+    for key in tagged_procedures:
+        citing = [
+            doc for doc in docs
+            if f"Procedure/{key}" in [item["reference"] for item in doc.get("context", {}).get("related", [])]
+            and "OPERATION REPORT" in found[f"DocumentReference/{doc['id']}"].text.splitlines()
+        ]
+        if len(citing) != 1:
+            problems.append(f"{pid}: Procedure/{key} is referenced by {len(citing)} operation reports")
+    return problems
+
+
+def _prescription_problems(pid: str, resources: list[dict], found: dict) -> list[str]:
+    """A long-term medicine in a discharge prescription has an order active on the discharge day."""
+    problems = []
+    orders = [item for item in resources if item["resourceType"] == "MedicationRequest" and _long_term(item)]
+    names = {_medicine_name(item) for item in orders}
+    for ref, item in found.items():
+        for line in _section(item.text, "DISCHARGE PRESCRIPTION"):
+            for name in names:
+                if name in line.lower() and not any(
+                    _medicine_name(order) == name and _order_period(order)[0] <= item.discharged
+                    and (_order_period(order)[1] is None or item.discharged <= _order_period(order)[1])
+                    for order in orders
+                ):
+                    problems.append(f"{pid}: {ref} prescribes {name} with no order active on {item.discharged}")
+    return problems
+
+
 def check_background_chart(chart, anchor: date, closed: set[str]) -> list[str]:
     """Problems with one existing chart's background reports."""
     sys.path.insert(0, str(ROOT / "synthetic"))
@@ -454,20 +491,7 @@ def check_background_chart(chart, anchor: date, closed: set[str]) -> list[str]:
     if not any(not (_words(item.title) & condition_words) for item in found.values()):
         problems.append(f"{pid}: every report's title shares a word with the chart's conditions")
 
-    for doc in docs:
-        ref = f"DocumentReference/{doc['id']}"
-        text = found[ref].text
-        related = [item["reference"].split("/", 1)[1] for item in doc.get("context", {}).get("related", [])]
-        if "PROCEDURE REPORT" in text.splitlines() and any(key in tagged_procedures for key in related):
-            problems.append(f"{pid}: {ref} is a procedure report with a tagged Procedure")
-    for key in tagged_procedures:
-        citing = [
-            doc for doc in docs
-            if f"Procedure/{key}" in [item["reference"] for item in doc.get("context", {}).get("related", [])]
-            and "OPERATION REPORT" in found[f"DocumentReference/{doc['id']}"].text.splitlines()
-        ]
-        if len(citing) != 1:
-            problems.append(f"{pid}: Procedure/{key} is referenced by {len(citing)} operation reports")
+    problems += _procedure_problems(pid, docs, found, tagged_procedures)
 
     if pid in closed and tagged_procedures:
         problems.append(f"{pid}: closed to new operations but has {len(tagged_procedures)} new Procedure records")
@@ -492,17 +516,7 @@ def check_background_chart(chart, anchor: date, closed: set[str]) -> list[str]:
             for ref, item in found.items() if item.admitted <= end and start <= item.discharged
         ]
 
-    orders = [item for item in resources if item["resourceType"] == "MedicationRequest" and _long_term(item)]
-    names = {_medicine_name(item) for item in orders}
-    for ref, item in found.items():
-        for line in _section(item.text, "DISCHARGE PRESCRIPTION"):
-            for name in names:
-                if name in line.lower() and not any(
-                    _medicine_name(order) == name and _order_period(order)[0] <= item.discharged
-                    and (_order_period(order)[1] is None or item.discharged <= _order_period(order)[1])
-                    for order in orders
-                ):
-                    problems.append(f"{pid}: {ref} prescribes {name} with no order active on {item.discharged}")
+    problems += _prescription_problems(pid, resources, found)
 
     codes = {coding["code"] for item in conditions for coding in item["code"]["coding"]}
     born = date.fromisoformat(resources[0]["birthDate"])
@@ -542,13 +556,18 @@ def check_background(anchors: list[date], seed: int) -> list[str]:
     sys.path.insert(0, str(ROOT / "synthetic"))
     from epicrisis import CLOSED
     from national import imported_charts
+    from showcase import SHOWCASE
 
     problems = []
     if set(CLOSED) != set(CLOSED_PATIENTS.values()):
         problems.append(f"CLOSED is {sorted(CLOSED)}, expected {sorted(CLOSED_PATIENTS.values())}")
     for anchor in anchors:
         charts = build_charts(anchor, seed)
-        problems += [f"{anchor}: {problem}" for chart in charts for problem in check_background_chart(chart, anchor, set(CLOSED_PATIENTS))]
+        problems += [
+            f"{anchor}: {problem}"
+            for chart in charts if chart.pid not in SHOWCASE
+            for problem in check_background_chart(chart, anchor, set(CLOSED_PATIENTS))
+        ]
         again = build_charts(anchor, seed)
         if json.dumps([chart.resources for chart in charts], sort_keys=True) != json.dumps([chart.resources for chart in again], sort_keys=True):
             problems.append(f"{anchor}: two builds differ")
@@ -558,14 +577,103 @@ def check_background(anchors: list[date], seed: int) -> list[str]:
     return problems
 
 
+# The showcase patients (synthetic/showcase.py) that must be in the cohort, each with pairs of phrases that some one of
+# their reports must both contain (case-insensitive), and the long-term medicine each has an active order for.
+REQUIRED = {
+    "p-2043": [("fine-needle aspiration", "thyroid"), ("total thyroidectomy", "hypocalc"), ("total thyroidectomy", "vocal cord"),
+               ("radioiodine", ""), ("fine-needle aspiration", "lymph node"), ("cholecystectomy", ""), ("wrist", "plate"), ("pneumonia", "")],
+}
+ACTIVE_MEDICINE = {"p-2043": "levothyroxine"}
+
+
+def _overlaps(first: dict, second: dict) -> bool:
+    return first["start"] < second["end"] and second["start"] < first["end"]
+
+
+def _clinicians(appointment: dict) -> set[str]:
+    return {actor["actor"]["reference"] for actor in appointment["participant"] if actor["actor"]["reference"].startswith("Practitioner/")}
+
+
+def check_showcase(charts: dict, records: dict[str, Record], anchor: date) -> list[str]:
+    """The showcase patients' reports, problem lists, orders, notes and next appointment, at one anchor. `charts` and
+    `records` are keyed by patient id."""
+    sys.path.insert(0, str(ROOT / "synthetic"))
+    from national import imported_charts
+    from showcase import SHOWCASE
+
+    problems = [f"{pid} is not in the cohort" for pid in REQUIRED if pid not in charts]
+    booked = [item for chart in charts.values() for item in chart.resources if item["resourceType"] == "Appointment"]
+    booked += [item for resources in imported_charts(anchor).values() for item in resources if item["resourceType"] == "Appointment"]
+    earliest = date.fromordinal(anchor.toordinal() - 3653)
+    for pid in (pid for pid in SHOWCASE if pid in charts):
+        resources, record = charts[pid].resources, records[pid]
+        docs = [item for item in resources if item["resourceType"] == "DocumentReference" and tagged(item)]
+        found = {item.ref: item for item in reports(record)}
+        if not 8 <= len(found) <= 10:
+            problems.append(f"{pid}: {len(found)} reports")
+        if unreadable := [ref for ref, item in found.items() if not item.readable]:
+            problems.append(f"{pid}: not readable: {', '.join(unreadable)}")
+            continue
+        problems += [
+            f"{pid}: {ref} from {item.admitted} to {item.discharged}"
+            for ref, item in found.items() if not earliest <= item.admitted <= item.discharged < anchor
+        ]
+        for first, second in REQUIRED.get(pid, []):
+            if not any(first in item.text.lower() and second in item.text.lower() for item in found.values()):
+                problems.append(f"{pid}: no report holds both {first!r} and {second!r}")
+        problems += _prescription_problems(pid, resources, found)
+        tagged_procedures = {item["id"] for item in resources if item["resourceType"] == "Procedure" and tagged(item)}
+        problems += _procedure_problems(pid, docs, found, tagged_procedures)
+        operations = [item for item in found.values() if "OPERATION REPORT" in item.text.splitlines()]
+        if len(operations) != len(tagged_procedures):
+            problems.append(f"{pid}: {len(operations)} operation reports, {len(tagged_procedures)} tagged Procedure records")
+
+        if not any(item["resourceType"] == "Condition" for item in resources):
+            problems.append(f"{pid}: no conditions")
+        medicine = ACTIVE_MEDICINE.get(pid)
+        if medicine and not any(
+            item["resourceType"] == "MedicationRequest" and item["status"] == "active" and _medicine_name(item).startswith(medicine)
+            and _order_period(item)[0] <= anchor and _order_period(item)[1] is None
+            for item in resources
+        ):
+            problems.append(f"{pid}: no active {medicine} order")
+        notes = [item for item in resources if item["resourceType"] == "DocumentReference" and not tagged(item)]
+        if len(notes) < 2:
+            problems.append(f"{pid}: {len(notes)} notes")
+
+        appointments = [item for item in resources if item["resourceType"] == "Appointment"]
+        upcoming = [item for item in appointments if item["start"][:10] >= anchor.isoformat()]
+        if len(upcoming) != 1 or len(appointments) != 1:
+            problems.append(f"{pid}: {len(appointments)} appointments, {len(upcoming)} on or after {anchor}")
+        for appointment in upcoming:
+            clash = [
+                item["id"] for item in booked
+                if item is not appointment and _clinicians(item) & _clinicians(appointment) and _overlaps(item, appointment)
+            ]
+            if clash:
+                problems.append(f"{pid}: the appointment at {appointment['start']} collides with {', '.join(clash)}")
+
+        problems += [f"{pid}: latest_notes includes {document.ref}" for document in latest_notes(record) if document.ref in found]
+        others = sorted({item["resourceType"] for item in resources if tagged(item)} - {"DocumentReference", "Procedure"})
+        if others:
+            problems.append(f"{pid}: tagged {', '.join(others)}")
+    return problems
+
+
 async def run_epicrisis(settings, records, anchor: date, seed: int, out: Path) -> int:
     sys.path.insert(0, str(ROOT / "synthetic"))
     from chart import at
 
     chart, documents, after_operation = scratch_chart()
+    showcase = []
+    for day in (anchor, *BACKGROUND_ANCHORS):
+        charts = {item.pid: item for item in build_charts(day, seed)}
+        found = check_showcase(charts, {pid: record_of(item, day) for pid, item in charts.items()}, day)
+        showcase += [f"{day}: {problem}" for problem in found]
     checks = {
         "untouched": check_untouched(anchor, seed),
         "background": check_background([anchor, *BACKGROUND_ANCHORS], seed),
+        "showcase": showcase,
         "format": check_format(chart, documents, after_operation),
     }
     plain = chart.note(when=at(date(2026, 7, 1), 10), author=chart.gp, title="Follow-up visit", body="Well. No new complaints.")
