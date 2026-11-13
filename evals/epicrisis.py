@@ -179,6 +179,8 @@ def check_format(chart, documents: dict[str, dict], after_operation: int) -> lis
         problems.append(f"expected one Procedure after the operation, found {after_operation}")
     elif not tagged(procedures[0]):
         problems.append("the Procedure is not tagged")
+    elif not procedures[0]["id"].startswith("eproc-p-9001-"):
+        problems.append(f"the Procedure's id {procedures[0]['id']} does not start with eproc-p-9001-")
     else:
         related = [item.get("reference") for item in second.get("context", {}).get("related", [])]
         if related != [f"Procedure/{procedures[0]['id']}"]:
@@ -217,6 +219,15 @@ def check_kinds(record: Record, plain_note_ref: str) -> list[str]:
     problems += [f"latest_notes includes {ref}" for ref in refs if ref in latest]
     visits = next((section for section in record.index().split("\n\n") if section.startswith("VISITS AND NOTES")), "")
     problems += [f"{ref} is listed under VISITS AND NOTES" for ref in refs if ref in visits]
+    # The tag is matched on its system and code: the same code under another system is not an epicrisis report.
+    resource = json.loads(json.dumps(record.resources[plain_note_ref]))
+    resource.setdefault("meta", {})["tag"] = [{"system": "urn:example:other", "code": TAG["code"]}]
+    found: dict[str, list[dict]] = defaultdict(list)
+    for key, item in record.resources.items():
+        if item["resourceType"] != "Patient":
+            found[item["resourceType"]].append(resource if key == plain_note_ref else item)
+    if Record(record.patient, dict(found), today=record.today).document_by_ref[plain_note_ref].kind != "note":
+        problems.append("a note tagged 'epicrisis' under another system is read as an epicrisis report")
     return problems
 
 
@@ -519,6 +530,34 @@ async def check_implants(chart, documents: dict[str, dict]) -> list[str]:
     history = await surgical_history(record, _stub_reader(f"DocumentReference/{documents['operation']['id']}", operation))
     implants = [item["implants"] for item in history["operations"]]
     return [] if implants == [["polypropylene mesh"]] else [f"the implants listed are {implants}, expected only the mesh"]
+
+
+def check_surgery_tidy() -> list[str]:
+    """A statement of no operations is listed once, the newest, with its document's kind and date; the nose is head and
+    neck."""
+    from agent.surgery import index_section as surgery_index, region_of
+
+    names = ("Septoplasty", "Nasal polypectomy", "Reduction of a broken nose")
+    problems = [f"{name!r} is not head and neck" for name in names if region_of(name) != "head_neck"]
+    statement = "No previous operations."
+    history = {
+        "operations": [], "clues": [], "leftOut": [],
+        "noneStated": [
+            {"ref": "DocumentReference/epi-1", "kind": "epicrisis", "label": "Epicrisis", "date": "2019-03-02", "quote": statement},
+            {"ref": "DocumentReference/doc-1", "kind": "note", "label": "Note", "date": "2021-05-04", "quote": "No previous operations"},
+            {"ref": "DocumentReference/epi-2", "kind": "epicrisis", "label": "Epicrisis", "date": "2023-07-08", "quote": statement},
+            {"ref": "DocumentReference/doc-2", "kind": "note", "label": "Note", "date": "2020-01-01", "quote": "Never had surgery."},
+        ],
+        "searched": {"procedures": 0, "notes": 2, "reports": 0, "epicrisis": 2, "documentsRead": 4, "earliest": None},
+    }
+    lines = [line for line in surgery_index(history).splitlines() if "states:" in line]
+    expected = [
+        f'- An epicrisis report of 8 Jul 2023 states: "{statement}" [DocumentReference/epi-2]',
+        '- A note of 1 Jan 2020 states: "Never had surgery." [DocumentReference/doc-2]',
+    ]
+    if lines != expected:
+        problems.append(f"the statements of no operations are listed as {lines}, expected {expected}")
+    return problems
 
 
 STENT_NAMES = (
@@ -1197,6 +1236,7 @@ async def run_epicrisis(settings, records, anchor: date, seed: int, out: Path) -
         "diagnostic names": check_diagnostic_names(records),
         "surgery filter": await check_surgery_filter(chart, documents),
         "implants": await check_implants(chart, documents),
+        "surgery tidy": check_surgery_tidy(),
         "stent family": await check_stent_family(chart, documents),
         "merging": await check_merging(chart, documents),
         "none on file": check_none_on_file(imported_records(anchor)["p-3001"]),

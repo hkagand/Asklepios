@@ -147,11 +147,13 @@ function EpicrisisDetail({ report }: { report: fhir4.DocumentReference }) {
   const body = attachmentText(report.content.map((content) => content.attachment))
   const facts = epicrisisFacts(report)
   const doctor = report.author?.[0]?.display
-  const period = facts.admitted && facts.discharged ? `${facts.admitted} – ${facts.discharged}` : formatDate(report.date)
+  // An unreadable report has only the document's date, which is the discharge date, not the admission.
+  const period =
+    facts.admitted && facts.discharged ? `Admitted ${facts.admitted} – ${facts.discharged}` : `Dated ${formatDate(report.date)}`
   return (
     <Card
       title={report.description ?? 'Epicrisis report'}
-      subtitle={`Admitted ${period}${facts.service ? ` · ${facts.service}` : ''}${doctor ? ` · ${doctor}` : ''}`}
+      subtitle={`${period}${facts.service ? ` · ${facts.service}` : ''}${doctor ? ` · ${doctor}` : ''}`}
       action={<SourceButton resource={report} label="Report" />}
     >
       {body ? <DocumentText text={body} /> : <Empty>No report text attached.</Empty>}

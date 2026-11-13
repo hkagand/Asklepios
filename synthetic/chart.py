@@ -786,12 +786,13 @@ class PatientChart:
         device: str | None = None,
         report: dict | None = None,
         note: str | None = None,
+        prefix: str = "proc",
     ) -> dict:
-        """A completed procedure. `performed` as text ("1996") for history the patient reports."""
+        """A completed procedure. `performed` as text ("1996") for history the patient reports. `prefix` begins its id."""
         code: dict = {"text": text}
         if snomed:
             code["coding"] = [{"system": SNOMED, "code": snomed[0], "display": snomed[1]}]
-        procedure = self._base("Procedure", "proc") | {"status": "completed"}
+        procedure = self._base("Procedure", prefix) | {"status": "completed"}
         if surgical:
             procedure["category"] = {"coding": [{"system": SNOMED, "code": "387713003", "display": "Surgical procedure"}]}
         procedure |= {"code": code, "subject": self.ref}

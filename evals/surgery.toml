@@ -54,16 +54,15 @@ operations = []
 
 [[patient]]
 id = "p-1007"
-# The reader has no words for the nose, so a septoplasty falls under "other".
 operations = [
-  { match = "septoplasty", year = 2018, region = "other", sources = ["procedure", "epicrisis"] },
+  { match = "septoplasty", year = 2018, region = "head_neck", sources = ["procedure", "epicrisis"] },
   { match = "hernia", year = 2022, region = "abdomen", approach = "open", implant = "mesh", sources = ["procedure", "epicrisis"] },
 ]
 
 [[patient]]
 id = "p-1008"
 operations = [
-  { match = "septoplasty", year = 2020, region = "other", sources = ["procedure", "epicrisis"] },
+  { match = "septoplasty", year = 2020, region = "head_neck", sources = ["procedure", "epicrisis"] },
 ]
 
 [[patient]]
@@ -123,7 +122,7 @@ operations = [
 [[patient]]
 id = "p-1018"
 operations = [
-  { match = "septoplasty", year = 2017, region = "other", sources = ["procedure", "epicrisis"] },
+  { match = "septoplasty", year = 2017, region = "head_neck", sources = ["procedure", "epicrisis"] },
   { match = "ankle", year = 2018, region = "spine_limbs", approach = "open", implant = "plate", sources = ["procedure", "epicrisis"] },
 ]
 

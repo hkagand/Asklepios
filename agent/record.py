@@ -17,8 +17,8 @@ from datetime import date, datetime, timedelta, timezone
 TZ = timezone(timedelta(hours=3))
 # On an item imported from the national record: an extension whose valueDate is the day its history was taken.
 IMPORTED_ON = "urn:demo:asklepios:imported-on"
-# The meta.tag code on an epicrisis report (a hospital discharge report): such a DocumentReference is not a note.
-EPICRISIS_TAG = "epicrisis"
+# The meta.tag on an epicrisis report (a hospital discharge report): such a DocumentReference is not a note.
+EPICRISIS_TAG = {"system": "urn:demo:asklepios", "code": "epicrisis"}
 EARLIEST = datetime(1900, 1, 1, tzinfo=TZ)
 MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
@@ -238,7 +238,10 @@ class Record:
     def _note(self, note: dict) -> Document:
         """A note, or an epicrisis report when the DocumentReference carries the epicrisis tag."""
         attachment = first(note.get("content")).get("attachment", {})
-        epicrisis = any(tag.get("code") == EPICRISIS_TAG for tag in note.get("meta", {}).get("tag", []))
+        epicrisis = any(
+            tag.get("system") == EPICRISIS_TAG["system"] and tag.get("code") == EPICRISIS_TAG["code"]
+            for tag in note.get("meta", {}).get("tag", [])
+        )
         return Document(
             ref=ref_of(note),
             kind="epicrisis" if epicrisis else "note",

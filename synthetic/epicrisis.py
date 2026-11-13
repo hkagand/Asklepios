@@ -189,6 +189,7 @@ def add(chart: PatientChart, admission: Admission, existing: dict | None = None)
             performed=procedure.performed,
             body_site=procedure.body_site,
             device=procedure.device,
+            prefix="eproc",  # its own series: the chart's own Procedures keep theirs
         )
         record["meta"] = _meta()
         related = record

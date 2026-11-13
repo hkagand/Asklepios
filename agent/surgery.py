@@ -61,7 +61,7 @@ REGION_WORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
         "head_neck",
         (
             "thyroid", "parathyroid", "tonsil", "adenoid", "sinus", "cataract", "retin", "eye", "ear ", "tympan", "crani",
-            "brain", "neck", "laryn", "parotid", "dental", "carotid",
+            "brain", "neck", "laryn", "parotid", "dental", "carotid", "septo", "nasal", "nose",
         ),
     ),
     (
@@ -580,7 +580,7 @@ async def surgical_history(record: Record, reader: SurgeryReader) -> dict:
         source = {"ref": document.ref, "label": record.label(document.ref), "date": document.when.date().isoformat()}
         clues += [{**source, "quote": quote, "finding": finding} for quote, finding in result.clues]
         if result.none_stated:
-            none_stated.append({**source, "quote": result.none_stated})
+            none_stated.append({**source, "kind": document.kind, "quote": result.none_stated})
 
     entries: list[Entry] = []
     for mention in mentions:  # Procedure records first, then documents oldest first
@@ -617,6 +617,20 @@ async def surgical_history(record: Record, reader: SurgeryReader) -> dict:
     }
 
 
+KIND_LABELS = {"note": "A note", "report": "A report", "epicrisis": "An epicrisis report"}
+
+
+def newest_statements(statements: list[dict]) -> list[dict]:
+    """Each distinct statement once, from the newest document that makes it, newest first ("No previous operations."
+    in eight reports is one line)."""
+    newest: dict[str, dict] = {}
+    for item in statements:
+        key = plain(item["quote"]).strip(" .")
+        if key not in newest or item["date"] > newest[key]["date"]:
+            newest[key] = item
+    return sorted(newest.values(), key=lambda item: item["date"], reverse=True)
+
+
 def index_section(history: dict) -> str:
     """The SURGICAL HISTORY section of the chart index: each operation with its sources, then what was searched."""
     lines = []
@@ -643,7 +657,10 @@ def index_section(history: dict) -> str:
         refs = ", ".join(dict.fromkeys(source["ref"] for source in operation["sources"]))
         lines.append("; ".join(parts) + f" [{refs}]")
     lines += [f'Sign of earlier surgery, {clue["finding"]}: "{clue["quote"]}" [{clue["ref"]}]' for clue in history["clues"]]
-    lines += [f'A note states: "{item["quote"]}" [{item["ref"]}]' for item in history["noneStated"]]
+    lines += [
+        f'{KIND_LABELS.get(item.get("kind"), "A note")} of {day_text(date.fromisoformat(item["date"]))} states: "{item["quote"]}" [{item["ref"]}]'
+        for item in newest_statements(history["noneStated"])
+    ]
     searched = history["searched"]
     since = f" since {day_text(date.fromisoformat(searched['earliest']))}" if searched["earliest"] else ""
     head = (
