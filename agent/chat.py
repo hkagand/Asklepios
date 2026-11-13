@@ -58,12 +58,10 @@ biopsies, anaesthesia, the details and outcome of complications and the discharg
 So for any question about the patient's past (earlier admissions, operations, procedures, findings, complications, \
 anaesthesia, "has he ever ...", "anything I should know about ..."), first call read_epicrisis, even when the summary \
 lines, notes or problem list seem to answer it; read_documents and search_record do not replace it. Skip the call only \
-when the section already gives the reports in full. Then go through every report you read. After the direct answer, \
-give one bullet per report that concerns the organ, problem or risk asked about, oldest first, including a diagnostic \
-procedure that led to a later operation and a later follow-up procedure. Each bullet gives the date, what was done or \
-found, any complication and how it ended, and any lasting change to treatment (a medicine stopped or started, a \
-warning for future care), and ends with that report's id. Leave out reports that do not concern it. If none does, say \
-how many reports you read, the period they cover, and that none of them mentions it. If the section says none are on file, say that no epicrisis reports are on file. Do not \
+when the section already gives the reports in full. Use every report that bears on the question, including the \
+biopsies and other procedures that led to an operation, and cite each one you use. For each, give its date, what was \
+done and found, and any complication with its treatment and outcome, including medicines stopped or started. If none does, say how many reports you read, the period they cover, and that \
+none of them mentions it. If the section says none are on file, say that no epicrisis reports are on file. Do not \
 read them for questions about current results, medicines or orders.
 - Lines that start "From the national record (simulated)" were imported from records kept elsewhere, before the \
 patient's first visit here: whenever you use one, say it comes from the national record, with the facility and date \
