@@ -466,29 +466,64 @@ STENT_NAMES = (
 NOT_CORONARY_STENT_NAMES = ("Biliary stent insertion", "Ureteric stent insertion", "Carotid artery stenting", "Coronary artery bypass grafting")
 
 
-async def check_stent_family(chart, documents: dict[str, dict]) -> list[str]:
-    """A name that speaks of a stent and a coronary artery is a coronary stent, however it is worded; a stent
-    elsewhere is not. A reader's "Stents to the right coronary artery" joins the Procedure record of that stent."""
-    from agent.surgery import family_of, surgical_history
-
-    problems = [f"{name!r} is not a coronary stent" for name in STENT_NAMES if family_of(name) != "coronary stent"]
-    problems += [f"{name!r} is a coronary stent" for name in NOT_CORONARY_STENT_NAMES if family_of(name) == "coronary stent"]
-
-    def stent(identifier: str, name: str, day: str) -> dict:
-        return {"resourceType": "Procedure", "id": identifier, "status": "completed", "code": {"text": name}, "performedDateTime": day}
+async def _stub_history(chart, documents: dict[str, dict], procedures: list[tuple[str, str]], mentions: list[tuple[str, str]]) -> list[dict]:
+    """The operations surgical_history lists for Procedure records (name, day) and one document's reader mentions (name, when)."""
+    from agent.surgery import surgical_history
 
     record = record_of(chart, date(2026, 11, 13))
     record.procedures = [
-        stent("stent-rca", "Primary percutaneous coronary intervention with a drug-eluting stent to the right coronary artery", "2018-03-02"),
-        stent("stent-lad", "Percutaneous coronary intervention with a stent to the left anterior descending artery", "2019-06-11"),
+        {"resourceType": "Procedure", "id": f"stub-{number}", "status": "completed", "code": {"text": name}, "performedDateTime": day}
+        for number, (name, day) in enumerate(procedures)
     ]
-    reader = _stub_reader(f"DocumentReference/{documents['operation']['id']}", _stub_operation("Stents to the right coronary artery", "2018"))
-    history = await surgical_history(record, reader)
-    names = [item["name"] for item in history["operations"]]
-    if len(names) != 2:
-        problems.append(f"the history lists {names}, expected the 2019 stent and one 2018 stent")
-    elif not any(len(item["sources"]) > 1 and item["year"] == 2018 for item in history["operations"]):
+    reader = _stub_reader(f"DocumentReference/{documents['operation']['id']}", *(_stub_operation(name, when) for name, when in mentions))
+    return (await surgical_history(record, reader))["operations"]
+
+
+async def check_stent_family(chart, documents: dict[str, dict]) -> list[str]:
+    """A name that speaks of a stent and a coronary artery is a coronary stent, however it is worded; a stent
+    elsewhere is not. A reader's "Stents to the right coronary artery" joins the Procedure record of that stent."""
+    from agent.surgery import family_of
+
+    problems = [f"{name!r} is not a coronary stent" for name in STENT_NAMES if family_of(name) != "coronary stent"]
+    problems += [f"{name!r} is a coronary stent" for name in NOT_CORONARY_STENT_NAMES if family_of(name) == "coronary stent"]
+    operations = await _stub_history(
+        chart, documents,
+        [
+            ("Primary percutaneous coronary intervention with a drug-eluting stent to the right coronary artery", "2018-03-02"),
+            ("Percutaneous coronary intervention with a stent to the left anterior descending artery", "2019-06-11"),
+        ],
+        [("Stents to the right coronary artery", "2018")],
+    )
+    if len(operations) != 2:
+        problems.append(f"the history lists {[item['name'] for item in operations]}, expected the 2019 stent and one 2018 stent")
+    elif not any(len(item["sources"]) > 1 and item["year"] == 2018 for item in operations):
         problems.append("the reader's 2018 stent is not merged with the Procedure record")
+    return problems
+
+
+async def check_merging(chart, documents: dict[str, dict]) -> list[str]:
+    """Differently worded mentions of one operation merge when one name contains the other; different operations,
+    and the two sides, stay apart."""
+    problems = []
+
+    async def count(procedures: list[tuple[str, str]], mentions: list[tuple[str, str]]) -> tuple[int, list[dict]]:
+        operations = await _stub_history(chart, documents, procedures, mentions)
+        return len(operations), operations
+
+    orif = "Open reduction and internal fixation of left distal radius"
+    number, operations = await count([(orif + " fracture", "2024-01-27")], [(orif, "2024-01-27")])
+    if number != 1 or len(operations[0]["sources"]) != 2:
+        problems.append(f"(a) the reader's {orif!r} is not merged with the Procedure record: {[item['name'] for item in operations]}")
+    await count([(orif + " fracture", "2024-01-27")], [("ORIF of the left distal radius with a volar plate", "2024-01-27")])
+    number, _ = await count([("Open right inguinal hernia repair with mesh", "2021-05-04")], [("Open incisional hernia repair with mesh", "2021")])
+    if number != 2:
+        problems.append(f"(c) an inguinal and an incisional hernia repair in one year are listed as {number} operation(s)")
+    number, _ = await count([("Open right inguinal hernia repair with mesh", "2021-05-04")], [("hernia repair", "2021")])
+    if number != 1:
+        problems.append(f"(d) a plain hernia repair is not merged with the inguinal repair of its year ({number} operations)")
+    number, _ = await count([("Left knee arthroscopy", "2020-02-02")], [("Right knee arthroscopy", "2020")])
+    if number != 2:
+        problems.append(f"(e) a left and a right knee arthroscopy are listed as {number} operation(s)")
     return problems
 
 
@@ -917,6 +952,7 @@ async def run_epicrisis(settings, records, anchor: date, seed: int, out: Path) -
         "diagnostic names": check_diagnostic_names(records),
         "surgery filter": await check_surgery_filter(chart, documents),
         "stent family": await check_stent_family(chart, documents),
+        "merging": await check_merging(chart, documents),
         "none on file": check_none_on_file(imported_records(anchor)["p-3001"]),
     }
     for name, problems in checks.items():

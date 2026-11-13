@@ -304,6 +304,30 @@ def procedure_when(record: Record, procedure: dict) -> When:
     return parse_when(procedure.get("performedString"), record.today, born)
 
 
+# Words a name may add or leave out without being another operation, besides those family_of already ignores. "Fracture"
+# names what a fixation treats ("... of left distal radius fracture" and "... of left distal radius" are one operation).
+FILLER_WORDS = {"for", "to", "a", "an", "in", "on", "under", "fracture"}
+# Hernias differ by site: an inguinal and an incisional repair are two operations, a plain "hernia repair" fits either.
+HERNIA_SITES = ("inguinal", "incisional", "umbilic", "femoral", "ventral", "hiatus", "epigastric")
+
+
+def hernia_site(name: str) -> str | None:
+    folded = fold(name)
+    return next((site for site in HERNIA_SITES if _has(folded, site)), None)
+
+
+def same_kind(first: Mention, second: Mention) -> bool:
+    """Whether two mentions are the same kind of operation: the same family, or, when neither is a named family, one
+    name's words contain the other's and they share at least two."""
+    if first.family == second.family:
+        sites = {hernia_site(first.name), hernia_site(second.name)} - {None}
+        return not (first.family == "hernia repair" and len(sites) > 1)
+    if first.family in FAMILIES or second.family in FAMILIES:
+        return False
+    one, other = (set(family.split()) - FILLER_WORDS for family in (first.family, second.family))
+    return len(one & other) >= 2 and (one <= other or other <= one)
+
+
 @dataclass
 class Mention:
     name: str
@@ -325,7 +349,7 @@ class Entry:
 
     def fits(self, mention: Mention) -> bool:
         first = self.mentions[0]
-        if mention.family != first.family:
+        if not same_kind(first, mention):
             return False
         sides = {item.side for item in self.mentions if item.side}
         if mention.side and sides and mention.side not in sides:
