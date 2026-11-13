@@ -139,8 +139,11 @@ SPECS = [
             "name": "read_epicrisis",
             "description": (
                 "Read every epicrisis report of this patient in full: one per hospital admission, with the discharge "
-                "summary and, when there was one, the operation or procedure report. Use it before answering anything "
-                "about earlier admissions, operations, procedures, findings or complications."
+                "summary and, when there was one, the operation or procedure report. The chart index has only a summary "
+                "line per report: the course, findings, anaesthesia, complication details and discharge advice are only "
+                "here. Call it before answering anything about the patient's past: earlier admissions, operations, "
+                "procedures, findings, complications, anaesthesia, or anything to know about an organ or a problem. "
+                "Not for current results, medicines or orders."
             ),
             "parameters": {"type": "object", "properties": {}},
         },

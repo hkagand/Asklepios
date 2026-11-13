@@ -26,7 +26,10 @@ HEADINGS = (
 REQUIRED = ("EPICRISIS REPORT", "ADMISSION AND DISCHARGE", "DISCHARGE DIAGNOSES", "CONDITION AT DISCHARGE")
 EMPTY = "None"
 
-INDEX_TITLE = "EPICRISIS REPORTS, newest first: one line per hospital admission (read_epicrisis returns all of them in full)"
+INDEX_TITLE = (
+    "EPICRISIS REPORTS, newest first: one summary line per hospital admission. The course, findings, anaesthesia, "
+    "complication details and discharge advice are only in the full reports: read_epicrisis returns all of them"
+)
 FULL_TITLE = "EPICRISIS REPORTS, in full, newest first"
 NONE_ON_FILE = "No epicrisis reports are on file for this patient."
 
