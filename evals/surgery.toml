@@ -5,12 +5,14 @@
 #                mentions. Optional checks: year, region (abdomen, chest, head_neck, spine_limbs, other), approach,
 #                implant (a phrase), only_in_notes (true when no Procedure record exists), years_differ (the years the
 #                sources give when they disagree), sources (source kinds that must all be among its sources:
-#                "procedure", "note", "report").
+#                "procedure", "note", "report", "epicrisis"; an epicrisis is a hospital discharge report, whose operation
+#                report states the operation on its own date).
 #   none_stated  true when a note says the patient has had no operations.
 # Every listed operation that no expectation matches counts as a false alarm, so a patient with no operations
 # expected must have none listed. Planned operations ("laparoscopic cholecystectomy", "possible conversion to
 # surgery", "port-a-cath insertion" in a plan) and family history must not be listed.
-# Every cohort patient is listed.
+# Every cohort patient is listed. Operations from the background epicrisis reports (synthetic/epicrisis_catalogue.py)
+# have a Procedure record and the report as sources.
 
 [[patient]]
 id = "p-2041"
@@ -35,11 +37,15 @@ operations = []
 
 [[patient]]
 id = "p-1004"
-operations = []
+operations = [
+  { match = "hernia", year = 2020, region = "abdomen", approach = "open", implant = "mesh", sources = ["procedure", "epicrisis"] },
+]
 
 [[patient]]
 id = "p-1005"
-operations = []
+operations = [
+  { match = "appendicectomy", year = 2024, region = "abdomen", approach = "laparoscopic", sources = ["procedure", "epicrisis"] },
+]
 
 [[patient]]
 id = "p-1006"
@@ -47,17 +53,23 @@ operations = []
 
 [[patient]]
 id = "p-1007"
-operations = []
+# The reader has no words for the nose, so a septoplasty falls under "other".
+operations = [
+  { match = "septoplasty", year = 2018, region = "other", sources = ["procedure", "epicrisis"] },
+  { match = "hernia", year = 2022, region = "abdomen", approach = "open", implant = "mesh", sources = ["procedure", "epicrisis"] },
+]
 
 [[patient]]
 id = "p-1008"
-operations = []
+operations = [
+  { match = "septoplasty", year = 2020, region = "other", sources = ["procedure", "epicrisis"] },
+]
 
 [[patient]]
 id = "p-1009"
 # Not abdominal.
 operations = [
-  { match = "knee replacement", year = 2019, region = "spine_limbs", implant = "prosthesis", sources = ["procedure", "note"] },
+  { match = "knee replacement", year = 2019, region = "spine_limbs", implant = "prosthesis", sources = ["procedure", "note", "epicrisis"] },
 ]
 
 [[patient]]
@@ -73,7 +85,9 @@ operations = [
 
 [[patient]]
 id = "p-1012"
-operations = []
+operations = [
+  { match = "ankle", year = 2022, region = "spine_limbs", approach = "open", implant = "plate", sources = ["procedure", "epicrisis"] },
+]
 
 [[patient]]
 id = "p-1013"
@@ -87,23 +101,36 @@ none_stated = true
 
 [[patient]]
 id = "p-1015"
-operations = []
+operations = [
+  { match = "appendicectomy", year = 2022, region = "abdomen", approach = "laparoscopic", sources = ["procedure", "epicrisis"] },
+]
 
 [[patient]]
 id = "p-1016"
-operations = []
+operations = [
+  { match = "carpal tunnel", year = 2022, region = "spine_limbs", approach = "open", sources = ["procedure", "epicrisis"] },
+  { match = "appendicectomy", year = 2023, region = "abdomen", approach = "laparoscopic", sources = ["procedure", "epicrisis"] },
+]
 
 [[patient]]
 id = "p-1017"
-operations = []
+operations = [
+  { match = "carpal tunnel", year = 2023, region = "spine_limbs", approach = "open", sources = ["procedure", "epicrisis"] },
+  { match = "appendicectomy", year = 2024, region = "abdomen", approach = "laparoscopic", sources = ["procedure", "epicrisis"] },
+]
 
 [[patient]]
 id = "p-1018"
-operations = []
+operations = [
+  { match = "septoplasty", year = 2017, region = "other", sources = ["procedure", "epicrisis"] },
+  { match = "ankle", year = 2018, region = "spine_limbs", approach = "open", implant = "plate", sources = ["procedure", "epicrisis"] },
+]
 
 [[patient]]
 id = "p-1019"
-operations = []
+operations = [
+  { match = "appendicectomy", year = 2017, region = "abdomen", approach = "laparoscopic", sources = ["procedure", "epicrisis"] },
+]
 
 [[patient]]
 id = "p-2042"
@@ -112,5 +139,5 @@ operations = [
   { match = "appendicectomy", year = 1996, region = "abdomen", approach = "open", sources = ["procedure", "note"] },
   { match = "caesarean", year = 2008, region = "abdomen", only_in_notes = true },
   { match = "hernia", year = 2015, region = "abdomen", approach = "open", implant = "mesh", sources = ["procedure", "note"] },
-  { match = "ercp", region = "abdomen", approach = "endoscopic", sources = ["procedure", "report"] },
+  { match = "ercp", region = "abdomen", approach = "endoscopic", sources = ["procedure", "report", "epicrisis"] },
 ]

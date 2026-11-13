@@ -7,13 +7,80 @@ Procedure record. Everything added carries the `epicrisis` tag so the rest of th
 
 from __future__ import annotations
 
+import random
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 
 from chart import SYNTHETIC_META, LOINC, PatientChart, _b64, at, day_text, instant
 
 TAG = {"system": "urn:demo:asklepios", "code": "epicrisis"}
 REPORT_TYPE = ("18842-5", "Epicrisis report")
+
+# Story and variant of the charts closed to new operations: their notes state their surgical history.
+CLOSED = {
+    ("diabetes_hypertension", 4), ("hypothyroidism", 0), ("diabetes_hypertension", 2), ("chronic_kidney_disease", 1),
+    ("colorectal_cancer", 0), ("gallstone_disease", 0),
+}
+
+# Every ICD-10 code the background catalogue (epicrisis_catalogue.py) writes: the acute, resolved diagnoses of its
+# episodes, their complications and working diagnoses, and the conditions an operation cured (a deviated septum, the
+# osteoarthritis of a replaced knee). A background report gives no other code unless the chart's problem list has it.
+CODES = {
+    "A02.0": "Salmonella enteritis",
+    "A04.7": "Enterocolitis due to Clostridioides difficile",
+    "A08.1": "Acute gastroenteropathy due to norovirus",
+    "A09.9": "Gastroenteritis and colitis of unspecified origin",
+    "B35.3": "Tinea pedis",
+    "B96.2": "Escherichia coli as the cause of disease",
+    "B98.0": "Helicobacter pylori as the cause of disease",
+    "E86": "Volume depletion (dehydration)",
+    "E87.1": "Hyponatraemia",
+    "E87.6": "Hypokalaemia",
+    "F05.9": "Delirium, unspecified",
+    "G56.0": "Carpal tunnel syndrome",
+    "H81.2": "Vestibular neuronitis",
+    "I80.8": "Phlebitis of other sites",
+    "J12.8": "Other viral pneumonia",
+    "J18.1": "Lobar pneumonia, unspecified organism",
+    "J18.9": "Pneumonia, unspecified organism",
+    "J22": "Unspecified acute lower respiratory infection",
+    "J34.2": "Deviated nasal septum",
+    "K26.0": "Acute duodenal ulcer with haemorrhage",
+    "K35.8": "Acute appendicitis, other and unspecified",
+    "K40.9": "Unilateral inguinal hernia, without obstruction or gangrene",
+    "K56.0": "Paralytic ileus",
+    "K59.0": "Constipation",
+    "K63.5": "Polyp of colon",
+    "K80.5": "Calculus of bile duct without cholangitis or cholecystitis",
+    "K92.1": "Melaena",
+    "L03.1": "Cellulitis of other parts of limb",
+    "M17.1": "Other primary gonarthrosis",
+    "N10": "Acute pyelonephritis",
+    "N17.9": "Acute kidney failure, unspecified",
+    "N20.1": "Calculus of ureter",
+    "N23": "Unspecified renal colic",
+    "N39.0": "Urinary tract infection, site not specified",
+    "O72.1": "Other immediate postpartum haemorrhage",
+    "O80": "Single spontaneous delivery",
+    "R07.4": "Chest pain, unspecified",
+    "R10.3": "Pain localised to other parts of lower abdomen",
+    "R19.5": "Other faecal abnormalities",
+    "R33": "Retention of urine",
+    "R42": "Dizziness and giddiness",
+    "R55": "Syncope and collapse",
+    "R73.9": "Hyperglycaemia, unspecified",
+    "S00.0": "Superficial injury of scalp",
+    "S06.0": "Concussion",
+    "S22.4": "Multiple fractures of ribs",
+    "S42.2": "Fracture of upper end of humerus",
+    "S52.5": "Fracture of lower end of radius",
+    "S82.6": "Fracture of lateral malleolus",
+    "T81.0": "Haemorrhage and haematoma complicating a procedure",
+    "T81.4": "Infection following a procedure",
+    "U07.1": "COVID-19, virus identified",
+    "Z37.0": "Single live birth",
+}
+EPISODE_CODES: frozenset[str] = frozenset(CODES)
 
 
 @dataclass(frozen=True)
@@ -111,11 +178,12 @@ def text_of(admission: Admission, chart: PatientChart, number: str) -> str:
     return "\n\n".join(blocks) + "\n"
 
 
-def add(chart: PatientChart, admission: Admission) -> dict:
-    """Write the report into the chart (and the Procedure, for an operation); returns the DocumentReference."""
-    related = None
+def add(chart: PatientChart, admission: Admission, existing: dict | None = None) -> dict:
+    """Write the report into the chart (and the Procedure, for an operation); returns the DocumentReference.
+    `existing` is a Procedure the chart already holds for the report's procedure: the report refers to it and adds none."""
+    related = existing
     procedure = admission.procedure
-    if procedure and procedure.operation:
+    if procedure and procedure.operation and existing is None:
         record = chart.procedure(
             procedure.name,
             performed=procedure.performed,
@@ -167,3 +235,47 @@ def add(chart: PatientChart, admission: Admission) -> dict:
         document["context"]["related"] = [{"reference": f"Procedure/{related['id']}"}]
     chart._add(document)
     return document
+
+
+# Background reports start no earlier than this before the anchor (inside the ten years a report may go back) and end
+# this long before the chart's first note, so the story's notes follow them in time and never have to mention them.
+EARLIEST = timedelta(days=3640)
+BEFORE_FIRST_NOTE = timedelta(days=120)
+
+
+def add_background(chart: PatientChart, story: str, variant: int, anchor: date, seed: int) -> list[dict]:
+    """Add five to ten epicrisis reports of earlier admissions to an existing patient's chart; returns the
+    DocumentReferences. `story` is the story function's name. Random numbers come from the patient's own generator, so
+    the story's resources and every other chart are unchanged."""
+    from epicrisis_catalogue import Ctx, Patient, ercp, knee_replacement, plan
+
+    rng = random.Random(f"epicrisis:{chart.pid}:{seed}")
+    patient = Patient.of(chart, story, variant, (story, variant) in CLOSED)
+    low = anchor - EARLIEST
+    notes = sorted(
+        date.fromisoformat(item["date"][:10]) for item in chart.resources
+        if item["resourceType"] == "DocumentReference" and date.fromisoformat(item["date"][:10]) >= low
+    )
+    high = (notes[0] if notes else anchor) - BEFORE_FIRST_NOTE
+
+    # Events the story already holds that get their report: (admission day, builder, the Procedure on the chart).
+    fixed = []
+    for procedure in (item for item in chart.resources if item["resourceType"] == "Procedure"):
+        text = procedure["code"]["text"]
+        performed = procedure.get("performedDateTime")
+        if (story, variant) == ("diabetes_hypertension", 2) and "knee replacement" in text.lower() and performed:
+            fixed.append((date.fromisoformat(performed[:10]) - timedelta(days=1), knee_replacement, procedure))
+        elif story == "gallstone_disease" and text.startswith("ERCP") and performed:
+            fixed.append((date.fromisoformat(performed[:10]), ercp, procedure))
+
+    planned = [(day, episode.build, None, flag) for episode, day, flag in plan(patient, rng, low, high, [day for day, _, _ in fixed])]
+    planned += [(day, build, procedure, False) for day, build, procedure in fixed]
+    documents, earlier = [], []
+    for day, build, procedure, complicated in sorted(planned, key=lambda item: item[0]):
+        context = Ctx(patient, rng, day, complicated, list(earlier))
+        admission = build(context, procedure) if procedure else build(context)
+        documents.append(add(chart, admission, existing=procedure))
+        if admission.procedure and admission.procedure.operation and procedure is None:
+            name = admission.procedure.name
+            earlier.append((admission.procedure.performed, name[:1].lower() + name[1:]))
+    return documents

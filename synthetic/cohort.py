@@ -15,6 +15,7 @@ from typing import Callable
 
 from catalog import CLINICIANS
 from chart import NATIONAL_ID, PatientChart, add_workdays, at, day_text, workday
+from epicrisis import add_background
 
 AYDIN = CLINICIANS["pr-aydin"]
 SAHIN = CLINICIANS["pr-sahin"]
@@ -2473,6 +2474,7 @@ def build_cohort(anchor: date, seed: int = 2041) -> list[PatientChart]:
         city="Ankara", gp=AYDIN,
     )
     colorectal_cancer(Story(rng, anchor, hero, at(add_workdays(anchor, 0), 10, 30)))
+    add_background(hero, colorectal_cancer.__name__, 0, anchor, seed)
     charts = [hero]
     used = {hero.name}
 
@@ -2499,6 +2501,7 @@ def build_cohort(anchor: date, seed: int = 2041) -> list[PatientChart]:
         template.story(Story(rng, anchor, chart, appointment, variant))
         for procedure in past.procedures if past else ():
             chart.procedure(**procedure)
+        add_background(chart, template.story.__name__, variant, anchor, seed)
         charts.append(chart)
 
     # A second fixed story with its own random numbers, so adding it changes no other chart.
@@ -2509,5 +2512,6 @@ def build_cohort(anchor: date, seed: int = 2041) -> list[PatientChart]:
     gallstone_disease(Story(random.Random(seed + 1), anchor, second, at(add_workdays(anchor, 1), 11, 0)))
     # The number her national record carries (synthetic/national.py).
     second.resources[0]["identifier"].append({"system": NATIONAL_ID, "value": "00000002042"})
+    add_background(second, gallstone_disease.__name__, 0, anchor, seed)
     charts.append(second)
     return charts
