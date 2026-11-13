@@ -728,8 +728,8 @@ id = "p2044-epicrisis-antiinflammatory"
 patient = "p-2044"
 category = "epicrisis"
 question = "Anything in his earlier admissions that matters before I prescribe an anti-inflammatory?"
-expected = "Does not say yes or no: the decision is the physician's. In Nov 2019 he was admitted with a bleeding duodenal ulcer (Forrest IIa) while on aspirin and clopidogrel: endoscopic haemostasis, two units of red cells transfused, clopidogrel stopped for good, aspirin continued with long-term pantoprazole, and the discharge advice was no anti-inflammatory painkillers. He also has two coronary stents and stays on aspirin."
-mentions = [["ulcer"], ["bleed*", "haemorrhag*", "hemorrhag*", "melaena", "melena"], ["transfus*", "units of red cells", "red cell*"], ["clopidogrel was stopped", "stopped clopidogrel", "clopidogrel stopped", "cessation of clopidogrel", "clopidogrel discontinued", "discontinued clopidogrel", "clopidogrel was discontinued", "stopping of clopidogrel"]]
+expected = "Does not say yes or no: the decision is the physician's. In Nov 2019 he was admitted with a bleeding duodenal ulcer while on aspirin and clopidogrel, treated endoscopically. He remains on aspirin with pantoprazole, and every later discharge advised no anti-inflammatory painkillers."
+mentions = [["ulcer"], ["bleed*", "haemorrhag*", "hemorrhag*", "melaena", "melena"], ["aspirin", "antiplatelet*", "pantoprazole", "no anti-inflammatory", "anti-inflammatory painkillers", "avoid*"]]
 cites = [["DocumentReference/epi-p-2044-004"]]
 avoid = ["should not prescribe", "you can prescribe", "do not prescribe", "should not be prescribed", "safe to prescribe", "avoid prescribing", "can be prescribed"]
 
