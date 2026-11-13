@@ -483,29 +483,47 @@ def text_for_reading(document: Document) -> str:
 
 # The reader is a model, and its instruction to leave out diagnostic tests, biopsies and polyp removal is not reliably
 # followed (a colonoscopy's "two polyps removed" came back as an operation). So the code drops them too: an operation
-# whose name names a diagnostic procedure and nothing operative is not an operation. Kept narrow on purpose.
+# whose name names a diagnostic procedure and nothing operative is not an operation. Kept narrow on purpose, and what
+# is dropped is listed ("Not counted as operations"), so nothing disappears unseen.
 DIAGNOSTIC_WORDS = re.compile(
-    r"polypectom|polyp removal|(?:colon|gastr|sigmoid|cyst|hyster|bronch)oscopy|endoscopy|biops|fine[- ]needle|angiogra|"
-    r"lumbar puncture|endoscopic (?:haem|hem)ostasis",
+    r"(?:colon|gastr|sigmoid|cyst|hyster|bronch)oscopy|endoscopy|biops|fine[- ]needle|angiogra|lumbar puncture|"
+    r"endoscopic (?:haem|hem)ostasis",
     re.IGNORECASE,
 )
-# Any sign of an intervention keeps the name: when in doubt an operation stays listed. Polypectomy and polyp removal are
-# themselves diagnostic here, so they are taken out first (otherwise "-ectomy" and "removal" would save them). An
-# approach word ("endoscopic", "percutaneous") is not a diagnostic word: only a named test or biopsy is.
+# A polyp removed in the gut during a scope is part of the test; elsewhere ("Nasal polypectomy", "Hysteroscopic
+# polypectomy", "Transanal polypectomy") it is an operation. A bare "Polyp removal" is taken to be the gut's.
+POLYP_WORDS = re.compile(r"polypectom\w*|polyp removal", re.IGNORECASE)
+GUT_SCOPE_WORDS = re.compile(r"colonoscop|sigmoidoscop|gastroscop|endoscop", re.IGNORECASE)
+# Any sign of an intervention keeps the name: when in doubt an operation stays listed. A gut polyp removal is itself
+# diagnostic, so it is taken out first (otherwise "-ectomy" and "removal" would save it). An approach word ("endoscopic",
+# "percutaneous") is not a diagnostic word: only a named test or biopsy is. A sentinel node, cone or open biopsy, a
+# resection or stone treatment through a cystoscope, a D&C, a laparoscopy and a PEG are operations.
 OPERATIVE_WORDS = re.compile(
     r"ectom|otom|ostom|plast|stent|excis|resect|repair|replace|insertion|intervention|bypass|ablat|ligat|extraction|dilat|"
-    r"embolis|emboliz|release|surger|removal|fixation|drain|clos|fusion|graft|implant",
+    r"embolis|emboliz|release|surger|removal|fixation|drain|clos|fusion|graft|implant|"
+    r"sentinel|\bcone\b|\bopen\b|turbt|lithotrips|\bd ?& ?c\b|curettage|\bpeg\b|laparoscop",
     re.IGNORECASE,
 )
+
+
+def _gut_polyp(name: str) -> bool:
+    """A polyp removal in a gut scope, or with nothing else named."""
+    if not POLYP_WORDS.search(name):
+        return False
+    rest = re.findall(r"[a-z]+", fold(POLYP_WORDS.sub("", name)))
+    return bool(GUT_SCOPE_WORDS.search(name)) or not [word for word in rest if word not in ("with", "and", "of", "a", "the")]
 
 
 def is_diagnostic(name: str) -> bool:
     """True when the name names a diagnostic procedure and nothing operative: "Polyp removal", "Colonoscopy with
-    polypectomy", "Core biopsy". False for "ERCP with sphincterotomy", "Excision biopsy of a breast lump", and for any
-    name that does not name a known diagnostic procedure."""
-    if not DIAGNOSTIC_WORDS.search(name):
+    polypectomy", "Core biopsy". False for "ERCP with sphincterotomy", "Excision biopsy of a breast lump", "Nasal
+    polypectomy", "Sentinel lymph node biopsy", and for any name that does not name a known diagnostic procedure."""
+    gut_polyp = _gut_polyp(name)
+    if not gut_polyp and POLYP_WORDS.search(name):
         return False
-    return not OPERATIVE_WORDS.search(re.sub(r"polypectom\w*|polyp removal", "", name, flags=re.IGNORECASE))
+    if not gut_polyp and not DIAGNOSTIC_WORDS.search(name):
+        return False
+    return not OPERATIVE_WORDS.search(POLYP_WORDS.sub("", name))
 
 
 def mentions_surgery(document: Document) -> bool:
@@ -521,14 +539,22 @@ async def surgical_history(record: Record, reader: SurgeryReader) -> dict:
     found = await asyncio.gather(*(reader.read(document) for document in read), return_exceptions=True)
 
     mentions = [from_procedure(record, procedure) for procedure in record.procedures]
-    clues, none_stated, unread = [], [], []
+    clues, none_stated, unread, left_out = [], [], [], []
     for document, result in sorted(zip(read, found), key=lambda pair: pair[0].when):
         if isinstance(result, LlmError):
             unread.append(document.ref)
             continue
         if isinstance(result, BaseException):
             raise result
-        mentions += [from_document(record, document, operation) for operation in result.operations if not is_diagnostic(operation.name)]
+        for operation in result.operations:
+            mention = from_document(record, document, operation)
+            if not is_diagnostic(operation.name):
+                mentions.append(mention)
+                continue
+            left_out.append({
+                "name": operation.name, "ref": document.ref, "label": record.label(document.ref),
+                "year": mention.when.year or document.when.year,
+            })
         source = {"ref": document.ref, "label": record.label(document.ref), "date": document.when.date().isoformat()}
         clues += [{**source, "quote": quote, "finding": finding} for quote, finding in result.clues]
         if result.none_stated:
@@ -555,6 +581,7 @@ async def surgical_history(record: Record, reader: SurgeryReader) -> dict:
         "operations": operations,
         "clues": clues,
         "noneStated": none_stated,
+        "leftOut": left_out,  # diagnostic procedures the reader returned, not counted as operations
         "regions": REGIONS,
         "searched": {
             "procedures": len(record.procedures),
@@ -603,4 +630,9 @@ def index_section(history: dict) -> str:
         f"{searched['epicrisis']} epicrisis reports{since}; "
         "operations done elsewhere may not be recorded."
     )
-    return head + "\n" + "\n".join(f"- {line}" for line in lines or ["no operations recorded"])
+    lines = lines or ["no operations recorded"]
+    if left := history.get("leftOut"):
+        named = dict.fromkeys(f"{item['name'][:1].lower()}{item['name'][1:]} ({item['year']})" for item in left)
+        refs = ", ".join(dict.fromkeys(item["ref"] for item in left))
+        lines.append("Not counted as operations: " + ", ".join(named) + f" [{refs}]")
+    return head + "\n" + "\n".join(f"- {line}" for line in lines)

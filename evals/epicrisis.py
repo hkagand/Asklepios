@@ -401,6 +401,10 @@ OPERATION_NAMES = (
     "Hysteroscopic myomectomy",
     "Surgical haemostasis", "Return to theatre for haemostasis", "Exploration of neck wound and haemostasis",
     "Re-exploration for bleeding", "Evacuation of haematoma",
+    # Operations with a diagnostic word in their name.
+    "Nasal polypectomy", "Hysteroscopic polypectomy", "Transanal polypectomy", "Sentinel lymph node biopsy",
+    "Cone biopsy of the cervix", "Open lung biopsy", "Cystoscopy and TURBT", "Cystoscopy with lithotripsy",
+    "Hysteroscopy and D&C", "Laparoscopy and biopsy", "Gastroscopy and PEG placement",
 )
 
 
@@ -444,12 +448,12 @@ def _stub_reader(document_ref: str, *operations):
 
 async def check_surgery_filter(chart, documents: dict[str, dict]) -> list[str]:
     """Whatever the reader returns for a document, a diagnostic procedure does not reach the history; the real
-    operation does, and the document counts as read."""
-    from agent.surgery import surgical_history
+    operation does, and the document counts as read. What was left out is returned, and said in the index section."""
+    from agent.surgery import index_section as surgery_index, surgical_history
 
+    ref = f"DocumentReference/{documents['operation']['id']}"
     reader = _stub_reader(
-        f"DocumentReference/{documents['operation']['id']}",
-        *(_stub_operation(name) for name in ("Laparoscopic appendicectomy", "Polyp removal", "Endoscopic polypectomy")),
+        ref, *(_stub_operation(name) for name in ("Laparoscopic appendicectomy", "Polyp removal", "Endoscopic polypectomy")),
     )
     # No Procedure records: only what the stub returns can appear.
     record = record_of(chart, date(2026, 11, 13))
@@ -461,6 +465,12 @@ async def check_surgery_filter(chart, documents: dict[str, dict]) -> list[str]:
         problems.append(f"the history lists {names}, expected only the appendicectomy")
     if history["searched"]["documentsRead"] < 1:
         problems.append("the document with the dropped operations does not count as searched")
+    left_out = [(item.get("name"), item.get("ref")) for item in history.get("leftOut", [])]
+    if left_out != [("Polyp removal", ref), ("Endoscopic polypectomy", ref)]:
+        problems.append(f"the history leaves out {left_out}, expected the polyp removal and the polypectomy of {ref}")
+    last = surgery_index(history).splitlines()[-1]
+    if not (last.startswith("- Not counted as operations: ") and "polyp removal (" in last and "endoscopic polypectomy (" in last):
+        problems.append(f"the index section's last line is {last!r}, expected the operations not counted")
     return problems
 
 

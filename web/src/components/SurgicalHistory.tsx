@@ -134,6 +134,12 @@ function Operations({ chart, history }: { chart: Chart; history: History }) {
         {history.unread.length > 0 && (
           <span className="text-amber-700"> {history.unread.length} document(s) could not be read.</span>
         )}
+        {history.leftOut.length > 0 && (
+          <span className="block">
+            Not counted as operations:{' '}
+            {[...new Set(history.leftOut.map((item) => `${item.name.charAt(0).toLowerCase()}${item.name.slice(1)} (${item.year})`))].join(', ')}.
+          </span>
+        )}
         <span className="block">Operations are read from notes by the language model; dates, regions and merging come from code.</span>
       </footer>
     </>

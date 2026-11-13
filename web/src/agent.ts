@@ -300,6 +300,8 @@ export interface SurgicalHistory {
   operations: Operation[]
   clues: (SurgeryStatement & { finding: string })[]
   noneStated: SurgeryStatement[]
+  /** Diagnostic procedures the reader returned, not counted as operations. */
+  leftOut: { name: string; ref: string; label: string; year: number }[]
   regions: Record<SurgeryRegion, string>
   searched: { procedures: number; notes: number; reports: number; epicrisis: number; documentsRead: number; earliest: string | null }
   unread: string[]
