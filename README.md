@@ -7,14 +7,15 @@ This repository is a synthetic demo. Every patient is invented. Do not load real
 ## What it is
 
 - **Chart viewer** (`web/`): a clinician's day, the appointment list, then a patient page with overview, labs, visits, reports and medications. Built with React, Vite and Tailwind. Talks to HAPI FHIR through a Vite proxy.
-- **ASKlepios** (`agent/`): a FastAPI service that answers questions about the patient whose chart is open. The model never sees raw FHIR JSON. It gets a compact chart index plus five read-only tools (`read_documents`, `lab_series`, `medication_history`, `order_history`, `search_record`). Citations are checked before they reach the panel.
+- **ASKlepios** (`agent/`): a FastAPI service that answers questions about the patient whose chart is open. The model never sees raw FHIR JSON. It gets a compact chart index plus six read-only tools (`read_documents`, `lab_series`, `medication_history`, `order_history`, `search_record`, `read_epicrisis`). Citations are checked before they reach the panel.
 - **Open loops** (`agent/plans.py`, `agent/loops.py`): what each clinician's latest note planned, open orders and new results, tracked from order to result, review and telling the patient. See [Open loops](#open-loops).
 - **Medication reconciliation** (`agent/meds.py`): the medication orders against what the notes say, with a timeline per drug. See [Medications](#medications).
-- **Surgical history** (`agent/surgery.py`): every earlier operation, merged from Procedure records, notes and reports, by body region. See [Surgical history](#surgical-history).
+- **Surgical history** (`agent/surgery.py`): every earlier operation, merged from Procedure records, notes, reports and epicrisis reports, by body region. See [Surgical history](#surgical-history).
+- **Epicrisis reports** (`agent/epicrisis.py`, `synthetic/epicrisis.py`): hospital discharge reports, one per admission, with the operation or procedure report when there was one, generated for every cohort patient and read by ASKlepios when a question is about the patient's past. See [Epicrisis reports](#epicrisis-reports).
 - **Visits** (`agent/visits.py`): a workspace for the visit itself, with an agenda from the record and the clinician's jottings. See [Visits](#visits).
 - **History from the national record** (`agent/onboard.py`, `synthetic/national.py`): two patients arrive with a history taken from a national record before their first visit, shown with its source. Asklepios has no admission screen. See [History from the national record](#history-from-the-national-record).
 - **My day and prepared briefs** (`agent/briefs.py`): a clinician's clinic list with what needs attention, and a pre-visit brief per patient written before the clinic. See [My day](#my-day).
-- **Synthetic cohort** (`synthetic/`): 23 seeded patients. 21 have labs, visit notes, imaging and pathology reports, medications, orders, procedures and appointments, with a few deliberate gaps for the checks above to find. Two are new to the hospital, with a history imported from the national record and a first appointment. Reloading overwrites the same resource ids.
+- **Synthetic cohort** (`synthetic/`): 26 seeded patients. 24 have labs, visit notes, imaging and pathology reports, medications, orders, procedures, appointments and epicrisis reports, with a few deliberate gaps for the checks above to find; three of them, p-2043 to p-2045, are showcase patients with a ten-year history. Two are new to the hospital, with a history imported from the national record and a first appointment. Reloading overwrites the same resource ids.
 
 The model is any OpenAI-compatible chat-completions endpoint that supports tool calling (vLLM, a LiteLLM proxy, and similar). Point `agent/.env` at it.
 
@@ -174,7 +175,7 @@ The record holds medication orders, not what the patient takes: there are no dis
 
 Before an operation, the surgeon needs every earlier one: when, what, open or laparoscopic, where on the body, and any implants or complications. The Overview tab has a **Surgical history** card, and the patient band says how many operations are recorded and how many were abdominal.
 
-- **Sources, merged:** Procedure records (operations done here, or reported by the patient: `asserter` is the patient), notes ("Past surgical history: open appendicectomy 1996") and reports (operation notes, endoscopy reports). The model reads the notes and reports that use surgical words and lists the operations each states, quoting it. Planned or proposed operations, family members' operations, diagnostic tests and cancelled operations are left out; open loops follows the planned ones.
+- **Sources, merged:** Procedure records (operations done here, or reported by the patient: `asserter` is the patient), notes ("Past surgical history: open appendicectomy 1996") reports (operation notes, endoscopy reports) and epicrisis reports (their OPERATION REPORT and the discharge diagnoses). The model reads the notes and reports that use surgical words and lists the operations each states, quoting it. Planned or proposed operations, family members' operations, diagnostic tests and cancelled operations are left out; open loops follows the planned ones.
 - **Plain code:** the date ("1996", "June 2015", "aged 22", or the document's own date for an operation note); the body region from words in the name and body site (abdomen and pelvis, chest, head and neck, spine and limbs, or other, so nothing is hidden); and merging mentions of the same kind of operation at most a year apart. When sources give different years, both are shown.
 - **Flags:** done here, done elsewhere, only in notes (no Procedure record), implants and complications. Indirect signs (scars, post-surgical change on imaging) are listed apart, and so is a note saying the patient has had no operations.
 - **What was searched:** the card says how many procedure records, notes and reports it read and since when, so "none recorded" says what it rests on. Operations done elsewhere may not be in the record.
@@ -184,6 +185,29 @@ Before an operation, the surgeon needs every earlier one: when, what, open or la
 - The cohort's cases: p-2042 (gallstones before a laparoscopic cholecystectomy, after an appendicectomy the patient reported, a caesarean section only in notes, and an umbilical hernia repair with mesh done here), p-2041 (cholecystectomy only in a note; a port), p-1009 (knee replacement: nothing abdominal), p-1011 (hysterectomy, the note and the Procedure record disagree on the year), p-1014 (no previous operations; the mother's operation is family history).
 
 `GET /api/patients/{id}/surgery` returns the operations with their sources, the signs, and what was searched.
+
+## Epicrisis reports
+
+An epicrisis is the report a hospital writes when a patient leaves it. Each one here has two parts, under fixed upper-case headings. The **epicrisis** gives admission and discharge, complaint and history, past and family history, examination, hospital course, admission and discharge diagnoses with ICD-10 codes, complications during the admission, the discharge prescription, recommendations and the condition at discharge. When there was an operation or a procedure, an **OPERATION REPORT** or a **PROCEDURE REPORT** follows. Each is a FHIR DocumentReference tagged `epicrisis`, from "Demo General Hospital". An operation also gets a tagged Procedure record; a diagnostic procedure (endoscopy, biopsy, fine-needle aspiration, angiography, polyp removal) does not.
+
+The reports are generated, in English, by plain code (`synthetic/epicrisis.py`); no model writes them, and Asklepios has no screen for writing one. For a given anchor and seed they are always the same.
+
+- **Showcase patients** (`synthetic/showcase.py`): three new patients, each with a ten-year story told by eight reports. p-2043 Melahat Tozkoparan has thyroid cancer: an aspiration, a total thyroidectomy with transient hypocalcaemia and a vocal cord paresis that recovered, radioiodine, and a later benign lymph-node aspiration; her follow-up is with Dr. Selin Arslan, endocrinology. p-2044 Hikmet Sarıyaprak had a heart attack and two stents, then a bleeding duodenal ulcer on two antiplatelet drugs; his follow-up is with Dr. Zeynep Kara, cardiology. p-2045 Nadide Yelkovan has had three operations, with a difficult intubation recorded at the first, a wound infection, a clot after surgery, and a knee replacement under spinal anaesthesia because of the airway; Dr. Kerem Yalçın sees her before planned surgery.
+- **Background reports** (`synthetic/epicrisis_catalogue.py`): each of the 21 earlier patients has 5 to 10 reports about episodes that leave no lasting diagnosis, consistent with their charts. A report never adds a chronic diagnosis, an allergy or a long-term medicine, and the six patients whose notes or gold questions state their surgical history get no new operations. Their existing resources are unchanged: `evals/cohort-fingerprint.json` pins them.
+- p-3001 and p-3002 have none: their history comes from the national record.
+
+**In the chart.** The Reports tab has an **Epicrisis reports** card: one row per report with its period, service, title and discharge diagnoses, and a **Complication** badge, opening to the full text. The Visits & notes tab does not list them.
+
+**ASKlepios and epicrisis reports.**
+- The chart index has an EPICRISIS REPORTS section, one line per report. The tool `read_epicrisis` returns all of the patient's reports in full; if they exceed its size limit, whole older reports are left out and the result says so.
+- When a question is about the patient's past (earlier admissions, complications, anaesthesia, events after a procedure, "anything I should know about ...", in English or Turkish), plain code reads the reports into the conversation before the model answers, once per conversation (`about_the_past`, called from `agent/chat.py`). Other questions leave it to the model. Which operations a patient has had is answered from SURGICAL HISTORY, and questions about current results, medicines and orders do not read the reports.
+- The answer cites each report it uses. When none is relevant, it says how many it read, over what period, and that none mentions the matter; for a patient with none, it says none is on file.
+
+**Other readers.** Open loops and medication reconciliation ignore epicrisis reports: they read notes only. Surgical history reads them, without a PROCEDURE REPORT block. Code then drops the diagnostic procedures the model returns, groups coronary stent mentions by artery, separates hernia repairs by site, and merges differently worded mentions of one operation when one name's words contain the other's.
+
+**Semantic retrieval** (a vector database) was considered and set aside: one patient's reports fit in what the model reads, so there is nothing to search.
+
+**A measured limit.** Answers that need several reports combined are less reliable at the model's low reasoning effort. On the eleven `epicrisis` gold questions, two runs of three repeats passed 51 of 66 at the configured effort (`LLM_REASONING_EFFORT=low`) and 60 of 66 with `LLM_REASONING_EFFORT=medium`, at roughly 6 seconds per answer instead of 2.5 to 5. The setting is the operator's choice, in `agent/.env`.
 
 ## Visits
 
@@ -243,7 +267,7 @@ Endpoints: `GET /api/clinicians/{id}/day?day=…`, `POST /api/clinicians/{id}/br
 Each note is read once per kind of reading. The results are cached under `agent/cache/` (gitignored; the base is set by `AGENT_PLAN_CACHE`), keyed by the note text, the model and the prompt version:
 - `plans/`: plan items
 - `medications/`: medicines mentioned
-- `surgery/`: operations mentioned in notes and reports
+- `surgery/`: operations mentioned in notes, reports and epicrisis reports
 - `briefs/`: prepared briefs
 - `visits/`: visits in progress (agenda ticks and jottings)
 
@@ -256,9 +280,9 @@ Note text is sent to the model in `agent/.env`, as chat questions are.
 - reading notes and reports, and comparing reports;
 - briefings, follow-up questions, and questions the record cannot answer;
 - requests for advice, and questions about other patients;
-- open loops, medication reconciliation, surgical history, history from the national record, and Turkish.
+- open loops, medication reconciliation, surgical history, epicrisis reports, history from the national record, and Turkish.
 
-The `onboarding` cases ask about p-3001 and p-3002 as the generator writes them, with their history imported from the national record. `source_labels` checks what the cited source chips show (for example "national record").
+The `epicrisis` cases (eleven on the showcase patients, two on existing ones) ask about earlier admissions, complications and anaesthesia. A case can require tools with `tools = [...]` (for example `read_epicrisis`) and forbid them with `no_tools = [...]`. The `onboarding` cases ask about p-3001 and p-3002 as the generator writes them, with their history imported from the national record. `source_labels` checks what the cited source chips show (for example "national record").
 
 ```bash
 python -m evals --lint
@@ -281,6 +305,8 @@ Other options:
 - `--visits`: checks live help on scripted visit jottings against `evals/visits.toml`: section, alerts, agenda ticks, record links, and gaps (none may read as advice). Then each visit's note is drafted and checked (every line sourced, numbers in their sources, every jotting used), and its plan is read back by the plan reader open loops uses.
 - `--considerations`: checks clinical considerations from the second model against `evals/considerations.toml`: scripted visits, each with the considerations it must raise (a caution for ibuprofen with CKD, amlodipine for ankle swelling, a penicillin allergy with co-amoxiclav) and claims it must not make (a renal dose change for amoxicillin at an eGFR of 53). It also counts unusable answers, considerations the checks dropped, ones citing more than three record items, and time. `--compare` runs the agent's own model on the same visits, prompt and checks.
 - `--onboarding`: checks the import of a national summary against `evals/onboarding.toml`: each record's review statuses; that the import writes only what can be settled, as the patient answered, with the day the history was taken and one Provenance naming the hospital; that an import nobody watches skips what it cannot settle; and the two patients as the generator writes them. No model calls apart from cached surgical history.
+- `--epicrisis`: checks epicrisis reports without calling the model, and exits 1 on any problem: that the original 21 patients' resources are untouched, the background and showcase reports, the tool and its size limit, the surgical history readers (diagnostic procedures dropped, stents grouped, hernias separated, mentions merged), what ASKlepios says when none is on file, and that past questions pre-read the reports once.
+- `--epicrisis-in-prompt`: runs the gold questions with every report in the prompt and without `read_epicrisis`, for comparison only; the tools check is skipped.
 - `--surgery`: checks surgical history against `evals/surgery.toml`: each expected operation with its year, region, approach, implant and sources, and no others.
 - `--fresh` (with `--loops`, `--meds` or `--surgery`): reads every note again instead of using the cache. With `--repeats 3`, it shows how much extraction varies.
 
@@ -289,10 +315,10 @@ Other options:
 ## Layout
 
 ```
-agent/          ASKlepios service: chat, tools, citation verifier, open loops, medications, surgical history, briefs, marks,
+agent/          ASKlepios service: chat, tools, citation verifier, open loops, medications, surgical history, epicrisis reports, briefs, marks,
                 visits (jottings, notes, clinical considerations from a second model), audit log
-evals/          gold question set, open-loop, medication and surgery gold files, eval runner
-synthetic/      cohort generator, national records (the import's input) and FHIR loader
+evals/          gold question set, open-loop, medication and surgery gold files, epicrisis checks, eval runner
+synthetic/      cohort generator, epicrisis reports and showcase patients, national records (the import's input) and FHIR loader
 web/            chart viewer, My day and chat panel
 docker-compose.yml
 ```
