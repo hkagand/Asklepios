@@ -497,19 +497,22 @@ def text_for_reading(document: Document) -> str:
 # is dropped is listed ("Not counted as operations"), so nothing disappears unseen.
 DIAGNOSTIC_WORDS = re.compile(
     r"(?:colon|gastr|sigmoid|cyst|hyster|bronch)oscopy|endoscopy|biops|fine[- ]needle|angiogra|lumbar puncture|"
-    r"endoscopic (?:[a-z]+ ){0,3}(?:haem|hem)ostasis",  # "Endoscopic duodenal ulcer hemostasis with clipping"
+    r"endoscopic (?:[a-z]+ ){0,3}(?:haem|hem)ostasis|endoscopic clipping",  # "Endoscopic duodenal ulcer hemostasis with clipping"
     re.IGNORECASE,
 )
 # A polyp removed in the gut during a scope is part of the test; elsewhere ("Nasal polypectomy", "Hysteroscopic
-# polypectomy", "Transanal polypectomy") it is an operation. A bare "Polyp removal" is taken to be the gut's.
+# polypectomy", "Transanal polypectomy") it is an operation. A bare "Polyp removal" is taken to be the gut's, and so is
+# one in the colon, stomach or duodenum ("Polypectomy of hyperplastic polyp of sigmoid colon").
 POLYP_WORDS = re.compile(r"polypectom\w*|polyp removal", re.IGNORECASE)
-GUT_SCOPE_WORDS = re.compile(r"colonoscop|sigmoidoscop|gastroscop|endoscop", re.IGNORECASE)
+GUT_SCOPE_WORDS = re.compile(
+    r"colonoscop|sigmoidoscop|gastroscop|endoscop|colon|sigmoid|caec|cecum|cecal|bowel|stomach|gastric|duoden", re.IGNORECASE
+)
 # Any sign of an intervention keeps the name: when in doubt an operation stays listed. A gut polyp removal is itself
 # diagnostic, so it is taken out first (otherwise "-ectomy" and "removal" would save it). An approach word ("endoscopic",
 # "percutaneous") is not a diagnostic word: only a named test or biopsy is. A sentinel node, cone or open biopsy, a
 # resection or stone treatment through a cystoscope, a D&C, a laparoscopy and a PEG are operations.
 OPERATIVE_WORDS = re.compile(
-    r"ectom|otom|ostom|plast|stent|excis|resect|repair|replace|insertion|intervention|bypass|ablat|ligat|extraction|dilat|"
+    r"ectom|otom|ostom|(?<!hyper)plast|stent|excis|resect|repair|replace|insertion|intervention|bypass|ablat|ligat|extraction|dilat|"
     r"embolis|emboliz|release|surger|removal|fixation|drain|clos|fusion|graft|implant|"
     r"sentinel|\bcone\b|\bopen\b|turbt|lithotrips|\bd ?& ?c\b|curettage|\bpeg\b|laparoscop",
     re.IGNORECASE,
@@ -670,8 +673,8 @@ def index_section(history: dict) -> str:
         "operations done elsewhere may not be recorded."
     )
     lines = lines or ["no operations recorded"]
+    # Named without their sources: with an id to cite, the model listed a colonoscopy as an "abdominal-related operation".
     if left := history.get("leftOut"):
         named = dict.fromkeys(f"{item['name'][:1].lower()}{item['name'][1:]} ({item['year']})" for item in left)
-        refs = ", ".join(dict.fromkeys(item["ref"] for item in left))
-        lines.append("Not counted as operations: " + ", ".join(named) + f" [{refs}]")
+        lines.append("Not counted as operations, being diagnostic procedures: " + ", ".join(named))
     return head + "\n" + "\n".join(f"- {line}" for line in lines)

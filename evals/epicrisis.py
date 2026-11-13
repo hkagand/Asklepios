@@ -432,6 +432,7 @@ DIAGNOSTIC_NAMES = (
     "Diagnostic coronary angiography", "Coronary angiography", "Cystoscopy", "Hysteroscopy with endometrial sampling",
     "Bronchoscopy", "Sigmoidoscopy", "Bone marrow biopsy", "Lumbar puncture", "Endoscopic haemostasis", "Endoscopic haemostasis with clips",
     "Gastroscopy with adrenaline injection and clips", "Endoscopic duodenal ulcer hemostasis with clipping",
+    "Polypectomy of hyperplastic polyp of sigmoid colon", "Endoscopic clipping of duodenal ulcer",
 )
 OPERATION_NAMES = (
     "ERCP with biliary sphincterotomy and balloon stone extraction", "Coronary angiography with stent to the right coronary artery",
@@ -512,7 +513,7 @@ async def check_surgery_filter(chart, documents: dict[str, dict]) -> list[str]:
     if left_out != [("Polyp removal", ref), ("Endoscopic polypectomy", ref)]:
         problems.append(f"the history leaves out {left_out}, expected the polyp removal and the polypectomy of {ref}")
     last = surgery_index(history).splitlines()[-1]
-    if not (last.startswith("- Not counted as operations: ") and "polyp removal (" in last and "endoscopic polypectomy (" in last):
+    if not (last.startswith("- Not counted as operations, being diagnostic procedures: ") and "polyp removal (" in last and "endoscopic polypectomy (" in last):
         problems.append(f"the index section's last line is {last!r}, expected the operations not counted")
     return problems
 
