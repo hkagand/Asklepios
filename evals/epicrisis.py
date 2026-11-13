@@ -383,6 +383,11 @@ CLOSED_PATIENTS = {
     "p-1011": ("chronic_kidney_disease", 1), "p-2041": ("colorectal_cancer", 0), "p-2042": ("gallstone_disease", 0),
 }
 NOT_IN_HERO = re.compile(r"\bPET\b|echocardiogra|ejection fraction", re.IGNORECASE)
+# Codes the catalogue gives only to a complication of the admission or its procedure.
+COMPLICATION_CODES = {
+    "A04.7", "E87.1", "E87.6", "F05.9", "I80.8", "J22", "K56.0", "K59.0", "N17.9", "O72.1", "R33", "R55", "R73.9",
+    "T81.0", "T81.4",
+}
 STOP_WORDS = {"a", "an", "and", "or", "of", "the", "with", "without", "to", "due", "in", "on", "for", "not", "other", "unspecified"}
 
 
@@ -510,6 +515,21 @@ def check_background_chart(chart, anchor: date, closed: set[str]) -> list[str]:
             age = item.admitted.year - born.year - ((item.admitted.month, item.admitted.day) < (born.month, born.day))
             if resources[0]["gender"] != "female" or not 18 <= age <= 45:
                 problems.append(f"{pid}: {ref} is a childbirth for a {resources[0]['gender']} patient aged {age}")
+
+    for ref, item in found.items():
+        during = " ".join(_section(item.text, "COMPLICATIONS DURING ADMISSION"))
+        procedure = " ".join(_section(item.text, "COMPLICATIONS"))
+        admitted_codes = {hit[1] for line in _section(item.text, "ADMISSION DIAGNOSES") if (hit := re.match(r"\((\S+)\)", line))}
+        complication_codes = {hit[1] for line in item.diagnoses if (hit := re.match(r"\((\S+)\)", line))} & COMPLICATION_CODES
+        if during == "None" and ((procedure and procedure != "None") or complication_codes - admitted_codes):
+            problems.append(f"{pid}: {ref} has a complication but says None under COMPLICATIONS DURING ADMISSION")
+        if item.title == "Observation after a head injury":
+            complaint = " ".join(_section(item.text, "COMPLAINT AND HISTORY"))
+            examination = " ".join(_section(item.text, "EXAMINATION ON ADMISSION"))
+            if "collision" in complaint and "fall" in complaint.replace("collision", ""):
+                problems.append(f"{pid}: {ref} speaks of a fall after a car collision")
+            if "back of the head" in complaint and "occipital" not in examination:
+                problems.append(f"{pid}: {ref} struck the back of the head but the swelling is elsewhere")
 
     others = sorted({item["resourceType"] for item in resources if tagged(item)} - {"DocumentReference", "Procedure"})
     if others:

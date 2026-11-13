@@ -753,6 +753,12 @@ def head_injury(c: Ctx) -> Admission:
         "struck the head on a low cupboard door and fell",
         "was a restrained passenger in a low-speed car collision",
     )
+    # The mechanism decides where the blow landed, where it says.
+    if "back of the head" in how:
+        region = "occipital"
+    elif "cupboard door" in how:
+        region = "frontal"
+    event = "the injury" if "collision" in how else "the fall"
     complications, extra = "None", []
     if c.complicated:
         complications = (
@@ -767,7 +773,7 @@ def head_injury(c: Ctx) -> Admission:
         service="Neurosurgery",
         doctor=NEUROSURGERY,
         complaint=_join(
-            f"{c.opening()}, who {how}. Lost consciousness for under a minute according to a witness; no memory of the fall itself.",
+            f"{c.opening()}, who {how}. Lost consciousness for under a minute according to a witness; no memory of {event} itself.",
             f"Headache and {rng.randint(2, 3)} episodes of vomiting since. Not taking blood thinners.",
         ),
         past_history=c.past(),
@@ -1107,6 +1113,7 @@ def colonoscopy(c: Ctx) -> Admission:
             "Return to the national screening programme in 10 years. Return with heavy rectal bleeding, dizziness or abdominal pain.",
         ),
         outcome="Recovered",
+        complications=procedure_complications,
         procedure=ProcedureReport(
             performed=scope,
             name="Colonoscopy with cold snare polypectomy",
@@ -1182,6 +1189,7 @@ def angiography(c: Ctx) -> Admission:
             "Family doctor review in 4 weeks. Return at once if chest pain recurs at rest.",
         ),
         outcome="Recovered",
+        complications=procedure_complications,
         procedure=ProcedureReport(
             performed=performed,
             name="Coronary angiography via the right radial artery",
