@@ -536,7 +536,7 @@ category = "surgery"
 question = "Has she had previous abdominal surgery?"
 expected = "Yes, three earlier abdominal operations: an open appendicectomy in 1996 at another hospital (patient-reported); a caesarean section in 2008 at another hospital, recorded only in notes; and an open umbilical hernia repair with a 6 × 6 cm onlay polypropylene mesh here on 10 Jun 2015. She has also had an ERCP with sphincterotomy and stone extraction this year."
 mentions = [["appendic*", "appendec*"], ["caesarean", "cesarean", "c-section"], ["hernia"], ["mesh"]]
-cites = [["Procedure/proc-p-2042-002", "DocumentReference/doc-p-2042-002"], ["DocumentReference/doc-p-2042-002", "DocumentReference/doc-p-2042-003"], ["Procedure/proc-p-2042-001", "DocumentReference/doc-p-2042-001"]]
+cites = [["Procedure/proc-p-2042-002", "DocumentReference/doc-p-2042-002", "DocumentReference/epi-p-2042-001"], ["DocumentReference/doc-p-2042-002", "DocumentReference/doc-p-2042-003", "DocumentReference/epi-p-2042-001"], ["Procedure/proc-p-2042-001", "DocumentReference/doc-p-2042-001", "DocumentReference/epi-p-2042-001"]]
 
 [[case]]
 id = "p2042-surgery-fit-for-laparoscopy"
@@ -564,7 +564,7 @@ category = "surgery"
 question = "When was his gallbladder removed?"
 expected = "In 2012, by laparoscopic cholecystectomy at another hospital. This is recorded only in the medical oncology consultation, not as a procedure record."
 mentions = ["2012", ["laparoscop*"]]
-cites = [["DocumentReference/doc-p-2041-002"]]
+cites = [["DocumentReference/doc-p-2041-002", "DocumentReference/epi-p-2041-001"]]
 
 [[case]]
 id = "p1009-surgery-not-abdominal"
@@ -573,7 +573,7 @@ category = "surgery"
 question = "Has he had any abdominal operations?"
 expected = "None are recorded. His only recorded operation, which it may name, is a right total knee replacement on 12 Mar 2019 at this hospital. Operations done elsewhere may not be in the record."
 mentions = [["no abdominal", "none", "not recorded", "not documented", "no record"]]
-cites = [["Procedure/proc-p-1009-001", "DocumentReference/doc-p-1009-001"]]
+cites = [["Procedure/proc-p-1009-001", "DocumentReference/doc-p-1009-001", "DocumentReference/epi-p-1009-002"]]
 avoid = ["appendic", "cholecyst", "hernia", "laparotomy", "has never had", "never had any"]
 
 [[case]]
