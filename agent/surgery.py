@@ -451,6 +451,29 @@ def text_for_reading(document: Document) -> str:
     return document.text if cut is None else "\n".join(lines[:cut]).rstrip() + "\n"
 
 
+# The reader is a model, and its instruction to leave out diagnostic tests, biopsies and polyp removal is not reliably
+# followed (a colonoscopy's "two polyps removed" came back as an operation). So the code drops them too: an operation
+# whose name names a diagnostic procedure and nothing operative is not an operation. Kept narrow on purpose.
+DIAGNOSTIC_WORDS = re.compile(
+    r"polypectom|polyp removal|colonoscop|gastroscop|endoscop|sigmoidoscop|biops|fine[- ]needle|angiogra",
+    re.IGNORECASE,
+)
+# An intervention in the name makes it an operation ("coronary angiography with stent", "excision biopsy"). Polypectomy
+# is itself diagnostic here, so it is taken out before looking for "-ectomy".
+OPERATIVE_WORDS = re.compile(
+    r"ectom|otom|plast|stent|excis|resect|repair|replace|insertion|intervention|bypass|ablat|ligat|extraction|dilat",
+    re.IGNORECASE,
+)
+
+
+def is_diagnostic(name: str) -> bool:
+    """True when the name names a diagnostic procedure and nothing operative: "Polyp removal", "Colonoscopy with
+    polypectomy", "Core biopsy". False for "ERCP with sphincterotomy", "Excision biopsy of a breast lump"."""
+    if not DIAGNOSTIC_WORDS.search(name):
+        return False
+    return not OPERATIVE_WORDS.search(re.sub(r"polypectom\w*", "", name, flags=re.IGNORECASE))
+
+
 def mentions_surgery(document: Document) -> bool:
     return bool(SURGICAL.search(document.text))
 
@@ -471,7 +494,7 @@ async def surgical_history(record: Record, reader: SurgeryReader) -> dict:
             continue
         if isinstance(result, BaseException):
             raise result
-        mentions += [from_document(record, document, operation) for operation in result.operations]
+        mentions += [from_document(record, document, operation) for operation in result.operations if not is_diagnostic(operation.name)]
         source = {"ref": document.ref, "label": record.label(document.ref), "date": document.when.date().isoformat()}
         clues += [{**source, "quote": quote, "finding": finding} for quote, finding in result.clues]
         if result.none_stated:

@@ -21,7 +21,7 @@ from agent.chat import start_session
 from agent.citations import Evidence
 from agent.epicrisis import index_line, index_section, read_all, reports
 from agent.loops import latest_notes
-from agent.record import Record, day_text
+from agent.record import Record, day_text, text_of
 
 from .onboarding import imported_records
 from .run import ROOT
@@ -377,6 +377,69 @@ def check_surgery_text(record: Record, documents: dict[str, dict]) -> list[str]:
     given = text_for_reading(operation)
     if "OPERATION REPORT" not in given.splitlines() or "OPERATION NOTE" not in given.splitlines() or "Uneventful." not in given:
         problems.append("operation: the reader is not given the operation report with its note")
+    return problems
+
+
+DIAGNOSTIC_NAMES = (
+    "Polyp removal", "Endoscopic polypectomy", "Colonoscopy with polypectomy", "Colonoscopy", "Gastroscopy",
+    "Upper gastrointestinal endoscopy", "Fine-needle aspiration of a thyroid nodule", "Core biopsy", "Kidney biopsy",
+    "Diagnostic coronary angiography", "Coronary angiography",
+)
+OPERATION_NAMES = (
+    "ERCP with biliary sphincterotomy and balloon stone extraction", "Coronary angiography with stent to the right coronary artery",
+    "Primary percutaneous coronary intervention with a drug-eluting stent", "Excision biopsy of a breast lump",
+    "Laparoscopic cholecystectomy", "Open appendicectomy", "Total thyroidectomy", "Right total knee replacement",
+    "Incisional hernia repair with mesh", "Port-a-cath insertion", "Septoplasty", "Carpal tunnel release",
+)
+
+
+def check_diagnostic_names(records: dict[str, Record]) -> list[str]:
+    """is_diagnostic is true for diagnostic procedures and false for operations, including every operation that
+    evals/surgery.toml expects (its full name from the patient's Procedure records, else the expectation's phrase)."""
+    import tomllib
+
+    from agent.surgery import is_diagnostic
+
+    from .run import says
+
+    problems = [f"{name!r} is not diagnostic" for name in DIAGNOSTIC_NAMES if not is_diagnostic(name)]
+    problems += [f"{name!r} is diagnostic" for name in OPERATION_NAMES if is_diagnostic(name)]
+    expected = tomllib.loads((ROOT / "evals" / "surgery.toml").read_text(encoding="utf-8"))["patient"]
+    for patient in expected:
+        record = records.get(patient["id"])
+        for item in patient["operations"]:
+            names = [text_of(procedure.get("code")) for procedure in record.procedures] if record else []
+            names = [name for name in names if says(name, item["match"])] or [item["match"]]
+            problems += [f"{patient['id']}: expected operation {name!r} is diagnostic" for name in names if is_diagnostic(name)]
+    return problems
+
+
+async def check_surgery_filter(chart, documents: dict[str, dict]) -> list[str]:
+    """Whatever the reader returns for a document, a diagnostic procedure does not reach the history; the real
+    operation does, and the document counts as read."""
+    from agent.surgery import DocumentSurgery, Operation, surgical_history
+
+    def operation(name: str) -> Operation:
+        return Operation(quote=name, name=name, when="this document", approach=None, side=None, elsewhere=False, complications=(), implants=())
+
+    class Reader:
+        """The smallest reader surgical_history accepts: an async read(document)."""
+
+        async def read(self, document):
+            if document.ref != f"DocumentReference/{documents['operation']['id']}":
+                return DocumentSurgery((), (), None)
+            return DocumentSurgery((operation("Laparoscopic appendicectomy"), operation("Polyp removal"), operation("Endoscopic polypectomy")), (), None)
+
+    # No Procedure records: only what the stub returns can appear.
+    record = record_of(chart, date(2026, 11, 13))
+    record.procedures = []
+    history = await surgical_history(record, Reader())
+    names = [item["name"] for item in history["operations"]]
+    problems = []
+    if names != ["Laparoscopic appendicectomy"]:
+        problems.append(f"the history lists {names}, expected only the appendicectomy")
+    if history["searched"]["documentsRead"] < 1:
+        problems.append("the document with the dropped operations does not count as searched")
     return problems
 
 
@@ -802,6 +865,8 @@ async def run_epicrisis(settings, records, anchor: date, seed: int, out: Path) -
         "limit": check_limit(record),
         "unreadable": check_unreadable(record),
         "surgery text": check_surgery_text(record, documents),
+        "diagnostic names": check_diagnostic_names(records),
+        "surgery filter": await check_surgery_filter(chart, documents),
         "none on file": check_none_on_file(imported_records(anchor)["p-3001"]),
     }
     for name, problems in checks.items():
