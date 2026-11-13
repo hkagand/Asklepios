@@ -534,7 +534,7 @@ id = "p2042-surgery-abdominal"
 patient = "p-2042"
 category = "surgery"
 question = "Has she had previous abdominal surgery?"
-expected = "Yes, three earlier abdominal operations: an open appendicectomy in 1996 at another hospital (patient-reported); a caesarean section in 2008 at another hospital, recorded only in notes; and an open umbilical hernia repair with a 6 × 6 cm onlay polypropylene mesh here on 10 Jun 2015. She has also had an ERCP with sphincterotomy and stone extraction this year."
+expected = "Yes, three earlier abdominal operations: an open appendicectomy in 1996 at another hospital (patient-reported); a caesarean section in 2008 at another hospital, recorded in notes and in the past history of her epicrisis reports, with no procedure record; and an open umbilical hernia repair with a 6 × 6 cm onlay polypropylene mesh here on 10 Jun 2015. She has also had an ERCP with sphincterotomy and stone extraction this year."
 mentions = [["appendic*", "appendec*"], ["caesarean", "cesarean", "c-section"], ["hernia"], ["mesh"]]
 cites = [["Procedure/proc-p-2042-002", "DocumentReference/doc-p-2042-002", "DocumentReference/epi-p-2042-001"], ["DocumentReference/doc-p-2042-002", "DocumentReference/doc-p-2042-003", "DocumentReference/epi-p-2042-001"], ["Procedure/proc-p-2042-001", "DocumentReference/doc-p-2042-001", "DocumentReference/epi-p-2042-001"]]
 
@@ -562,7 +562,7 @@ id = "p2041-surgery-cholecystectomy"
 patient = "p-2041"
 category = "surgery"
 question = "When was his gallbladder removed?"
-expected = "In 2012, by laparoscopic cholecystectomy at another hospital. This is recorded only in the medical oncology consultation, not as a procedure record."
+expected = "In 2012, by laparoscopic cholecystectomy at another hospital. This is recorded in the medical oncology consultation and in the past history of his epicrisis reports, not as a procedure record."
 mentions = ["2012", ["laparoscop*"]]
 cites = [["DocumentReference/doc-p-2041-002", "DocumentReference/epi-p-2041-001"]]
 
@@ -701,7 +701,7 @@ expected = "Yes, after the total thyroidectomy on 2 Jan 2019: transient hypocalc
 # Recovery is checked for each complication: the hypocalcaemia was transient, the palsy recovered fully.
 mentions = [["hypocalc*", "low calcium", "hypoparathyroid*"], ["vocal cord", "vocal-cord", "vocal fold", "recurrent laryngeal", "recurrent-laryngeal"], ["transient hypocalc*", "calcium normal", "normal calcium", "without supplement*", "off supplement*", "hypocalcaemia resolved", "hypocalcaemia had resolved", "hypocalcaemia that resolved", "hypocalcaemia (resolved"], ["recovered fully", "fully recovered", "full recovery", "recovered completely", "completely recovered", "later recovered", "that recovered", "which recovered", "has recovered", "had recovered", "since recovered", "normal voice", "voice is normal", "voice normal", "normal laryngoscopy", "paresis resolved", "paresis had resolved", "paresis that resolved", "paresis recovered", "paresis that recovered", "palsy resolved", "palsy had resolved", "palsy that resolved", "palsy recovered", "palsy that recovered", "resolved by apr*", "recovered by apr*", "recovered with voice therapy", "resolved with voice therapy"]]
 cites = [["DocumentReference/epi-p-2043-003"]]
-avoid = ["paresis persist*", "palsy persist*", "persistent vocal", "persistent right vocal", "permanent vocal", "permanent right vocal", "not recovered", "has not recovered", "did not recover"]
+avoid = ["paresis persist*", "palsy persist*", "persistent vocal", "persistent right vocal", "permanent vocal", "permanent right vocal", "not recovered", "has not recovered", "did not recover", "still improving", "paresis was improving", "paresis improving", "palsy was improving", "palsy improving"]
 
 [[case]]
 id = "p2043-tr-epicrisis-thyroid"
