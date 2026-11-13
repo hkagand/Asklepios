@@ -41,7 +41,7 @@ class Epicrisis:
     service: str
     diagnoses: tuple[str, ...]  # discharge diagnoses, "(I10) Essential hypertension"
     procedure: str | None  # PROCEDURE PERFORMED
-    complications: tuple[str, ...]  # both complication fields, without "None"
+    complications: tuple[str, ...]  # both complication fields, without "None", each distinct one once
     outcome: str
     readable: bool  # False when the headings could not be read
     text: str
@@ -89,11 +89,12 @@ def _parse(document: Document) -> Epicrisis:
     approved = next((line for line in (sections.get("EPICRISIS REPORT") or "").splitlines() if line.startswith("Report no.")), "")
     service = " · ".join(approved.split(" · ")[2:-1])
     diagnoses = tuple(line.strip() for line in (sections.get("DISCHARGE DIAGNOSES") or "").splitlines() if _value(line.strip()))
-    complications = tuple(
+    # A procedural complication is often written in both fields: each distinct one is listed once.
+    complications = tuple(dict.fromkeys(
         " ".join(value.split())
         for heading in ("COMPLICATIONS DURING ADMISSION", "COMPLICATIONS")
         if (value := _value(sections.get(heading)))
-    )
+    ))
     readable = all(heading in sections for heading in REQUIRED) and admitted is not None and discharged is not None
     return Epicrisis(
         ref=document.ref,

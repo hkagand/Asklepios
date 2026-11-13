@@ -1287,10 +1287,14 @@ def surgery_timeline(anchor: date) -> SurgeryTimeline:
     cholecystectomy = cholecystitis + timedelta(days=2)
     hernia = after(cholecystectomy, 770)
     clot = hernia + timedelta(days=14)
+    # Admitted for bowel preparation the working day before the colonoscopy, so never on a Friday.
+    colonoscopy = back(1830)
+    if colonoscopy.weekday() == 4:
+        colonoscopy -= timedelta(days=1)
     return SurgeryTimeline(
         cholecystitis=cholecystitis, cholecystectomy=cholecystectomy, cholecystitis_home=cholecystectomy + timedelta(days=8),
         colic=back(3080), hernia=hernia, hernia_home=hernia + timedelta(days=3), clot=clot, clot_home=clot + timedelta(days=3),
-        apixaban_end=clot + timedelta(days=91), gastroenteritis=back(2450), hypertension=back(2200), colonoscopy=back(1830),
+        apixaban_end=clot + timedelta(days=91), gastroenteritis=back(2450), hypertension=back(2200), colonoscopy=colonoscopy,
         vertigo=back(1480), osteoarthritis=back(1150), knee=back(690), visits=(back(140), back(45)),
     )
 
@@ -1485,10 +1489,10 @@ def repeated_surgery_reports(chart: PatientChart, anchor: date, seed: int) -> li
         f"Provoked deep vein thrombosis of the left leg in {_month(t.clot)}, two weeks after the incisional hernia repair: "
         f"apixaban for three months, stopped in {_month(t.apixaban_end)}."
     )
-    colic_line = f"Renal colic from a ureteric stone in {_month(t.colic)}, passed without treatment."
+    colic_line = f"Renal colic from a ureteric stone in {_month(t.colic)}, passed without an operation."
 
     def airway_line(day: date) -> str:
-        again = f"; a videolaryngoscope was needed again at the hernia repair in {_month(t.hernia)}" if day > t.hernia else ""
+        again = f"; a videolaryngoscope was used again at the hernia repair in {_month(t.hernia)}" if day > t.hernia else ""
         return f"Airway alert: {airway}{again}."
 
     # The catalogue's builders name the clot and the replaced knee as history, not as discharge diagnoses, and repeat
@@ -1646,8 +1650,8 @@ def repeated_surgery_reports(chart: PatientChart, anchor: date, seed: int) -> li
             f"{c.free('Tramadol')} 50 mg orally up to three times daily as needed for 5 days",
         ),
         recommendations=join(
-            "AIRWAY ALERT continues: difficult intubation (Cormack-Lehane grade 3), and a videolaryngoscope was needed again",
-            "at this operation. Tell the anaesthetist before any future operation or sedation.",
+            "AIRWAY ALERT continues: difficult intubation (Cormack-Lehane grade 3), and a videolaryngoscope was used again",
+            "at this operation, as planned. Tell the anaesthetist before any future operation or sedation.",
             "Abdominal binder and no heavy lifting for 6 weeks; walk several times a day. Clips out at the family doctor's on",
             "day 10. Surgical clinic in 6 weeks. Return with fever, redness or discharge from the wound.",
         ),
@@ -1722,7 +1726,7 @@ def repeated_surgery_reports(chart: PatientChart, anchor: date, seed: int) -> li
         ),
         recommendations=join(
             f"Apixaban for three months, until {day_text(t.apixaban_end)}, then stop: the clot was provoked by surgery.",
-            "Walk regularly; a compression stocking may ease the swelling. Family doctor (Dr. Elif Aydın) in 2 weeks.",
+            "Walk regularly; a compression stocking may ease the swelling. Review with her family doctor in 2 weeks.",
             "Before any future operation, tell the team about this clot: extended thromboprophylaxis will be needed.",
             "Return at once with chest pain, breathlessness, coughing blood or any bleeding.",
         ),
@@ -1764,9 +1768,9 @@ def repeated_surgery_reports(chart: PatientChart, anchor: date, seed: int) -> li
         course=join(
             f"Bowel preparation completed overnight; colonoscopy on {day_text(scope)} with propofol sedation given by an",
             "anaesthetist (see the procedure report): two polyps removed from the sigmoid colon.",
-            "Home was planned for the same afternoon, but the next morning she bled from the polypectomy site (see",
-            "COMPLICATIONS DURING ADMISSION). It settled with observation, without a repeat colonoscopy or a transfusion;",
-            "Hb steady on the following day. Amlodipine continued.",
+            "Kept in overnight for observation after the propofol sedation, as planned because of her airway alert; the next",
+            "morning she bled from the polypectomy site (see COMPLICATIONS DURING ADMISSION). It settled with observation,",
+            "without a repeat colonoscopy or a transfusion; Hb steady on the following day. Amlodipine continued.",
         ),
         admission_diagnoses=(("R19.5", "Positive faecal immunochemical test"),),
         discharge_diagnoses=(
@@ -1791,7 +1795,7 @@ def repeated_surgery_reports(chart: PatientChart, anchor: date, seed: int) -> li
             team=f"{GASTROENTEROLOGIST} (endoscopist); {anaesthetist} (anaesthetist)",
             anaesthesia=join(
                 f"Deep sedation with propofol given by an anaesthetist ({anaesthetist}), breathing on her own with nasal oxygen.",
-                f"Airway alert: {airway}; a videolaryngoscope was needed again in {t.hernia.year}. Videolaryngoscope and",
+                f"Airway alert: {airway}; a videolaryngoscope was used again in {t.hernia.year}. Videolaryngoscope and",
                 "difficult-airway trolley in the room; not needed.",
             ),
             wound_class="Not applicable",
@@ -1876,7 +1880,7 @@ def repeated_surgery_reports(chart: PatientChart, anchor: date, seed: int) -> li
             team=c.team(ORTHOPAEDICS),
             anaesthesia=join(
                 "Spinal anaesthesia (hyperbaric bupivacaine) with an adductor canal block and light sedation, chosen instead",
-                f"of a general anaesthetic because of the known difficult airway: {airway}, and a videolaryngoscope needed",
+                f"of a general anaesthetic because of the known difficult airway: {airway}, and a videolaryngoscope used",
                 f"again in {t.hernia.year}. Videolaryngoscope and difficult-airway trolley in theatre; not needed.",
             ),
             wound_class="Clean",

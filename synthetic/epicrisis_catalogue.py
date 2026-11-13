@@ -387,6 +387,11 @@ def _delirium(c: Ctx) -> tuple[str, tuple[str, str]]:
 # ----------------------------------------------------------------- medical episodes
 
 
+def interacts_with_clarithromycin(name: str) -> bool:
+    """A statin or a calcium-channel blocker, by its lower-case name."""
+    return name.endswith("statin") or name.endswith("dipine") or name in ("diltiazem", "verapamil")
+
+
 def pneumonia(c: Ctx) -> Admission:
     rng, p = c.rng, c.p
     side = c.pick("right", "left")
@@ -395,13 +400,20 @@ def pneumonia(c: Ctx) -> Admission:
     switch = rng.randint(2, 3)
     oral = c.free("Levofloxacin") if p.penicillin_allergy() else c.free("Amoxicillin–clavulanate", "Cefuroxime axetil")
     oral_dose = {"Levofloxacin": "750 mg orally once daily", "Amoxicillin–clavulanate": "1 g orally twice daily", "Cefuroxime axetil": "500 mg orally twice daily"}[oral]
-    # Clarithromycin raises statin levels (muscle injury): with a statin, the atypical cover is doxycycline instead.
-    statin = next((name_of(order).lower() for order in p.medicines(c.admitted) if name_of(order).lower().endswith("statin")), None)
+    # Clarithromycin raises the levels of statins (muscle injury) and calcium-channel blockers (low blood pressure,
+    # swelling): with either one ordered during the stay, the atypical cover is doxycycline instead.
+    interacting = next(
+        (
+            name_of(order).lower() for day in (c.admitted, discharged) for order in p.medicines(day)
+            if interacts_with_clarithromycin(name_of(order).lower())
+        ),
+        None,
+    )
     if p.penicillin_allergy():
         intravenous = "intravenous levofloxacin"
-    elif statin:
+    elif interacting:
         atypical = c.free("Doxycycline", "Azithromycin").lower()
-        intravenous = f"intravenous ceftriaxone with oral {atypical} (clarithromycin avoided because of the {statin})"
+        intravenous = f"intravenous ceftriaxone with oral {atypical} (clarithromycin avoided because of the {interacting})"
     else:
         intravenous = "intravenous ceftriaxone with oral clarithromycin"
     complications, extra = "None", []
@@ -431,13 +443,28 @@ def pneumonia(c: Ctx) -> Admission:
             "Alert and oriented.",
         ),
         course=join(
-            f"Chest X-ray: consolidation of the {side} {lobe} lobe; no effusion.",
+            c.pick(
+                f"Chest X-ray: consolidation of the {side} {lobe} lobe; no effusion.",
+                f"Chest X-ray: {side} {lobe} lobe consolidation with air bronchograms; costophrenic angles clear.",
+                f"Chest X-ray: dense consolidation of the {side} {lobe} lobe, without effusion or cavitation.",
+            ),
             f"WBC {_number(rng.uniform(13.5, 19.5))} ×10³/µL with neutrophilia, CRP {rng.randint(130, 260)} mg/L, creatinine {_number(c.creatinine(), 2)} mg/dL.",
             organism,
-            f"Treated with {intravenous} and oxygen by nasal cannula for {rng.randint(2, 3)} days.",
-            f"Afebrile from day {switch}; switched to oral {oral.lower()} on day {switch + 1}.",
+            c.pick(
+                f"Treated with {intravenous} and oxygen by nasal cannula for {rng.randint(2, 3)} days.",
+                f"Started on {intravenous}; needed oxygen by nasal cannula for the first {rng.randint(2, 3)} days.",
+                f"Given {intravenous}, with oxygen by nasal cannula for {rng.randint(2, 3)} days and chest physiotherapy.",
+            ),
+            c.pick(
+                f"Afebrile from day {switch}; switched to oral {oral.lower()} on day {switch + 1}.",
+                f"The fever settled by day {switch}, and the antibiotic was changed to oral {oral.lower()} on day {switch + 1}.",
+            ),
             c.glucose_line(),
-            f"CRP {rng.randint(18, 55)} mg/L before discharge; SpO₂ {rng.randint(95, 97)}% on room air, walking on the ward.",
+            c.pick(
+                f"CRP {rng.randint(18, 55)} mg/L before discharge; SpO₂ {rng.randint(95, 97)}% on room air, walking on the ward.",
+                f"Before discharge CRP had fallen to {rng.randint(18, 55)} mg/L and SpO₂ was {rng.randint(95, 97)}% on room air; eating well.",
+                f"On the day of discharge SpO₂ {rng.randint(95, 97)}% on room air and CRP {rng.randint(18, 55)} mg/L; managing the stairs with the physiotherapist.",
+            ),
         ),
         admission_diagnoses=(("J18.9", "Community-acquired pneumonia"),),
         discharge_diagnoses=(("J18.1", f"Lobar pneumonia, {side} {lobe} lobe"), *extra, *c.chronic()),
@@ -447,9 +474,17 @@ def pneumonia(c: Ctx) -> Admission:
             *c.continuing(discharged),
         ),
         recommendations=join(
-            "Family doctor review in one week. Chest X-ray in six weeks to confirm resolution.",
+            c.pick(
+                "Family doctor review in one week. Chest X-ray in six weeks to confirm resolution.",
+                "See the family doctor in 7–10 days; repeat chest X-ray in six weeks to make sure the consolidation has cleared.",
+                "Family doctor review when the antibiotics are finished, and a chest X-ray with clinic review in six weeks.",
+            ),
             "Smoking cessation strongly advised; referred to the stop-smoking clinic." if p.smoker(c.admitted) else "",
-            "Return if fever recurs or breathing worsens.",
+            c.pick(
+                "Return if fever recurs or breathing worsens.",
+                "Come back sooner if the fever returns, breathing gets harder or there is chest pain.",
+                "Return at once with worsening breathlessness, new chest pain or confusion.",
+            ),
         ),
         outcome=c.pick("Recovered", "Improved"),
         complications=complications,
@@ -513,7 +548,8 @@ def covid(c: Ctx) -> Admission:
             *c.continuing(discharged),
         ),
         recommendations=join(
-            "Isolate at home until 10 days from the start of symptoms.",
+            # After an illness that needed oxygen, isolation lasts 20 days from the start of symptoms: always past discharge.
+            f"Isolate at home until {day_text(onset + timedelta(days=20))}, 20 days from the start of symptoms.",
             "Check oxygen saturation at home twice daily; return if it falls below 93% or breathing worsens.",
             f"Chest {'X-ray' if p.story in NO_ABDOMINAL_IMAGING else 'imaging'} and clinic review in 8 weeks.",
         ),
@@ -614,13 +650,26 @@ def pyelonephritis(c: Ctx) -> Admission:
             f"Flushed. Tender {side} renal angle; abdomen soft, no peritonism.",
         ),
         course=join(
-            "Urinalysis: leucocytes 3+, nitrites positive.",
+            c.pick(
+                "Urinalysis: leucocytes 3+, nitrites positive.",
+                "Urine dipstick: leucocytes 3+ and nitrites positive.",
+                "Urinalysis: leucocytes 3+, nitrites positive, blood 1+.",
+            ),
             f"WBC {_number(rng.uniform(14.5, 21.0))} ×10³/µL, CRP {rng.randint(140, 280)} mg/L, creatinine {_number(base * rng.uniform(1.05, 1.25), 2)} mg/dL.",
             "Prompt response to treatment, so no imaging was needed." if p.story in NO_ABDOMINAL_IMAGING else "Renal ultrasound: no hydronephrosis or stones.",
             f"Urine and blood cultures grew Escherichia coli sensitive to ceftriaxone, cefuroxime and ciprofloxacin{c.pick(', resistant to ampicillin', '')}.",
-            f"Treated with intravenous {'ciprofloxacin' if allergic else 'ceftriaxone'} and fluids; afebrile after {rng.randint(36, 60)} hours",
-            f"and switched to oral {oral.lower()}.",
+            c.pick(
+                f"Treated with intravenous {'ciprofloxacin' if allergic else 'ceftriaxone'} and fluids; afebrile after {rng.randint(36, 60)} hours "
+                f"and switched to oral {oral.lower()}.",
+                f"Intravenous {'ciprofloxacin' if allergic else 'ceftriaxone'} and fluids; the fever broke after {rng.randint(36, 60)} hours, and "
+                f"treatment continued with oral {oral.lower()}.",
+            ),
             c.glucose_line(),
+            c.pick(
+                "Eating and drinking normally, with the loin pain gone, at discharge.",
+                "Pain-free and passing urine normally before discharge.",
+                "",
+            ),
         ),
         admission_diagnoses=(("N39.0", "Urinary tract infection with fever"),),
         discharge_diagnoses=(("N10", f"Acute pyelonephritis, {side}"), ("B96.2", "Escherichia coli as the cause"), *extra, *c.chronic()),
@@ -630,8 +679,16 @@ def pyelonephritis(c: Ctx) -> Admission:
             *c.continuing(discharged),
         ),
         recommendations=join(
-            "Drink at least 2 litres a day.",
-            "Repeat urine culture only if symptoms return; return with fever or loin pain.",
+            c.pick(
+                "Drink at least 2 litres a day.",
+                "Plenty of fluids, at least 2 litres a day, and finish the full antibiotic course.",
+                "Keep well hydrated and complete the antibiotic course even when feeling better.",
+            ),
+            c.pick(
+                "Repeat urine culture only if symptoms return; return with fever or loin pain.",
+                "No routine repeat urine culture; see the family doctor if burning or frequency come back, and return with fever or loin pain.",
+                "Return at once with fever, rigors or loin pain; otherwise family doctor review in two weeks.",
+            ),
             "Kidney function with the next routine bloods." if p.kidney_disease(c.admitted) else "",
         ),
         outcome="Recovered",
@@ -808,16 +865,41 @@ def head_injury(c: Ctx) -> Admission:
             "Pupils equal and reactive; no focal neurological deficit. Cervical spine not tender, full painless movement.",
         ),
         course=join(
-            "CT head within an hour of arrival: no intracranial haemorrhage and no skull fracture; soft-tissue swelling only.",
-            "Admitted for neurological observation because of the loss of consciousness and repeated vomiting.",
-            "GCS 15 throughout; no further vomiting; headache eased with paracetamol.",
+            c.pick(
+                "CT head within an hour of arrival: no intracranial haemorrhage and no skull fracture; soft-tissue swelling only.",
+                f"CT head {rng.randint(30, 55)} minutes after arrival: no intracranial bleeding and no fracture; {side} {region} scalp swelling only.",
+                f"CT head on arrival: swelling of the scalp over the {side} {region} region, but no fracture and no bleeding inside the skull.",
+            ),
+            c.pick(
+                "Admitted for neurological observation because of the loss of consciousness and repeated vomiting.",
+                f"Neurological observations {c.pick('hourly', 'half-hourly at first, then hourly')} on the ward, because of the loss of consciousness and the vomiting.",
+                "Kept in for neurological observation: a brief loss of consciousness and repeated vomiting.",
+            ),
+            c.pick(
+                "GCS 15 throughout; no further vomiting; headache eased with paracetamol.",
+                "GCS stayed at 15; vomited once more on the ward, then no more; headache settled with paracetamol.",
+                "No change in the neurological observations and no further vomiting; the headache was mild by the next morning.",
+                f"Neurological observations normal throughout; eating by the evening; headache {rng.randint(1, 3)}/10 with paracetamol at discharge.",
+            ),
+            "Seen by the physiotherapist: walking safely before discharge." if c.age >= 65 else "",
         ),
         admission_diagnoses=(("S06.0", "Head injury with brief loss of consciousness"),),
         discharge_diagnoses=(("S06.0", "Concussion"), ("S00.0", f"Scalp haematoma, {side} {region}"), *extra, *c.chronic()),
         prescription=("Paracetamol 1 g orally up to four times daily as needed for headache", *c.continuing(discharged)),
         recommendations=join(
-            "Head injury advice sheet given. An adult to stay with the patient for the first 24 hours at home.",
-            "No driving or contact sport for one week. Return at once with worsening headache, vomiting, drowsiness, confusion or weakness.",
+            c.pick(
+                "Head injury advice sheet given. An adult to stay with the patient for the first 24 hours at home.",
+                "Written head injury advice given to the patient and family; someone to stay with the patient for the first 24 hours.",
+                "Head injury advice explained and given in writing; not to be alone at home for the first night.",
+            ),
+            c.pick(
+                "No driving or contact sport for one week. Return at once with worsening headache, vomiting, drowsiness, confusion or weakness.",
+                "Rest from work as needed for a few days; no contact sport for one week. Return at once with worsening headache, repeated "
+                "vomiting, drowsiness, confusion, a fit or weakness.",
+                "No driving for a week and no alcohol for 48 hours. Come back immediately with worsening headache, vomiting, unusual "
+                "sleepiness, confusion or weakness of an arm or leg.",
+            ),
+            c.pick("Family doctor review if headaches persist beyond two weeks.", "Avoid sleeping tablets for the next few days.", ""),
         ),
         outcome="Recovered",
         complications=complications,
@@ -1409,8 +1491,17 @@ def septoplasty(c: Ctx) -> Admission:
         past_history=c.past(),
         examination=join(c.vitals(), f"Septum deviated to the {side} with a bony spur touching the inferior turbinate. No polyps. Ears and throat normal."),
         course=join(
-            "Septoplasty under general anaesthesia on the day of admission (see the operation report).",
-            "Packs removed the next morning; breathing through the nose better." if not c.complicated else "",
+            c.pick(
+                "Septoplasty under general anaesthesia on the day of admission (see the operation report).",
+                f"Septoplasty on the day of admission under general anaesthesia (see the operation report); the {side}-sided spur removed.",
+                "Operated on the day of admission: septoplasty under general anaesthesia (see the operation report).",
+            ),
+            c.pick(
+                "Packs removed the next morning; breathing through the nose better.",
+                "Nasal packs out on the morning after the operation; nose breathing already easier.",
+                "Packs removed on day 1 with little bleeding; breathing through both nostrils.",
+            ) if not c.complicated else
+            "Packs removed on day 1; the nosebleed that followed (see COMPLICATIONS DURING ADMISSION) settled with a new pack.",
         ),
         admission_diagnoses=(("J34.2", "Deviated nasal septum"),),
         discharge_diagnoses=(("J34.2", f"Deviated nasal septum to the {side}, corrected"), *extra, *c.chronic()),
@@ -1751,7 +1842,7 @@ EPISODES = (
         "renal colic", "medical", renal_colic, lambda p, day: p.story not in NO_ABDOMINAL_IMAGING,
         weight=lambda p, day: 1.0 if p.female else 2.0,
     ),
-    Episode("head injury", "medical", head_injury, weight=lambda p, day: 1.0),
+    Episode("head injury", "medical", head_injury, weight=lambda p, day: 0.4),
     Episode("fracture", "medical", fracture_treated_without_surgery, lambda p, day: p.age(day) >= 50, weight=lambda p, day: 1.5),
     Episode("vertigo", "medical", vertigo, lambda p, day: p.age(day) >= 30, weight=lambda p, day: 0.6),
     Episode("bleeding ulcer", "diagnostic", bleeding_ulcer, lambda p, day: p.story not in ("colorectal_cancer", "iron_deficiency")),

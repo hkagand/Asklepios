@@ -254,7 +254,31 @@ def check_fields(record: Record) -> list[str]:
             problems.append(f"index line does not end with [{item.ref}]: {line}")
     if len(lines) > 2 and not lines[2].startswith(f"- {day_text(operation.admitted)} to {day_text(operation.discharged)}, {operation.service}: "):
         problems.append(f"operation index line: {lines[2]}")
+
+    # A procedural complication is written in the procedure block and again under COMPLICATIONS DURING ADMISSION: it
+    # is listed once.
+    same, written = operation.procedure.complications, report.text
+    text = written.replace(f"COMPLICATIONS DURING ADMISSION\n{operation.complications}\n", f"COMPLICATIONS DURING ADMISSION\n{same}\n")
+    if text == written:
+        problems.append("operation: could not write the procedure's complication under COMPLICATIONS DURING ADMISSION")
+    else:
+        twice = next(item for item in reports(_with_text(record, report.ref, text)) if item.ref == report.ref)
+        if twice.complications != (same,):
+            problems.append(f"the same complication in both blocks reads as {twice.complications!r}, expected ({same!r},)")
+        if index_line(twice).count(same) != 1:
+            problems.append(f"the same complication in both blocks is listed {index_line(twice).count(same)} times in the index line")
     return problems
+
+
+def _with_text(record: Record, ref: str, text: str) -> Record:
+    """A copy of the record in which the document `ref` has the given text."""
+    resource = json.loads(json.dumps(record.resources[ref]))
+    resource["content"][0]["attachment"]["data"] = base64.b64encode(text.encode("utf-8")).decode("ascii")
+    found: dict[str, list[dict]] = defaultdict(list)
+    for key, item in record.resources.items():
+        if item["resourceType"] != "Patient":
+            found[item["resourceType"]].append(resource if key == ref else item)
+    return Record(record.patient, dict(found), today=record.today)
 
 
 def check_tool(record: Record) -> list[str]:
@@ -310,16 +334,9 @@ def check_unreadable(record: Record) -> list[str]:
     """A report whose headings cannot be read is still listed, and its text is still returned."""
     problems = []
     ref = reports(record)[1].ref
-    resource = json.loads(json.dumps(record.resources[ref]))
-    attachment = resource["content"][0]["attachment"]
-    text = base64.b64decode(attachment["data"]).decode("utf-8")
+    text = base64.b64decode(record.resources[ref]["content"][0]["attachment"]["data"]).decode("utf-8")
     lowered = "\n".join(line.lower() if line.isupper() else line for line in text.split("\n"))
-    attachment["data"] = base64.b64encode(lowered.encode("utf-8")).decode("ascii")
-    found: dict[str, list[dict]] = defaultdict(list)
-    for key, item in record.resources.items():
-        if item["resourceType"] != "Patient":
-            found[item["resourceType"]].append(resource if key == ref else item)
-    copy = Record(record.patient, dict(found), today=record.today)
+    copy = _with_text(record, ref, lowered)
     report = next(item for item in reports(copy) if item.ref == ref)
     if report.readable:
         problems.append("a report with lower-cased headings is readable")
@@ -545,9 +562,67 @@ def check_background_chart(chart, anchor: date, closed: set[str]) -> list[str]:
             if "back of the head" in complaint and "occipital" not in examination:
                 problems.append(f"{pid}: {ref} struck the back of the head but the swelling is elsewhere")
 
+    # Clarithromycin raises statin and calcium-channel blocker levels: not given while either is ordered.
+    for ref, item in found.items():
+        given = item.text.lower().count("clarithromycin") - item.text.lower().count("clarithromycin avoided")
+        interacting = sorted({
+            _medicine_name(order) for order in resources
+            if order["resourceType"] == "MedicationRequest" and _interacts_with_clarithromycin(_medicine_name(order))
+            and _order_period(order)[0] <= item.discharged and (_order_period(order)[1] is None or item.admitted < _order_period(order)[1])
+        })
+        if given and interacting:
+            problems.append(f"{pid}: {ref} gives clarithromycin with {', '.join(interacting)} ordered")
+        isolation = re.search(r"Isolate at home until ([^.(,]+)", item.text)
+        if isolation and not ((until := _day_of(isolation[1])) and until > item.discharged):
+            problems.append(f"{pid}: {ref} advises isolation until {isolation[1].strip()!r}, not a day after discharge on {item.discharged}")
+
     others = sorted({item["resourceType"] for item in resources if tagged(item)} - {"DocumentReference", "Procedure"})
     if others:
         problems.append(f"{pid}: tagged {', '.join(others)}")
+    return problems
+
+
+def _interacts_with_clarithromycin(name: str) -> bool:
+    """A statin or a calcium-channel blocker."""
+    return name.endswith("statin") or name.endswith("dipine") or name in ("diltiazem", "verapamil")
+
+
+def _day_of(text: str) -> date | None:
+    """A day written as day_text writes it ("2 Mar 2026"), or None."""
+    from agent.record import MONTHS
+
+    parts = text.split()
+    if len(parts) != 3 or not parts[0].isdigit() or parts[1] not in MONTHS or not parts[2].isdigit():
+        return None
+    return date(int(parts[2]), MONTHS.index(parts[1]) + 1, int(parts[0]))
+
+
+# The gold anchor, where the cohort-wide variety of the background reports is checked.
+GOLD_ANCHOR = date(2026, 10, 23)
+HEAD_INJURY = "Observation after a head injury"
+MOST_HEAD_INJURIES = 8  # charts with a head-injury report, at most
+MOST_SAME_COURSE = 2  # patients whose reports share one HOSPITAL COURSE text, at most
+
+
+def _variety_problems(charts: list, anchor: date) -> list[str]:
+    """Across the background charts: head injury in at most MOST_HEAD_INJURIES charts, and no HOSPITAL COURSE text in
+    the reports of more than MOST_SAME_COURSE patients."""
+    problems = []
+    found = {chart.pid: reports(record_of(chart, anchor)) for chart in charts}
+    head = [pid for pid, items in found.items() if any(item.title == HEAD_INJURY for item in items)]
+    if len(head) > MOST_HEAD_INJURIES:
+        problems.append(f"head injury is in {len(head)} charts, more than {MOST_HEAD_INJURIES}")
+    courses: dict[str, set[str]] = defaultdict(set)
+    titles: dict[str, str] = {}
+    for pid, items in found.items():
+        for item in items:
+            course = " ".join(_section(item.text, "HOSPITAL COURSE"))
+            courses[course].add(pid)
+            titles[course] = item.title
+    problems += [
+        f"the hospital course of {titles[course]!r} is the same in {len(pids)} patients ({', '.join(sorted(pids))})"
+        for course, pids in courses.items() if len(pids) > MOST_SAME_COURSE
+    ]
     return problems
 
 
@@ -568,6 +643,8 @@ def check_background(anchors: list[date], seed: int) -> list[str]:
             for chart in charts if chart.pid not in SHOWCASE
             for problem in check_background_chart(chart, anchor, set(CLOSED_PATIENTS))
         ]
+        if anchor == GOLD_ANCHOR:
+            problems += [f"{anchor}: {problem}" for problem in _variety_problems([chart for chart in charts if chart.pid not in SHOWCASE], anchor)]
         again = build_charts(anchor, seed)
         if json.dumps([chart.resources for chart in charts], sort_keys=True) != json.dumps([chart.resources for chart in again], sort_keys=True):
             problems.append(f"{anchor}: two builds differ")
@@ -588,6 +665,32 @@ REQUIRED = {
                ("deep vein thrombosis", "three months"), ("knee replacement", "spinal"), ("polyp", "bleed"), ("renal colic", "")],
 }
 ACTIVE_MEDICINE = {"p-2043": "levothyroxine", "p-2044": "aspirin", "p-2045": "amlodipine"}
+# The planned admissions of the showcase patients, by the name of their timeline function and its fields: each is
+# admitted, and has its procedure, on a working day.
+PLANNED = {
+    "p-2043": ("thyroid_timeline", ("aspiration", "surgery", "radioiodine", "node")),
+    "p-2044": ("coronary_timeline", ("stent", "hernia")),
+    "p-2045": ("surgery_timeline", ("hernia", "colonoscopy", "knee")),
+}
+
+
+def _planned_problems(pid: str, found: dict, anchor: date) -> list[str]:
+    import showcase
+
+    problems = []
+    name, fields = PLANNED.get(pid, ("", ()))
+    timeline = getattr(showcase, name)(anchor) if name else None
+    for field_name in fields:
+        day = getattr(timeline, field_name)
+        matching = [item for item in found.values() if item.admitted == day]
+        if len(matching) != 1:
+            problems.append(f"{pid}: {len(matching)} reports of the planned {field_name} admission on {day}")
+            continue
+        days = [("admitted", day)] + [("procedure", _day_of(line)) for line in _section(matching[0].text, "DATE OF PROCEDURE")]
+        problems += [
+            f"{pid}: the planned {field_name}: {what} on {when:%A} {when}" for what, when in days if when and when.weekday() >= 5
+        ]
+    return problems
 
 
 def _overlaps(first: dict, second: dict) -> bool:
@@ -626,6 +729,13 @@ def check_showcase(charts: dict, records: dict[str, Record], anchor: date) -> li
             if not any(first in item.text.lower() and second in item.text.lower() for item in found.values()):
                 problems.append(f"{pid}: no report holds both {first!r} and {second!r}")
         problems += _prescription_problems(pid, resources, found)
+        problems += _planned_problems(pid, found, anchor)
+        # A report's author does not refer the patient on to themself as the family doctor.
+        for ref, item in found.items():
+            approved = next((line for line in _section(item.text, "EPICRISIS REPORT") if line.startswith("Report no.")), "")
+            author = approved.split(" · ")[-1]
+            if author and f"family doctor ({author.lower()})" in " ".join(_section(item.text, "DISCHARGE RECOMMENDATIONS AND FOLLOW-UP")).lower():
+                problems.append(f"{pid}: {ref} refers the patient to its own author, {author}, as the family doctor")
         # An echocardiogram's findings belong to a report on the chart (the heart-failure patients have them).
         if not any(item["resourceType"] == "DiagnosticReport" and "echocardiogra" in item["code"].get("text", "").lower() for item in resources):
             problems += [f"{pid}: {ref} mentions an echocardiogram the chart has no report of" for ref, item in found.items() if "echocardiogra" in item.text.lower()]
