@@ -572,6 +572,39 @@ def check_pre_read(record: Record, record_without: Record) -> list[str]:
     return problems
 
 
+MICROGRAMS = ("125 μg", "125 µg", "125 ug")  # Greek mu (U+03BC), micro sign (U+00B5), plain letters
+
+
+def check_units() -> list[str]:
+    """The citation verifier reads micrograms the same however the mu is written, and an unknown unit never raises."""
+    from agent.citations import facts_in, verify
+
+    problems = []
+    texts = [f"Levothyroxine {amount} daily." for amount in MICROGRAMS] + ["Dose 125 zorkg daily, 125 Μg."]
+    facts = {}
+    for text in texts:
+        try:
+            facts[text] = facts_in(text)
+        except Exception as error:  # noqa: BLE001 - the check is that nothing raises
+            problems.append(f"facts_in({text!r}) raised {error!r}")
+    found = {tuple(facts[text]) for text in texts[:3] if text in facts}
+    if len(found) != 1:
+        problems.append(f"the three microgram forms give different facts: {sorted(found)}")
+    ref = "MedicationRequest/med-1"
+    for source in MICROGRAMS:
+        for written in MICROGRAMS:
+            try:
+                evidence = Evidence()
+                evidence.add(f"{ref} Levothyroxine {source} daily")
+                blocks = verify(f"- Levothyroxine {written} daily [{ref}]", evidence=evidence, resolve=lambda token: token, label=str, context="")["blocks"]
+            except Exception as error:  # noqa: BLE001 - the check is that nothing raises
+                problems.append(f"verify({written!r}) raised {error!r}")
+                continue
+            if [block["status"] for block in blocks] != ["ok"]:
+                problems.append(f"{written!r} against a source with {source!r}: {[(block['status'], block.get('issues')) for block in blocks]}")
+    return problems
+
+
 def check_none_on_file(record_without: Record) -> list[str]:
     """A patient without reports: the index says none are on file, and so does the tool."""
     problems = []
@@ -1000,6 +1033,7 @@ async def run_epicrisis(settings, records, anchor: date, seed: int, out: Path) -
         "merging": await check_merging(chart, documents),
         "none on file": check_none_on_file(imported_records(anchor)["p-3001"]),
         "pre-read": check_pre_read(record, imported_records(anchor)["p-3001"]),
+        "units": check_units(),
     }
     for name, problems in checks.items():
         print(f"{name}: " + ("OK" if not problems else "; ".join(problems)))
