@@ -383,13 +383,18 @@ def check_surgery_text(record: Record, documents: dict[str, dict]) -> list[str]:
 DIAGNOSTIC_NAMES = (
     "Polyp removal", "Endoscopic polypectomy", "Colonoscopy with polypectomy", "Colonoscopy", "Gastroscopy",
     "Upper gastrointestinal endoscopy", "Fine-needle aspiration of a thyroid nodule", "Core biopsy", "Kidney biopsy",
-    "Diagnostic coronary angiography", "Coronary angiography",
+    "Diagnostic coronary angiography", "Coronary angiography", "Cystoscopy", "Hysteroscopy with endometrial sampling",
+    "Bronchoscopy", "Sigmoidoscopy", "Bone marrow biopsy", "Lumbar puncture", "Endoscopic haemostasis",
 )
 OPERATION_NAMES = (
     "ERCP with biliary sphincterotomy and balloon stone extraction", "Coronary angiography with stent to the right coronary artery",
     "Primary percutaneous coronary intervention with a drug-eluting stent", "Excision biopsy of a breast lump",
     "Laparoscopic cholecystectomy", "Open appendicectomy", "Total thyroidectomy", "Right total knee replacement",
     "Incisional hernia repair with mesh", "Port-a-cath insertion", "Septoplasty", "Carpal tunnel release",
+    "Percutaneous endoscopic gastrostomy", "Endoscopic sinus surgery", "Endoscopic carpal tunnel release",
+    "Angiographic embolisation", "Endoscopic stone removal", "Endoscopic sinus surgery with polypectomy",
+    "Laparoscopic sleeve gastrectomy", "Transurethral resection of the prostate", "Cystoscopy with ureteric stent insertion",
+    "Hysteroscopic myomectomy",
 )
 
 
@@ -414,32 +419,76 @@ def check_diagnostic_names(records: dict[str, Record]) -> list[str]:
     return problems
 
 
+def _stub_operation(name: str, when: str = "this document"):
+    from agent.surgery import Operation
+
+    return Operation(quote=name, name=name, when=when, approach=None, side=None, elsewhere=False, complications=(), implants=())
+
+
+def _stub_reader(document_ref: str, *operations):
+    """The smallest reader surgical_history accepts: an async read(document), answering for one document only."""
+    from agent.surgery import DocumentSurgery
+
+    class Reader:
+        async def read(self, document):
+            return DocumentSurgery(tuple(operations) if document.ref == document_ref else (), (), None)
+
+    return Reader()
+
+
 async def check_surgery_filter(chart, documents: dict[str, dict]) -> list[str]:
     """Whatever the reader returns for a document, a diagnostic procedure does not reach the history; the real
     operation does, and the document counts as read."""
-    from agent.surgery import DocumentSurgery, Operation, surgical_history
+    from agent.surgery import surgical_history
 
-    def operation(name: str) -> Operation:
-        return Operation(quote=name, name=name, when="this document", approach=None, side=None, elsewhere=False, complications=(), implants=())
-
-    class Reader:
-        """The smallest reader surgical_history accepts: an async read(document)."""
-
-        async def read(self, document):
-            if document.ref != f"DocumentReference/{documents['operation']['id']}":
-                return DocumentSurgery((), (), None)
-            return DocumentSurgery((operation("Laparoscopic appendicectomy"), operation("Polyp removal"), operation("Endoscopic polypectomy")), (), None)
-
+    reader = _stub_reader(
+        f"DocumentReference/{documents['operation']['id']}",
+        *(_stub_operation(name) for name in ("Laparoscopic appendicectomy", "Polyp removal", "Endoscopic polypectomy")),
+    )
     # No Procedure records: only what the stub returns can appear.
     record = record_of(chart, date(2026, 11, 13))
     record.procedures = []
-    history = await surgical_history(record, Reader())
+    history = await surgical_history(record, reader)
     names = [item["name"] for item in history["operations"]]
     problems = []
     if names != ["Laparoscopic appendicectomy"]:
         problems.append(f"the history lists {names}, expected only the appendicectomy")
     if history["searched"]["documentsRead"] < 1:
         problems.append("the document with the dropped operations does not count as searched")
+    return problems
+
+
+STENT_NAMES = (
+    "Stents to the right coronary artery", "Stent to the LAD", "Drug-eluting stent placement in the right coronary artery",
+    "PCI to the left anterior descending artery", "Coronary stenting", "RCA stent",
+    "Primary percutaneous coronary intervention with a drug-eluting stent to the right coronary artery",
+)
+NOT_CORONARY_STENT_NAMES = ("Biliary stent insertion", "Ureteric stent insertion", "Carotid artery stenting", "Coronary artery bypass grafting")
+
+
+async def check_stent_family(chart, documents: dict[str, dict]) -> list[str]:
+    """A name that speaks of a stent and a coronary artery is a coronary stent, however it is worded; a stent
+    elsewhere is not. A reader's "Stents to the right coronary artery" joins the Procedure record of that stent."""
+    from agent.surgery import family_of, surgical_history
+
+    problems = [f"{name!r} is not a coronary stent" for name in STENT_NAMES if family_of(name) != "coronary stent"]
+    problems += [f"{name!r} is a coronary stent" for name in NOT_CORONARY_STENT_NAMES if family_of(name) == "coronary stent"]
+
+    def stent(identifier: str, name: str, day: str) -> dict:
+        return {"resourceType": "Procedure", "id": identifier, "status": "completed", "code": {"text": name}, "performedDateTime": day}
+
+    record = record_of(chart, date(2026, 11, 13))
+    record.procedures = [
+        stent("stent-rca", "Primary percutaneous coronary intervention with a drug-eluting stent to the right coronary artery", "2018-03-02"),
+        stent("stent-lad", "Percutaneous coronary intervention with a stent to the left anterior descending artery", "2019-06-11"),
+    ]
+    reader = _stub_reader(f"DocumentReference/{documents['operation']['id']}", _stub_operation("Stents to the right coronary artery", "2018"))
+    history = await surgical_history(record, reader)
+    names = [item["name"] for item in history["operations"]]
+    if len(names) != 2:
+        problems.append(f"the history lists {names}, expected the 2019 stent and one 2018 stent")
+    elif not any(len(item["sources"]) > 1 and item["year"] == 2018 for item in history["operations"]):
+        problems.append("the reader's 2018 stent is not merged with the Procedure record")
     return problems
 
 
@@ -867,6 +916,7 @@ async def run_epicrisis(settings, records, anchor: date, seed: int, out: Path) -
         "surgery text": check_surgery_text(record, documents),
         "diagnostic names": check_diagnostic_names(records),
         "surgery filter": await check_surgery_filter(chart, documents),
+        "stent family": await check_stent_family(chart, documents),
         "none on file": check_none_on_file(imported_records(anchor)["p-3001"]),
     }
     for name, problems in checks.items():

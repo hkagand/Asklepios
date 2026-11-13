@@ -232,8 +232,14 @@ def region_of(*texts: str) -> str:
     return next((region for region, words in REGION_WORDS if any(_has(folded, word) for word in words)), "other")
 
 
+# A stent in a coronary artery, however the name is worded ("Stents to the right coronary artery", "RCA stent").
+CORONARY_ARTERY = re.compile(r"\b(?:coronary|left anterior descending|lad|right coronary|rca|circumflex|lcx|left main)\b")
+
+
 def family_of(name: str) -> str:
     folded = fold(name)
+    if _has(folded, "stent") and CORONARY_ARTERY.search(folded):
+        return "coronary stent"
     for family, words in FAMILIES.items():
         if any(_has(folded, word) for word in words):
             return family
@@ -455,23 +461,27 @@ def text_for_reading(document: Document) -> str:
 # followed (a colonoscopy's "two polyps removed" came back as an operation). So the code drops them too: an operation
 # whose name names a diagnostic procedure and nothing operative is not an operation. Kept narrow on purpose.
 DIAGNOSTIC_WORDS = re.compile(
-    r"polypectom|polyp removal|colonoscop|gastroscop|endoscop|sigmoidoscop|biops|fine[- ]needle|angiogra",
+    r"polypectom|polyp removal|(?:colon|gastr|sigmoid|cyst|hyster|bronch)oscopy|endoscopy|biops|fine[- ]needle|angiogra|"
+    r"lumbar puncture|(?:haem|hem)ostasis",
     re.IGNORECASE,
 )
-# An intervention in the name makes it an operation ("coronary angiography with stent", "excision biopsy"). Polypectomy
-# is itself diagnostic here, so it is taken out before looking for "-ectomy".
+# Any sign of an intervention keeps the name: when in doubt an operation stays listed. Polypectomy and polyp removal are
+# themselves diagnostic here, so they are taken out first (otherwise "-ectomy" and "removal" would save them). An
+# approach word ("endoscopic", "percutaneous") is not a diagnostic word: only a named test or biopsy is.
 OPERATIVE_WORDS = re.compile(
-    r"ectom|otom|plast|stent|excis|resect|repair|replace|insertion|intervention|bypass|ablat|ligat|extraction|dilat",
+    r"ectom|otom|ostom|plast|stent|excis|resect|repair|replace|insertion|intervention|bypass|ablat|ligat|extraction|dilat|"
+    r"embolis|emboliz|release|surger|removal|fixation|drain|clos|fusion|graft|implant",
     re.IGNORECASE,
 )
 
 
 def is_diagnostic(name: str) -> bool:
     """True when the name names a diagnostic procedure and nothing operative: "Polyp removal", "Colonoscopy with
-    polypectomy", "Core biopsy". False for "ERCP with sphincterotomy", "Excision biopsy of a breast lump"."""
+    polypectomy", "Core biopsy". False for "ERCP with sphincterotomy", "Excision biopsy of a breast lump", and for any
+    name that does not name a known diagnostic procedure."""
     if not DIAGNOSTIC_WORDS.search(name):
         return False
-    return not OPERATIVE_WORDS.search(re.sub(r"polypectom\w*", "", name, flags=re.IGNORECASE))
+    return not OPERATIVE_WORDS.search(re.sub(r"polypectom\w*|polyp removal", "", name, flags=re.IGNORECASE))
 
 
 def mentions_surgery(document: Document) -> bool:
