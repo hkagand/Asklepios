@@ -687,8 +687,8 @@ patient = "p-2043"
 category = "epicrisis"
 question = "Any prior things I need to know about her thyroid?"
 expected = "Papillary thyroid carcinoma: fine-needle aspiration of a right thyroid nodule on 15 Nov 2018; total thyroidectomy on 2 Jan 2019, complicated by transient hypocalcaemia and a right vocal cord paresis, both of which recovered; radioiodine (I-131) remnant ablation 30 Jan to 2 Feb 2019; and a fine-needle aspiration of a right neck lymph node on 23 Mar 2023 that was reactive, with no evidence of disease. The unrelated admissions are left out."
-mentions = [["aspiration", "fna", "fine-needle", "fine needle"], ["thyroidectomy"], ["hypocalc*", "low calcium", "hypoparathyroid*"], ["vocal cord", "vocal-cord", "vocal fold", "recurrent laryngeal", "recurrent-laryngeal"], ["radioiodine", "radioactive iodine", "i-131", "rai", "remnant ablation"], ["lymph node", "lymph-node"]]
-cites = [["DocumentReference/epi-p-2043-002"], ["DocumentReference/epi-p-2043-003"], ["DocumentReference/epi-p-2043-004"], ["DocumentReference/epi-p-2043-007"]]
+mentions = [["aspiration", "fna", "fine-needle", "fine needle"], ["nodule", "bethesda"], ["thyroidectomy"], ["hypocalc*", "low calcium", "hypoparathyroid*"], ["vocal cord", "vocal-cord", "vocal fold", "recurrent laryngeal", "recurrent-laryngeal"], ["radioiodine", "radioactive iodine", "i-131", "rai", "remnant ablation"], ["lymph node", "lymph-node"]]
+cites = [["DocumentReference/epi-p-2043-002", "DocumentReference/epi-p-2043-003"], ["DocumentReference/epi-p-2043-003"], ["DocumentReference/epi-p-2043-004"], ["DocumentReference/epi-p-2043-007"]]
 avoid = ["cholecystectomy", "wrist", "pneumonia"]
 tools = ["read_epicrisis"]
 
@@ -698,8 +698,10 @@ patient = "p-2043"
 category = "epicrisis"
 question = "Did she have complications after any operation?"
 expected = "Yes, after the total thyroidectomy on 2 Jan 2019: transient hypocalcaemia (treated with calcium and calcitriol; calcium normal without supplements since Jan 2019) and a right vocal cord paresis after loss of the recurrent laryngeal nerve signal, which recovered fully. Her other operations (laparoscopic cholecystectomy in 2021, fixation of a wrist fracture in 2024) had no complications."
-mentions = [["hypocalc*", "low calcium", "hypoparathyroid*"], ["vocal cord", "vocal-cord", "vocal fold", "recurrent laryngeal", "recurrent-laryngeal"], ["resolv*", "recover*", "transient"]]
+# Recovery is checked for each complication: the hypocalcaemia was transient, the palsy recovered fully.
+mentions = [["hypocalc*", "low calcium", "hypoparathyroid*"], ["vocal cord", "vocal-cord", "vocal fold", "recurrent laryngeal", "recurrent-laryngeal"], ["transient hypocalc*", "calcium normal", "normal calcium", "without supplement*", "off supplement*", "hypocalcaemia resolved", "hypocalcaemia had resolved", "hypocalcaemia that resolved", "hypocalcaemia (resolved"], ["recovered fully", "fully recovered", "full recovery", "recovered completely", "completely recovered", "later recovered", "that recovered", "which recovered", "has recovered", "had recovered", "since recovered", "normal voice", "voice is normal", "voice normal", "normal laryngoscopy", "paresis resolved", "paresis had resolved", "paresis that resolved", "paresis recovered", "paresis that recovered", "palsy resolved", "palsy had resolved", "palsy that resolved", "palsy recovered", "palsy that recovered"]]
 cites = [["DocumentReference/epi-p-2043-003"]]
+avoid = ["paresis persist*", "palsy persist*", "persistent vocal", "persistent right vocal", "permanent vocal", "permanent right vocal", "not recovered", "has not recovered", "did not recover"]
 
 [[case]]
 id = "p2043-tr-epicrisis-thyroid"
@@ -727,9 +729,9 @@ patient = "p-2044"
 category = "epicrisis"
 question = "Anything in his earlier admissions that matters before I prescribe an anti-inflammatory?"
 expected = "Does not say yes or no: the decision is the physician's. In Nov 2019 he was admitted with a bleeding duodenal ulcer (Forrest IIa) while on aspirin and clopidogrel: endoscopic haemostasis, two units of red cells transfused, clopidogrel stopped for good, aspirin continued with long-term pantoprazole, and the discharge advice was no anti-inflammatory painkillers. He also has two coronary stents and stays on aspirin."
-mentions = [["ulcer"], ["bleed*", "haemorrhag*", "hemorrhag*", "melaena", "melena"], ["transfus*", "units of red cells", "red cell*"], ["clopidogrel"], ["stop*", "discontinu*", "withdrawn", "cessation", "ceased"]]
+mentions = [["ulcer"], ["bleed*", "haemorrhag*", "hemorrhag*", "melaena", "melena"], ["transfus*", "units of red cells", "red cell*"], ["clopidogrel was stopped", "stopped clopidogrel", "clopidogrel stopped", "cessation of clopidogrel", "clopidogrel discontinued", "discontinued clopidogrel", "clopidogrel was discontinued"]]
 cites = [["DocumentReference/epi-p-2044-004"]]
-avoid = ["should not prescribe", "you can prescribe"]
+avoid = ["should not prescribe", "you can prescribe", "do not prescribe", "should not be prescribed", "safe to prescribe", "avoid prescribing", "can be prescribed"]
 
 [[case]]
 id = "p2044-epicrisis-stents"
@@ -745,9 +747,9 @@ id = "p2044-epicrisis-nothing"
 patient = "p-2044"
 category = "epicrisis"
 question = "Has he ever been admitted for a stroke?"
-expected = "No admission for a stroke is on file: none of his 8 epicrisis reports (Oct 2018 to Aug 2025) mentions one. That does not show he has never had one."
-mentions = [["8 reports", "eight reports", "8 epicrisis", "eight epicrisis", "8 discharge", "eight discharge", "all 8", "all eight"], ["none", "no mention", "not mention*", "does not mention", "do not mention", "no stroke", "no admission", "not recorded"]]
-avoid = ["has never had a stroke", "never had a stroke", "has not had a stroke", "did not have a stroke", "never suffered a stroke"]
+expected = "No admission for a stroke is on file: none of his 8 epicrisis reports (Oct 2018 to Aug 2025) mentions one. This does not show that he never had a stroke: one treated elsewhere would not be in these reports."
+mentions = [["8", "eight"], ["2018"], ["2025"], ["none", "no mention", "not mention*", "does not mention", "do not mention", "no stroke", "no admission", "not recorded"]]
+avoid = ["no history of stroke", "has not had a stroke", "has had no stroke", "did not have a stroke", "never suffered a stroke"]
 tools = ["read_epicrisis"]
 
 [[case]]
@@ -756,8 +758,9 @@ patient = "p-2045"
 category = "epicrisis"
 question = "What should the anaesthetist know from her earlier operations?"
 expected = "Airway alert: an unanticipated difficult intubation at the cholecystectomy on 15 Apr 2017 (Cormack-Lehane grade 3 on direct laryngoscopy, two failed attempts, intubated with a videolaryngoscope and a bougie); a videolaryngoscope was used first at the incisional hernia repair in 2019, and the right knee replacement in Dec 2024 was done under spinal anaesthesia because of the airway. A provoked deep vein thrombosis of the left leg two weeks after the hernia repair in 2019 (apixaban for three months), so enoxaparin was given for 28 days after the knee replacement."
-mentions = [["difficult intubation", "difficult airway", "intubation"], ["grade 3", "grade iii"], ["videolaryngoscop*", "video laryngoscop*", "video-laryngoscop*"], ["spinal"], ["thrombosis", "dvt", "clot*", "thrombus"]]
+mentions = [["difficult intubation", "difficult airway", "intubation"], ["grade 3", "grade iii", "cormack-lehane 3", "cormack lehane 3", "cormack–lehane 3", "cormack-lehane iii", "cormack–lehane iii"], ["videolaryngoscop*", "video laryngoscop*", "video-laryngoscop*"], ["spinal"], ["thrombosis", "dvt", "vte", "thromboembol*", "clot*", "thrombus"]]
 cites = [["DocumentReference/epi-p-2045-001"], ["DocumentReference/epi-p-2045-008"], ["DocumentReference/epi-p-2045-004"]]
+tools = ["read_epicrisis"]
 
 [[case]]
 id = "p2045-epicrisis-bleeding"
@@ -783,5 +786,5 @@ patient = "p-1014"
 category = "epicrisis"
 question = "Has she had any operations?"
 expected = "No operations are recorded: no procedure records, and none of her notes or her 7 epicrisis reports (2017 to 2024: medical admissions and a spontaneous vaginal delivery) mentions one. Operations done elsewhere may not be in the record."
-mentions = [["no operations", "no operation", "none recorded", "not recorded", "no record", "no recorded", "no surgical", "no surgery", "no surgeries", "no procedure"]]
-avoid = ["has never had", "never had any", "never had surgery", "never been operated", "caesarean", "cesarean"]
+mentions = [["no operations", "no operation", "none recorded", "not recorded", "no record", "no recorded", "no surgical", "no surgery", "no surgeries", "no procedure"], ["procedure record*", "epicrisis", "report*", "notes", "note"]]
+avoid = ["has never had", "never had any", "never had surgery", "never been operated", "caesarean", "cesarean", "yes,", "yes:"]
