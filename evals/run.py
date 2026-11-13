@@ -465,6 +465,10 @@ async def run(args: argparse.Namespace) -> int:
         from .onboarding import run_onboarding
 
         return await run_onboarding(load_settings(), records, anchor, seed, HERE / "onboarding.toml", args.out)
+    if args.epicrisis:
+        from .epicrisis import run_epicrisis
+
+        return await run_epicrisis(load_settings(), records, anchor, seed, args.out)
     if args.surgery:
         from .surgery import run_surgery
 
@@ -621,6 +625,7 @@ def main() -> None:
     parser.add_argument("--considerations", action="store_true", help="check clinical considerations from the second model against considerations.toml instead")
     parser.add_argument("--compare", action="store_true", help="with --considerations: run the agent's own model on the same visits too")
     parser.add_argument("--onboarding", action="store_true", help="check onboarding reviews and imports against onboarding.toml instead")
+    parser.add_argument("--epicrisis", action="store_true", help="check epicrisis reports, and that the existing cohort is untouched, instead")
     parser.add_argument("--fresh", action="store_true", help="with --loops, --meds or --surgery: read every note again instead of using the cache")
     parser.add_argument("--out", type=Path, default=HERE / "runs")
     raise SystemExit(asyncio.run(run(parser.parse_args())))
