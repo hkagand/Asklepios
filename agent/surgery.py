@@ -497,7 +497,7 @@ def text_for_reading(document: Document) -> str:
 # is dropped is listed ("Not counted as operations"), so nothing disappears unseen.
 DIAGNOSTIC_WORDS = re.compile(
     r"(?:colon|gastr|sigmoid|cyst|hyster|bronch)oscopy|endoscopy|biops|fine[- ]needle|angiogra|lumbar puncture|"
-    r"endoscopic (?:haem|hem)ostasis",
+    r"endoscopic (?:[a-z]+ ){0,3}(?:haem|hem)ostasis",  # "Endoscopic duodenal ulcer hemostasis with clipping"
     re.IGNORECASE,
 )
 # A polyp removed in the gut during a scope is part of the test; elsewhere ("Nasal polypectomy", "Hysteroscopic

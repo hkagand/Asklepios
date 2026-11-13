@@ -431,7 +431,7 @@ DIAGNOSTIC_NAMES = (
     "Upper gastrointestinal endoscopy", "Fine-needle aspiration of a thyroid nodule", "Core biopsy", "Kidney biopsy",
     "Diagnostic coronary angiography", "Coronary angiography", "Cystoscopy", "Hysteroscopy with endometrial sampling",
     "Bronchoscopy", "Sigmoidoscopy", "Bone marrow biopsy", "Lumbar puncture", "Endoscopic haemostasis", "Endoscopic haemostasis with clips",
-    "Gastroscopy with adrenaline injection and clips",
+    "Gastroscopy with adrenaline injection and clips", "Endoscopic duodenal ulcer hemostasis with clipping",
 )
 OPERATION_NAMES = (
     "ERCP with biliary sphincterotomy and balloon stone extraction", "Coronary angiography with stent to the right coronary artery",
