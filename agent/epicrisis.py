@@ -7,6 +7,7 @@ The operation or procedure report, when there was one, follows the discharge sum
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import date, datetime
 
@@ -167,6 +168,32 @@ def read_all(record: Record, limit: int = MAX_CHARS) -> list[str]:
         were = "was" if len(left_out) == 1 else "were"
         blocks.append(f"{_count(len(left_out), 'older report')} {were} left out ({_span(left_out)}).")
     return [summary, *blocks]
+
+
+# A question about the patient's past, which the reports answer. Each pattern is matched against the lower-cased
+# question; a word that also asks about results, medicines or orders ("previous", "last", "prior HbA1c") is not here.
+ABOUT_THE_PAST = tuple(re.compile(pattern) for pattern in (
+    # English
+    r"\b(admitted|admissions?|hospitali[sz](ed|ations?)|hospital stays?)\b",  # stays in hospital
+    r"\b(operations?|operated|surger(y|ies)|surgical|stents?)\b",  # operations and their implants
+    r"\b(procedures?|complications?)\b",  # procedures and what went wrong after them
+    r"\b(an(a)?esthe\w*|intubat\w*|airway)\b",  # anaesthesia
+    r"\bever\b",  # "has he ever ..."
+    r"\b(need|should|must) to know\b|\bshould know\b",  # "anything I should know about ..."
+    # Turkish
+    r"\byat(ış\w*|tı\w*|mış\w*)",  # yatış, yattı, yatmış: admitted
+    r"\b(ameliyat\w*|operasyon\w*|cerrahi\w*|işlem\w*|komplikasyon\w*|anestezi\w*|entübasyon\w*)",  # operation .. anaesthesia
+    r"\bgeçir(di|miş)\w*",  # "inme geçirdi mi": had (an illness, an operation)
+    r"\bdaha önce\b",  # before, previously ("daha önceki" is left out: "the previous value")
+    r"\bbilmem gereken\b",  # "what I need to know"
+))
+
+
+def about_the_past(question: str) -> bool:
+    """True when the question asks about the patient's past: earlier admissions, operations, procedures,
+    complications, anaesthesia, "has he ever ...", "anything I should know about ...", in English or Turkish."""
+    text = question.lower()
+    return any(pattern.search(text) for pattern in ABOUT_THE_PAST)
 
 
 def index_section(record: Record, *, full: bool = False) -> str:

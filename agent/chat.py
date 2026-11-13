@@ -214,6 +214,14 @@ class Sessions:
             del self._items[key]
 
 
+def pre_reads(session: Session, question: str) -> bool:
+    """Whether the epicrisis reports are read in code before the model's first step: the question is about the
+    patient's past, the patient has reports, and the session offers read_epicrisis (not when they are in the prompt).
+    Left to itself, the model often answers such questions from the index lines without reading the reports."""
+    offered = any(spec["function"]["name"] == "read_epicrisis" for spec in session.specs)
+    return offered and epicrisis.about_the_past(question) and bool(epicrisis.reports(session.record))
+
+
 async def run_turn(
     session: Session, question: str, *, llm: LlmClient, audit: AuditLog, max_steps: int, user: str | None = None
 ) -> AsyncIterator[tuple[str, dict]]:
@@ -223,6 +231,18 @@ async def run_turn(
     def log(event: str, **fields: object) -> None:
         audit.write(session=session.id, patient=session.patient_id, event=event, user=user, **fields)
 
+    def run_call(call: dict, **extra: object) -> dict:
+        """Runs one tool call already in the conversation, adds its result and evidence, and logs it."""
+        name, arguments = call["function"]["name"], call["function"]["arguments"]
+        result = tools.run(session.record, name, arguments)
+        for block in result.blocks:
+            session.evidence.add(block)
+        session.messages.append({"role": "tool", "tool_call_id": call["id"], "content": result.text})
+        step = {"tool": name, "label": result.label}
+        steps.append(step)
+        log("tool", name=name, arguments=arguments, label=result.label, characters=len(result.text), **extra)
+        return step
+
     log("question", text=question)
     # A turn that does not finish is taken back out, so the next question starts from a clean history.
     checkpoint = len(session.messages)
@@ -231,6 +251,11 @@ async def run_turn(
     steps: list[dict] = []
     usage: Counter[str] = Counter()
     try:
+        if pre_reads(session, question):
+            # Read as if the model had called the tool; "by" tells the audit it was code.
+            call = {"id": f"pre-read-{checkpoint}", "type": "function", "function": {"name": "read_epicrisis", "arguments": "{}"}}
+            session.messages.append({"role": "assistant", "content": None, "tool_calls": [call]})
+            yield "step", run_call(call, by="code")
         for step in range(max_steps):
             last = step == max_steps - 1
             try:
@@ -254,14 +279,7 @@ async def run_turn(
                 ]
                 session.messages.append({"role": "assistant", "content": message.get("content"), "tool_calls": calls})
                 for call in calls:
-                    name, arguments = call["function"]["name"], call["function"]["arguments"]
-                    result = tools.run(session.record, name, arguments)
-                    for block in result.blocks:
-                        session.evidence.add(block)
-                    session.messages.append({"role": "tool", "tool_call_id": call["id"], "content": result.text})
-                    steps.append({"tool": name, "label": result.label})
-                    log("tool", name=name, arguments=arguments, label=result.label, characters=len(result.text))
-                    yield "step", {"tool": name, "label": result.label}
+                    yield "step", run_call(call)
                 continue
             text = (message.get("content") or "").strip()
             if not text:

@@ -533,6 +533,41 @@ async def check_merging(chart, documents: dict[str, dict]) -> list[str]:
     return problems
 
 
+# Questions about the patient's past, for which the reports are read in code before the model's first step: the gold
+# category's questions (English and Turkish) and a few more.
+PRE_READ = (
+    "Any prior things I need to know about her thyroid?", "Did she have complications after any operation?",
+    "Tiroidi ile ilgili daha önce bilmem gereken bir şey var mı?", "Anything in his earlier admissions that matters before I prescribe an anti-inflammatory?",
+    "What stents does he have, and when were they placed?", "Has he ever been admitted for a stroke?",
+    "What should the anaesthetist know from her earlier operations?", "Any bleeding after a procedure before?",
+    "Has he been admitted to hospital before, and for what?", "Has she had any operations?",
+    "Was she ever hospitalised?", "Any problems with anesthesia in the past?", "Anything I should know about his heart?",
+    "Daha önce ameliyat oldu mu?", "Hastaneye hiç yattı mı?", "Önceki yatışlarında komplikasyon gelişti mi?",
+    "Anestezi ile ilgili bir sorun yaşadı mı?", "Hiç inme geçirdi mi?",
+)
+# Questions about current results, medicines, orders or the visit: left to the model.
+NO_PRE_READ = (
+    "What was her last TSH?", "What changed since the last visit?", "What is her current levothyroxine dose?",
+    "Brief me for today's visit", "What was the previous HbA1c?",
+    "Son TSH değeri neydi?", "Son vizitten beri ne değişti?", "Şu anki levotiroksin dozu nedir?",
+    "Bugünkü vizit için hastayı özetle", "Önceki HbA1c değeri neydi?",
+)
+
+
+def check_pre_read(record: Record, record_without: Record) -> list[str]:
+    """The rule that reads the reports in code fires for questions about the past and not for current results,
+    medicines, orders or briefings; never for a patient without reports, nor when the reports are in the prompt."""
+    from agent.chat import pre_reads
+
+    session, without = start_session("check", record), start_session("check", record_without)
+    in_prompt = start_session("check", record, epicrisis_in_prompt=True)
+    problems = [f"not pre-read: {question!r}" for question in PRE_READ if not pre_reads(session, question)]
+    problems += [f"pre-read: {question!r}" for question in NO_PRE_READ if pre_reads(session, question)]
+    problems += [f"pre-read without reports: {question!r}" for question in PRE_READ if pre_reads(without, question)]
+    problems += [f"pre-read with the reports in the prompt: {question!r}" for question in PRE_READ if pre_reads(in_prompt, question)]
+    return problems
+
+
 def check_none_on_file(record_without: Record) -> list[str]:
     """A patient without reports: the index says none are on file, and so does the tool."""
     problems = []
@@ -960,6 +995,7 @@ async def run_epicrisis(settings, records, anchor: date, seed: int, out: Path) -
         "stent family": await check_stent_family(chart, documents),
         "merging": await check_merging(chart, documents),
         "none on file": check_none_on_file(imported_records(anchor)["p-3001"]),
+        "pre-read": check_pre_read(record, imported_records(anchor)["p-3001"]),
     }
     for name, problems in checks.items():
         print(f"{name}: " + ("OK" if not problems else "; ".join(problems)))
