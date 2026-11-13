@@ -220,9 +220,19 @@ def check_kinds(record: Record, plain_note_ref: str) -> list[str]:
     return problems
 
 
-def check_fields(record: Record) -> list[str]:
-    """The fields read by heading, newest first, and the index section's lines."""
+def check_fields(record: Record, records: dict[str, Record]) -> list[str]:
+    """The fields read by heading, newest first, and the index section's lines: short, with clean punctuation, also
+    for the showcase patients (`records`, by patient id) and for a report without its "Report no." line."""
     problems = []
+    for pid in ("p-2043", "p-2044", "p-2045"):
+        for line in index_section(records[pid]).split("\n")[1:]:
+            if len(line) > 600 or ".." in line or ", :" in line:
+                problems.append(f"{pid}: index line of {len(line)} characters: {line[:120]!r}...")
+    first = reports(record)[0]
+    without = "\n".join(line for line in first.text.split("\n") if not line.startswith("Report no."))
+    line = index_line(next(item for item in reports(_with_text(record, first.ref, without)) if item.ref == first.ref))
+    if ", :" in line or ".." in line:
+        problems.append(f"index line of a report without its Report no. line: {line!r}")
     admissions = scratch_admissions()
     found = reports(record)
     if [report.discharged for report in found] != [admissions[label].discharged for label in ("diagnostic", "operation", "medical")]:
@@ -330,6 +340,8 @@ def check_limit(record: Record) -> list[str]:
     )
     if blocks[-1] != expected:
         problems.append(f"last block is {blocks[-1]!r}, expected {expected!r}")
+    if not blocks[0].endswith("; the newest report is given below."):
+        problems.append(f"first block is {blocks[0]!r}, expected it to say how many reports are given below")
     return problems
 
 
@@ -1174,7 +1186,7 @@ async def run_epicrisis(settings, records, anchor: date, seed: int, out: Path) -
     record = record_of(chart, anchor)
     checks |= {
         "kinds": check_kinds(record, f"DocumentReference/{plain['id']}"),
-        "fields": check_fields(record),
+        "fields": check_fields(record, records),
         "tool": check_tool(record),
         "limit": check_limit(record),
         "unreadable": check_unreadable(record),

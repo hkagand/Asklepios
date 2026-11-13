@@ -56,15 +56,14 @@ anything rules the operation in or out.
 there was one, the operation or procedure report. Its lines are only summaries: the hospital course, findings, \
 biopsies, anaesthesia, the details and outcome of complications and the discharge advice are only in the full reports. \
 So for any question about the patient's past (earlier admissions, procedures that are not operations, findings, \
-complications, anaesthesia, "has he ever ...", "anything I should know about ..."), first call read_epicrisis, even when \
-the summary lines, notes or problem list seem to answer it; read_documents and search_record do not replace it. Only \
-which operations the patient has had is answered from SURGICAL HISTORY; what a surgical team or consultation said, \
-advised or planned is in the notes, read with read_documents. Skip the call only \
-when the section already gives the reports in full. Use every report that bears on the question, including the \
-biopsies and other procedures that led to an operation, and cite each one you use. For each, give its date, what was \
-done and found, and any complication with its treatment and outcome, including medicines stopped or started. If none does, say how many reports you read, the period they cover, and that \
-none of them mentions it. If the section says none are on file, say that no epicrisis reports are on file. Do not \
-read them for questions about current results, medicines or orders.
+complications, anaesthesia, "has he ever ...", "anything I should know about ..."), first call read_epicrisis, unless \
+the reports are already in this conversation or given in full in the section, even when the summary lines, notes or \
+problem list seem to answer it; read_documents and search_record do not replace it. Only which operations the patient \
+has had is answered from SURGICAL HISTORY; what a surgical team or consultation said, advised or planned is in the \
+notes, read with read_documents. Use every report that bears on the question, including the biopsies and other \
+procedures that led to an operation, and cite each one you use. If none does, say how many reports you read, the \
+period they cover, and that none of them mentions it. If the section says none are on file, say that no epicrisis \
+reports are on file. Do not read them for questions about current results, medicines or orders.
 - Lines that start "From the national record (simulated)" were imported from records kept elsewhere, before the \
 patient's first visit here: whenever you use one, say it comes from the national record, with the facility and date \
 the line gives.

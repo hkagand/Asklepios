@@ -121,16 +121,58 @@ def reports(record: Record) -> list[Epicrisis]:
     return [_parse(document) for document in record.documents if document.kind == "epicrisis"]
 
 
+# Words a sentence does not end after ("Dr. Kerem Yalçın").
+ABBREVIATIONS = ("dr", "mr", "mrs", "ms", "prof", "st", "vs", "e.g", "i.e", "approx", "no")
+
+
+def first_sentence(text: str) -> str:
+    """The text up to the end of its first sentence, or an earlier semicolon or colon that starts the details,
+    without the stop: "Transient hypocalcaemia from day 1: corrected calcium ..." -> "Transient hypocalcaemia from
+    day 1"."""
+    for found in re.finditer(r"[.!?](?=\s+[A-Z(])|[;:](?=\s)", text):
+        word = re.split(r"\s", text[: found.start()])[-1].lower()
+        if word not in ABBREVIATIONS:
+            return _clean(text[: found.start()])
+    return _clean(text)
+
+
+def _clean(text: str) -> str:
+    """On one line, without a stop at the end, so a line can add its own."""
+    return " ".join(text.split()).rstrip(" .;:,")
+
+
+LINE_LIMIT = 600  # characters of an index line, past which its diagnoses are given by name only
+# A pointer to another heading of the report: "(see COMPLICATIONS DURING ADMISSION)".
+POINTER = re.compile(r"\s*\(see [A-Z][A-Z -]+\)")
+
+
 def index_line(report: Epicrisis) -> str:
+    """One line per report: its dates, service, title, the first sentence of each discharge diagnosis, the procedure,
+    the first sentence of each distinct complication, and the condition at discharge. The rest is in the full report."""
     if not report.readable:
-        return f"{day_text(report.when)}: {report.title}. Fields not readable; read_epicrisis for the text [{report.ref}]"
-    return (
-        f"{day_text(report.first_day)} to {day_text(report.last_day)}, {report.service}: {report.title}. "
-        f"Discharge diagnoses: {'; '.join(report.diagnoses) or 'none'}. "
-        f"Procedure: {report.procedure or 'no procedure'}. "
-        f"Complications: {'; '.join(report.complications) or 'none'}. "
-        f"Condition at discharge: {report.outcome or 'not recorded'} [{report.ref}]"
-    )
+        return f"{day_text(report.when)}: {_clean(report.title)}. Fields not readable; read_epicrisis for the text [{report.ref}]"
+    service = f", {report.service}" if report.service else ""
+    # A complication that points to COMPLICATIONS DURING ADMISSION repeats that field's.
+    heads = [first_sentence(item) for item in report.complications]
+    own = [head for head in heads if "(see COMPLICATIONS DURING ADMISSION)" not in head] or heads
+    complications = "; ".join(dict.fromkeys(POINTER.sub("", head) for head in own)) or "none"
+
+    def line(diagnoses: list[str]) -> str:
+        return (
+            f"{day_text(report.first_day)} to {day_text(report.last_day)}{service}: {_clean(report.title)}. "
+            f"Discharge diagnoses: {'; '.join(diagnoses) or 'none'}. "
+            f"Procedure: {_clean(report.procedure or '') or 'no procedure'}. "
+            f"Complications: {complications}. "
+            f"Condition at discharge: {_clean(report.outcome) or 'not recorded'} [{report.ref}]"
+        )
+
+    # A long line names each diagnosis without its qualifiers ("Duodenal ulcer with haemorrhage, posterior bulb, ..."),
+    # and if still too long, without a closing remark in brackets too.
+    named = [first_sentence(item).split(", ")[0] for item in report.diagnoses]
+    for diagnoses in ([first_sentence(item) for item in report.diagnoses], named):
+        if len(text := line(diagnoses)) <= LINE_LIMIT:
+            return text
+    return line([re.sub(r"(?<=\S)\s*\([^()]*\)$", "", item) for item in named])
 
 
 def _span(items: list[Epicrisis]) -> str:
@@ -165,6 +207,8 @@ def read_all(record: Record, limit: int = MAX_CHARS) -> list[str]:
     summary = f"{_count(len(found), 'epicrisis report')}, {_span(found)}."
     left_out = found[len(blocks):]
     if left_out:
+        given = "the newest report is" if len(blocks) == 1 else f"the newest {len(blocks)} reports are"
+        summary = f"{summary[:-1]}; {given} given below."
         were = "was" if len(left_out) == 1 else "were"
         blocks.append(f"{_count(len(left_out), 'older report')} {were} left out ({_span(left_out)}).")
     return [summary, *blocks]
