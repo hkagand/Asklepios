@@ -241,6 +241,9 @@ def add(chart: PatientChart, admission: Admission, existing: dict | None = None)
 # this long before the chart's first note, so the story's notes follow them in time and never have to mention them.
 EARLIEST = timedelta(days=3640)
 BEFORE_FIRST_NOTE = timedelta(days=120)
+# Room for five admissions 90 days apart and more: should the notes start too soon after EARLIEST, the reports may
+# reach past the first note rather than not be written.
+SHORTEST_WINDOW = timedelta(days=730)
 
 
 def add_background(chart: PatientChart, story: str, variant: int, anchor: date, seed: int) -> list[dict]:
@@ -256,7 +259,7 @@ def add_background(chart: PatientChart, story: str, variant: int, anchor: date, 
         date.fromisoformat(item["date"][:10]) for item in chart.resources
         if item["resourceType"] == "DocumentReference" and date.fromisoformat(item["date"][:10]) >= low
     )
-    high = (notes[0] if notes else anchor) - BEFORE_FIRST_NOTE
+    high = max((notes[0] if notes else anchor) - BEFORE_FIRST_NOTE, min(low + SHORTEST_WINDOW, anchor - BEFORE_FIRST_NOTE))
 
     # Events the story already holds that get their report: (admission day, builder, the Procedure on the chart).
     fixed = []

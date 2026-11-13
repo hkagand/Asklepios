@@ -757,12 +757,14 @@ def _prescription_problems(pid: str, resources: list[dict], found: dict) -> list
     return problems
 
 
-def check_background_chart(chart, anchor: date, closed: set[str]) -> list[str]:
-    """Problems with one existing chart's background reports."""
+def check_background_chart(chart, anchor: date, closed: set[str], story: tuple[str, int] | None = None) -> list[str]:
+    """Problems with one existing chart's background reports. `story` is the chart's story and variant (by default the
+    one it has with seed 2041, where that matters)."""
     sys.path.insert(0, str(ROOT / "synthetic"))
     from epicrisis import EPISODE_CODES
 
     pid, problems = chart.pid, []
+    story = story or CLOSED_PATIENTS.get(pid)
     resources = chart.resources
     docs = [item for item in resources if item["resourceType"] == "DocumentReference" and tagged(item)]
     procedures = {item["id"]: item for item in resources if item["resourceType"] == "Procedure"}
@@ -790,11 +792,11 @@ def check_background_chart(chart, anchor: date, closed: set[str]) -> list[str]:
 
     if pid in closed and tagged_procedures:
         problems.append(f"{pid}: closed to new operations but has {len(tagged_procedures)} new Procedure records")
-    if pid == "p-1009" and not any(
+    if story == ("diabetes_hypertension", 2) and not any(
         item.admitted.year == 2019 and "knee replacement" in (item.procedure or "").lower() for item in found.values()
     ):
         problems.append(f"{pid}: no 2019 report of the knee replacement")
-    if pid == "p-1011" and any("hysterectomy" in item.text.lower() for item in found.values()):
+    if story == ("chronic_kidney_disease", 1) and any("hysterectomy" in item.text.lower() for item in found.values()):
         problems.append(f"{pid}: a report mentions the hysterectomy")
     if pid == "p-2041":
         problems += [f"{pid}: {ref} mentions {NOT_IN_HERO.search(item.text)[0]}" for ref, item in found.items() if NOT_IN_HERO.search(item.text)]
@@ -929,6 +931,58 @@ def check_background(anchors: list[date], seed: int) -> list[str]:
         for pid, imported in imported_charts(anchor).items():
             if any(tagged(resource) for resource in imported):
                 problems.append(f"{anchor}: {pid} holds a tagged resource")
+    return problems + _seed_problems(GOLD_ANCHOR)
+
+
+SWEEP_SEEDS = range(1, 41)
+CHECKED_SEEDS = (17, 77, 91)  # seeds that once crashed the generator: every per-chart check runs on them
+
+
+def _charts_with_stories(anchor: date, seed: int) -> tuple[list, dict[str, tuple[str, int]]]:
+    """The cohort, and the story and variant of each chart that got background reports: which patient tells which
+    story depends on the seed."""
+    import cohort
+
+    stories: dict[str, tuple[str, int]] = {}
+    add_background = cohort.add_background
+
+    def recording(chart, story, variant, *args):
+        stories[chart.pid] = (story, variant)
+        return add_background(chart, story, variant, *args)
+
+    cohort.add_background = recording
+    try:
+        return build_charts(anchor, seed), stories
+    finally:
+        cohort.add_background = add_background
+
+
+def _seed_problems(anchor: date) -> list[str]:
+    """The cohort builds for every seed of the sweep with 5 to 10 reports for each existing patient, and passes the
+    per-chart checks for CHECKED_SEEDS."""
+    from epicrisis import CLOSED
+    from showcase import SHOWCASE
+
+    problems = []
+    for seed in sorted(set(SWEEP_SEEDS) | set(CHECKED_SEEDS)):
+        try:
+            charts, stories = _charts_with_stories(anchor, seed)
+        except Exception as error:  # noqa: BLE001 - any crash is the finding
+            problems.append(f"seed {seed}: the build raises {type(error).__name__}: {error!r}")
+            continue
+        charts = [chart for chart in charts if chart.pid not in SHOWCASE]
+        if len(charts) != 21:
+            problems.append(f"seed {seed}: {len(charts)} existing patients")
+        for chart in charts:
+            count = sum(1 for item in chart.resources if item["resourceType"] == "DocumentReference" and tagged(item))
+            if not 5 <= count <= 10:
+                problems.append(f"seed {seed}: {chart.pid} has {count} reports")
+        if seed in CHECKED_SEEDS:
+            closed = {pid for pid, story in stories.items() if story in CLOSED}
+            problems += [
+                f"seed {seed}: {problem}"
+                for chart in charts for problem in check_background_chart(chart, anchor, closed, stories[chart.pid])
+            ]
     return problems
 
 

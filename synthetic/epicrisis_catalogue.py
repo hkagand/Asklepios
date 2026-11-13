@@ -289,9 +289,10 @@ class Ctx:
         return lines
 
     def free(self, *names: str) -> str:
-        """The first name the chart does not order for anything (a short course must not look like a regular one)."""
+        """The first name the chart does not order for anything (a short course must not look like a regular one); the
+        first name when the chart orders every one."""
         taken = self.p.medicine_names()
-        return next(name for name in names if not any(name.lower().startswith(word) or word in name.lower() for word in taken))
+        return next((name for name in names if not any(name.lower().startswith(word) or word in name.lower() for word in taken)), names[0])
 
     def vitals(
         self, *, temp: tuple[float, float] = (36.5, 37.2), pulse: tuple[int, int] = (70, 88), sbp: tuple[int, int] | None = None,
@@ -1883,6 +1884,17 @@ def _childbirth_day(p: Patient, rng: random.Random, low: date, high: date) -> da
     return start + timedelta(days=rng.randint(0, (end - start).days))
 
 
+REPEAT_AFTER = timedelta(days=730)  # a medical episode comes back no sooner than this (a second pneumonia years later)
+
+
+def _repeats(p: Patient, day: date, used: dict[str, list[date]]) -> list[Episode]:
+    """The medical episodes that fit on `day` and are at least REPEAT_AFTER from each earlier admission for the same."""
+    return [
+        item for item in EPISODES
+        if item.kind == "medical" and item.fits(p, day) and all(abs(day - other) >= REPEAT_AFTER for other in used.get(item.name, []))
+    ]
+
+
 def plan(p: Patient, rng: random.Random, low: date, high: date, fixed: list[date]) -> list[tuple[Episode, date, bool]]:
     """The episodes for one patient between `low` and `high`, each with its admission day and whether it carries a
     complication. `fixed` are the days of reports already decided, which the others keep clear of."""
@@ -1909,7 +1921,7 @@ def plan(p: Patient, rng: random.Random, low: date, high: date, fixed: list[date
     for _ in range(1000):
         if len(days) == needed:
             break
-        day = low + timedelta(days=rng.randint(0, (high - low).days))
+        day = low + timedelta(days=rng.randint(0, max(0, (high - low).days)))
         if free(day):
             days.append(day)
             taken.append(day)
@@ -1918,17 +1930,32 @@ def plan(p: Patient, rng: random.Random, low: date, high: date, fixed: list[date
     diagnostics = rng.choice((0, 1, 1))
     kinds = (["operation"] * operations + ["diagnostic"] * diagnostics + ["medical"] * len(days))[: len(days)]
     rng.shuffle(kinds)
-    used: set[str] = set()
+    used: dict[str, list[date]] = {}
     for day, kind in zip(days, kinds):
         options = [item for item in EPISODES if item.kind == kind and item.name not in used and item.fits(p, day)]
         if not options:
             options = [item for item in EPISODES if item.kind == "medical" and item.name not in used and item.fits(p, day)]
+        if not options:
+            options = _repeats(p, day, used)
+        if not options:
+            continue
         episode = rng.choices(options, weights=[item.weight(p, day) for item in options])[0]
-        used.add(episode.name)
+        used.setdefault(episode.name, []).append(day)
         chosen.append((episode, day))
+    # Never fewer than five reports: another day and a medical episode for each one missing.
+    for _ in range(1000):
+        if len(fixed) + len(chosen) >= 5:
+            break
+        day = low + timedelta(days=rng.randint(0, max(0, (high - low).days)))
+        options = [item for item in EPISODES if item.kind == "medical" and item.name not in used and item.fits(p, day)] or _repeats(p, day, used)
+        if free(day) and options:
+            episode = rng.choices(options, weights=[item.weight(p, day) for item in options])[0]
+            used.setdefault(episode.name, []).append(day)
+            chosen.append((episode, day))
+            taken.append(day)
 
     flags = [rng.random() < 0.3 for _ in chosen]
-    if not any(flags):
+    if flags and not any(flags):
         flags[rng.randrange(len(flags))] = True
     return sorted(((episode, day, flag) for (episode, day), flag in zip(chosen, flags)), key=lambda item: item[1])
 
