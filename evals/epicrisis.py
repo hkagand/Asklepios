@@ -538,19 +538,23 @@ async def check_merging(chart, documents: dict[str, dict]) -> list[str]:
 PRE_READ = (
     "Any prior things I need to know about her thyroid?", "Did she have complications after any operation?",
     "Tiroidi ile ilgili daha önce bilmem gereken bir şey var mı?", "Anything in his earlier admissions that matters before I prescribe an anti-inflammatory?",
-    "What stents does he have, and when were they placed?", "Has he ever been admitted for a stroke?",
-    "What should the anaesthetist know from her earlier operations?", "Any bleeding after a procedure before?",
-    "Has he been admitted to hospital before, and for what?", "Has she had any operations?",
+    "Has he ever been admitted for a stroke?", "What should the anaesthetist know from her earlier operations?",
+    "Any bleeding after a procedure before?", "Has he been admitted to hospital before, and for what?",
     "Was she ever hospitalised?", "Any problems with anesthesia in the past?", "Anything I should know about his heart?",
-    "Daha önce ameliyat oldu mu?", "Hastaneye hiç yattı mı?", "Önceki yatışlarında komplikasyon gelişti mi?",
+    "Hastaneye hiç yattı mı?", "Önceki yatışlarında komplikasyon gelişti mi?", "Ameliyattan sonra komplikasyon oldu mu?",
     "Anestezi ile ilgili bir sorun yaşadı mı?", "Hiç inme geçirdi mi?",
 )
-# Questions about current results, medicines, orders or the visit: left to the model.
+# Questions about current results, medicines, orders or the visit, and about which operations the patient has had
+# (answered from SURGICAL HISTORY: the gold questions of category surgery among them): left to the model.
 NO_PRE_READ = (
     "What was her last TSH?", "What changed since the last visit?", "What is her current levothyroxine dose?",
     "Brief me for today's visit", "What was the previous HbA1c?",
     "Son TSH değeri neydi?", "Son vizitten beri ne değişti?", "Şu anki levotiroksin dozu nedir?",
     "Bugünkü vizit için hastayı özetle", "Önceki HbA1c değeri neydi?",
+    "Has she had previous abdominal surgery?", "Daha önce karın ameliyatı geçirdi mi?", "When was his gallbladder removed?",
+    "Has he had any abdominal operations?", "Has he had any operations before?", "When did she have her hysterectomy?",
+    "What did hepatobiliary surgery say about resection?", "Has she had any operations?", "Has he ever had surgery?",
+    "Daha önce ameliyat oldu mu?", "Genel cerrahi ne dedi?",
 )
 
 
