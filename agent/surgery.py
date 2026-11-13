@@ -468,6 +468,7 @@ async def surgical_history(record: Record, reader: SurgeryReader) -> dict:
 
     notes = [document for document in documents if document.kind == "note"]
     reports = [document for document in documents if document.kind == "report"]
+    epicrisis = [document for document in documents if document.kind == "epicrisis"]
     earliest = min((document.when.date() for document in documents), default=None)
     return {
         "patient": record.id,
@@ -480,6 +481,7 @@ async def surgical_history(record: Record, reader: SurgeryReader) -> dict:
             "procedures": len(record.procedures),
             "notes": len(notes),
             "reports": len(reports),
+            "epicrisis": len(epicrisis),
             "documentsRead": len(read),
             "earliest": earliest.isoformat() if earliest else None,
         },
@@ -518,7 +520,8 @@ def index_section(history: dict) -> str:
     since = f" since {day_text(date.fromisoformat(searched['earliest']))}" if searched["earliest"] else ""
     head = (
         "SURGICAL HISTORY: earlier operations from procedure records, notes and reports, newest first. Searched "
-        f"{searched['procedures']} procedure records, {searched['notes']} notes and {searched['reports']} reports{since}; "
+        f"{searched['procedures']} procedure records, {searched['notes']} notes, {searched['reports']} reports and "
+        f"{searched['epicrisis']} epicrisis reports{since}; "
         "operations done elsewhere may not be recorded."
     )
     return head + "\n" + "\n".join(f"- {line}" for line in lines or ["no operations recorded"])

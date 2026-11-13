@@ -9,7 +9,7 @@ from collections import Counter
 from collections.abc import AsyncIterator, Iterable
 from dataclasses import dataclass, field
 
-from . import tools
+from . import epicrisis, tools
 from .audit import AuditLog
 from .citations import Evidence, verify
 from .fhir import FhirClient
@@ -52,6 +52,13 @@ never had surgery.
 is the surgeon's decision, then list every operation in SURGICAL HISTORY with its date, approach, body region, \
 implants and complications, citing each. Do not assess fitness from results or vital signs, and do not say whether \
 anything rules the operation in or out.
+- EPICRISIS REPORTS lists the reports written at the end of each hospital admission: the discharge summary and, when \
+there was one, the operation or procedure report. For any question about earlier admissions, operations, procedures, \
+findings or complications, and for any "anything I should know about ..." question, read the reports in full before \
+answering: call read_epicrisis, unless the section already gives them in full. Use every report that bears on the \
+question and cite each one you use. If none does, say how many reports you read, the period they cover, and that \
+none of them mentions it. If the section says none are on file, say that no epicrisis reports are on file. Do not \
+read them for questions about current results, medicines or orders.
 - Lines that start "From the national record (simulated)" were imported from records kept elsewhere, before the \
 patient's first visit here: whenever you use one, say it comes from the national record, with the facility and date \
 the line gives.
@@ -129,6 +136,7 @@ class Session:
     record: Record
     evidence: Evidence
     messages: list[dict]
+    specs: list[dict]
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     used: float = field(default_factory=time.monotonic)
 
@@ -145,14 +153,21 @@ async def sections(record: Record, plans: PlanExtractor, medicines: MedicationRe
     return f"{loops_section(loops, unread)}\n\n{medication_section(picture)}\n\n{surgery_section(history)}"
 
 
-def start_session(session_id: str, record: Record, extra: str | None = None) -> Session:
-    """`extra` is appended to the chart index: the sections computed from the notes (sections())."""
-    index = record.index() + (f"\n\n{extra}" if extra else "")
+def start_session(session_id: str, record: Record, extra: str | None = None, *, epicrisis_in_prompt: bool = False) -> Session:
+    """The chart index gets the EPICRISIS REPORTS section, then `extra`: the sections computed from the notes
+    (sections()). With `epicrisis_in_prompt` that section gives the reports in full and read_epicrisis is not offered."""
+    reports = epicrisis.index_section(record, full=epicrisis_in_prompt)
+    index = record.index() + f"\n\n{reports}" + (f"\n\n{extra}" if extra else "")
     evidence = Evidence()
     for line in index.splitlines():
         evidence.add(line)
+    if epicrisis_in_prompt:
+        # A report's facts are on its own lines, not on the line with its id: add each report whole.
+        for block in epicrisis.read_all(record)[1:]:
+            evidence.add(block)
     prompt = SYSTEM_PROMPT.format(today=today_text(record.today), index=index)
-    return Session(session_id, record, evidence, [{"role": "system", "content": prompt}])
+    specs = [spec for spec in tools.SPECS if not (epicrisis_in_prompt and spec["function"]["name"] == "read_epicrisis")]
+    return Session(session_id, record, evidence, [{"role": "system", "content": prompt}], specs)
 
 
 class Sessions:
@@ -215,7 +230,7 @@ async def run_turn(
         for step in range(max_steps):
             last = step == max_steps - 1
             try:
-                message, used = await llm.chat(session.messages, tools=tools.SPECS, tool_choice="none" if last else "auto")
+                message, used = await llm.chat(session.messages, tools=session.specs, tool_choice="none" if last else "auto")
             except LlmError as error:
                 log("error", message=str(error))
                 raise
