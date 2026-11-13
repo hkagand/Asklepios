@@ -20,7 +20,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import date
 
 from .llm import LlmError
@@ -433,6 +433,16 @@ def from_document(record: Record, document: Document, operation: Operation) -> M
     )
 
 
+def text_for_reading(document: Document) -> str:
+    """The text the reader is given. An epicrisis report ends before its PROCEDURE REPORT block: a diagnostic
+    procedure (endoscopy, angiography, polyp removal) is not an operation. An OPERATION REPORT block is kept."""
+    if document.kind != "epicrisis":
+        return document.text
+    lines = document.text.split("\n")
+    cut = next((index for index, line in enumerate(lines) if line == "PROCEDURE REPORT"), None)
+    return document.text if cut is None else "\n".join(lines[:cut]).rstrip() + "\n"
+
+
 def mentions_surgery(document: Document) -> bool:
     return bool(SURGICAL.search(document.text))
 
@@ -440,7 +450,9 @@ def mentions_surgery(document: Document) -> bool:
 async def surgical_history(record: Record, reader: SurgeryReader) -> dict:
     """Every earlier operation in the record, newest first, with sources; clues; and what was searched."""
     documents = [document for document in record.documents if document.when.date() <= record.today]
-    read = [document for document in documents if mentions_surgery(document)]
+    # The same document under its own ref, kind and label, with only the text the reader may see.
+    given = [replace(document, text=text_for_reading(document)) for document in documents]
+    read = [document for document in given if mentions_surgery(document)]
     found = await asyncio.gather(*(reader.read(document) for document in read), return_exceptions=True)
 
     mentions = [from_procedure(record, procedure) for procedure in record.procedures]

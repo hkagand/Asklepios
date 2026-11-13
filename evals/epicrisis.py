@@ -336,6 +336,33 @@ def check_unreadable(record: Record) -> list[str]:
     return problems
 
 
+def check_surgery_text(record: Record, documents: dict[str, dict]) -> list[str]:
+    """The surgery reader is given an epicrisis report without its PROCEDURE REPORT block (a diagnostic procedure is
+    not an operation), and with its OPERATION REPORT block in full."""
+    from agent.surgery import text_for_reading
+
+    problems = []
+    diagnostic = record.document_by_ref[f"DocumentReference/{documents['diagnostic']['id']}"]
+    given = text_for_reading(diagnostic)
+    full_block = diagnostic.text.split("\nPROCEDURE REPORT\n", 1)
+    if "PROCEDURE REPORT" in given.splitlines():
+        problems.append("diagnostic: the reader is given the PROCEDURE REPORT heading")
+    if len(full_block) != 2:
+        problems.append("diagnostic: the scratch report has no PROCEDURE REPORT block")
+    else:
+        leaked = [line for line in full_block[1].splitlines() if line.strip() and line.strip() not in full_block[0] and line in given]
+        if leaked:
+            problems.append(f"diagnostic: the reader is given the procedure block's {leaked[0]!r}")
+    for heading in ("EPICRISIS REPORT", "DISCHARGE DIAGNOSES", "CONDITION AT DISCHARGE"):
+        if heading not in given.splitlines():
+            problems.append(f"diagnostic: the reader is not given {heading}")
+    operation = record.document_by_ref[f"DocumentReference/{documents['operation']['id']}"]
+    given = text_for_reading(operation)
+    if "OPERATION REPORT" not in given.splitlines() or "OPERATION NOTE" not in given.splitlines() or "Uneventful." not in given:
+        problems.append("operation: the reader is not given the operation report with its note")
+    return problems
+
+
 def check_none_on_file(record_without: Record) -> list[str]:
     """A patient without reports: the index says none are on file, and so does the tool."""
     problems = []
@@ -529,6 +556,7 @@ async def run_epicrisis(settings, records, anchor: date, seed: int, out: Path) -
         "tool": check_tool(record),
         "limit": check_limit(record),
         "unreadable": check_unreadable(record),
+        "surgery text": check_surgery_text(record, documents),
         "none on file": check_none_on_file(imported_records(anchor)["p-3001"]),
     }
     for name, problems in checks.items():
