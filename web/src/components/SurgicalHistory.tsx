@@ -145,6 +145,7 @@ function searchedText(searched: History['searched']): string {
     `${searched.procedures} procedure record${searched.procedures === 1 ? '' : 's'}`,
     `${searched.notes} note${searched.notes === 1 ? '' : 's'}`,
     `${searched.reports} report${searched.reports === 1 ? '' : 's'}`,
+    `${searched.epicrisis} epicrisis report${searched.epicrisis === 1 ? '' : 's'}`,
   ]
   // Month and year: "since Jun 2015".
   const since = searched.earliest ? ` since ${formatDate(searched.earliest).replace(/^\d+ /, '')}` : ''
