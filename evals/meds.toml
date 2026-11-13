@@ -106,3 +106,8 @@ id = "p-2044"
 # Aspirin, atorvastatin, bisoprolol and pantoprazole at the ordered doses in every note; clopidogrel's order was
 # stopped on the day of the ulcer bleed, as the notes say.
 findings = []
+
+[[patient]]
+id = "p-2045"
+# Amlodipine 5 mg in both notes, as ordered; the apixaban order ended three months after the clot, as the notes say.
+findings = []

@@ -160,3 +160,13 @@ operations = [
   { match = "left anterior descending", year = 2019, region = "chest", approach = "percutaneous", implant = "stent", sources = ["procedure", "epicrisis"] },
   { match = "hernia", year = 2021, region = "abdomen", approach = "open", implant = "mesh", sources = ["procedure", "epicrisis"] },
 ]
+
+[[patient]]
+id = "p-2045"
+# The cholecystectomy was started laparoscopically and converted to open: its approach is open. The colonoscopy with
+# polyp removal is a diagnostic procedure, not an operation; the repair of the recurrent hernia is only planned.
+operations = [
+  { match = "cholecystectomy", year = 2017, region = "abdomen", approach = "open", sources = ["procedure", "epicrisis"] },
+  { match = "hernia", year = 2019, region = "abdomen", approach = "open", implant = "mesh", sources = ["procedure", "epicrisis"] },
+  { match = "knee replacement", year = 2024, region = "spine_limbs", implant = "prosthesis", sources = ["procedure", "epicrisis"] },
+]

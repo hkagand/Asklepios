@@ -395,7 +395,15 @@ def pneumonia(c: Ctx) -> Admission:
     switch = rng.randint(2, 3)
     oral = c.free("Levofloxacin") if p.penicillin_allergy() else c.free("Amoxicillin–clavulanate", "Cefuroxime axetil")
     oral_dose = {"Levofloxacin": "750 mg orally once daily", "Amoxicillin–clavulanate": "1 g orally twice daily", "Cefuroxime axetil": "500 mg orally twice daily"}[oral]
-    intravenous = "intravenous levofloxacin" if p.penicillin_allergy() else "intravenous ceftriaxone with oral clarithromycin"
+    # Clarithromycin raises statin levels (muscle injury): with a statin, the atypical cover is doxycycline instead.
+    statin = next((name_of(order).lower() for order in p.medicines(c.admitted) if name_of(order).lower().endswith("statin")), None)
+    if p.penicillin_allergy():
+        intravenous = "intravenous levofloxacin"
+    elif statin:
+        atypical = c.free("Doxycycline", "Azithromycin").lower()
+        intravenous = f"intravenous ceftriaxone with oral {atypical} (clarithromycin avoided because of the {statin})"
+    else:
+        intravenous = "intravenous ceftriaxone with oral clarithromycin"
     complications, extra = "None", []
     if c.complicated:
         text, diagnosis = _delirium(c) if c.age >= 70 else _phlebitis(c, rng.randint(2, 4))

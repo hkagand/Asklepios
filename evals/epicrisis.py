@@ -584,8 +584,10 @@ REQUIRED = {
                ("radioiodine", ""), ("fine-needle aspiration", "lymph node"), ("cholecystectomy", ""), ("wrist", "plate"), ("pneumonia", "")],
     "p-2044": [("stent", "haematoma"), ("stent", "elective"), ("duodenal ulcer", "transfus"), ("clopidogrel", "stopped"),
                ("inguinal hernia", "aspirin"), ("angiograph", "patent"), ("pneumonia", "")],
+    "p-2045": [("cholecystectomy", "converted"), ("cormack", "videolaryngoscope"), ("wound infection", ""), ("incisional hernia", "mesh"),
+               ("deep vein thrombosis", "three months"), ("knee replacement", "spinal"), ("polyp", "bleed"), ("renal colic", "")],
 }
-ACTIVE_MEDICINE = {"p-2043": "levothyroxine", "p-2044": "aspirin"}
+ACTIVE_MEDICINE = {"p-2043": "levothyroxine", "p-2044": "aspirin", "p-2045": "amlodipine"}
 
 
 def _overlaps(first: dict, second: dict) -> bool:

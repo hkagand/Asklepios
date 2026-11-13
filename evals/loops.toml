@@ -168,3 +168,12 @@ items = [
   { match = "lipid panel", status = "pending" },
   { match = "cardiology follow-up", status = "pending" },
 ]
+
+[[patient]]
+id = "p-2045"
+# A recurrent incisional hernia; the CT ordered at the first visit is resulted and quoted at the second. The pre-assessment
+# blood tests are ordered and the pre-operative assessment booked, both after the anchor.
+items = [
+  { match = "pre-operative assessment", status = "pending" },
+  { match = "blood count", status = "pending" },
+]

@@ -1,9 +1,9 @@
 """Showcase patients: fixed stories whose epicrisis reports carry the history a doctor would ask about.
 
 Each patient has two parts that share one timeline, worked out from the anchor: the story (`thyroid_cancer`,
-`coronary_disease`), which writes the problem list, medication orders, outpatient notes, results and the next
-appointment, and the reports (`thyroid_cancer_reports`, `coronary_disease_reports`), added after it with the patient's
-own epicrisis random numbers. The showcase patients get no background reports.
+`coronary_disease`, `repeated_surgery`), which writes the problem list, medication orders, outpatient notes, results and
+the next appointment, and the reports (`thyroid_cancer_reports`, `coronary_disease_reports`, `repeated_surgery_reports`),
+added after it with the patient's own epicrisis random numbers. The showcase patients get no background reports.
 """
 
 from __future__ import annotations
@@ -14,12 +14,15 @@ from datetime import date, timedelta
 
 from chart import PatientChart, at, day_text, workday
 from cohort import (
-    ARSLAN, ATORVASTATIN, BISOPROLOL, CELIK, KARA, KOC, LEVOTHYROXINE, Story, bullets, cbc, chemistry, lipids, numbered,
-    sections,
+    AMLODIPINE, ARSLAN, ATORVASTATIN, BISOPROLOL, CELIK, KARA, KOC, LEVOTHYROXINE, Story, bullets, cbc, chemistry, lipids,
+    numbered, sections,
 )
+from cohort import AYDIN as FAMILY_DOCTOR
+from cohort import YALCIN as SURGEON
 from epicrisis import Admission, ProcedureReport, add
 from epicrisis_catalogue import (
-    ENT, ORTHOPAEDICS, YALCIN, Ctx, Patient, cellulitis, join, name_of, pneumonia, renal_colic, vertigo,
+    ANAESTHETISTS, ENT, ORTHOPAEDICS, WARDS, YALCIN, Ctx, Patient, cellulitis, gastroenteritis, join, name_of, pneumonia,
+    renal_colic, vertigo,
 )
 
 # Patient ids of the showcase patients, for the checks (evals/epicrisis.py).
@@ -1243,5 +1246,651 @@ def coronary_disease_reports(chart: PatientChart, anchor: date, seed: int) -> li
 
     # 8. Pneumonia.
     admissions.append(pneumonia(ctx(t.pneumonia)))
+
+    return [add(chart, admission) for admission in sorted(admissions, key=lambda item: item.admitted)]
+
+
+# ------------------------------------------------------------------ p-2045, repeated surgery with a difficult airway
+
+APIXABAN = ("B01AF02", "apixaban")
+INTERNIST = WARDS["Internal Medicine"]
+
+
+@dataclass(frozen=True)
+class SurgeryTimeline:
+    cholecystitis: date  # admitted with acute cholecystitis
+    cholecystectomy: date  # operated: started laparoscopically, converted to open; difficult intubation at induction
+    cholecystitis_home: date  # after a wound infection from day 4
+    colic: date
+    hernia: date  # admitted and operated: open repair of an incisional hernia in the subcostal scar, with mesh
+    hernia_home: date
+    clot: date  # admitted: deep vein thrombosis of the left leg; apixaban started
+    clot_home: date
+    apixaban_end: date  # three months after the clot: stopped
+    gastroenteritis: date
+    hypertension: date  # amlodipine started by her family doctor
+    colonoscopy: date  # admitted for bowel preparation; colonoscopy the next day, bleeding the morning after
+    vertigo: date
+    osteoarthritis: date  # osteoarthritis of the right knee diagnosed
+    knee: date  # admitted and operated: right total knee replacement under spinal anaesthesia
+    visits: tuple[date, date]  # surgical clinic with Dr. Kerem Yalçın: a recurrent incisional hernia
+
+
+def surgery_timeline(anchor: date) -> SurgeryTimeline:
+    def back(days: int) -> date:
+        return workday(anchor - timedelta(days=days), forward=False)
+
+    def after(day: date, days: int) -> date:
+        return workday(day + timedelta(days=days), forward=True)
+
+    cholecystitis = back(3480)
+    cholecystectomy = cholecystitis + timedelta(days=2)
+    hernia = after(cholecystectomy, 770)
+    clot = hernia + timedelta(days=14)
+    return SurgeryTimeline(
+        cholecystitis=cholecystitis, cholecystectomy=cholecystectomy, cholecystitis_home=cholecystectomy + timedelta(days=8),
+        colic=back(3080), hernia=hernia, hernia_home=hernia + timedelta(days=3), clot=clot, clot_home=clot + timedelta(days=3),
+        apixaban_end=clot + timedelta(days=91), gastroenteritis=back(2450), hypertension=back(2200), colonoscopy=back(1830),
+        vertigo=back(1480), osteoarthritis=back(1150), knee=back(690), visits=(back(140), back(45)),
+    )
+
+
+def _difficult_airway(t: SurgeryTimeline) -> str:
+    """The airway warning every anaesthetic record after the first operation repeats."""
+    return (
+        f"difficult intubation at the cholecystectomy on {day_text(t.cholecystectomy)} (Cormack-Lehane grade 3 on direct "
+        "laryngoscopy; intubated with a videolaryngoscope and a bougie)"
+    )
+
+
+def repeated_surgery(s: Story) -> None:
+    """Patient P-2045: three operations in ten years, with a difficult airway found at the first and a clot after the
+    second.
+
+    The problem list and orders follow from her epicrisis reports (repeated_surgery_reports). The last months hold two
+    surgical clinic visits with Dr. Kerem Yalçın for a recurrence of her incisional hernia, with a CT of the abdominal
+    wall between them; the next appointment is the assessment before its planned repair. Her notes keep to the hernia
+    and to what her earlier operations mean for the next one: her other admissions are told by the reports alone.
+    """
+    c, rng, doc = s.chart, s.rng, SURGEON
+    t = surgery_timeline(s.anchor)
+    c.set_height(160)
+
+    c.condition("I10", "Essential (primary) hypertension", onset=t.hypertension, clinician=FAMILY_DOCTOR, text="Hypertension")
+    c.condition(
+        "Z86.7", "Personal history of diseases of the circulatory system", onset=t.clot, clinician=FAMILY_DOCTOR,
+        text="Previous deep vein thrombosis of the left leg, provoked",
+        note=(
+            f"Popliteal and calf vein thrombosis on {day_text(t.clot)}, two weeks after an open incisional hernia repair; "
+            f"apixaban for three months, stopped on {day_text(t.apixaban_end)}."
+        ),
+    )
+    c.condition(
+        "M17.1", "Other primary gonarthrosis", onset=t.osteoarthritis, clinician=FAMILY_DOCTOR,
+        text="Osteoarthritis of the right knee, treated",
+        note=f"Right total knee replacement on {day_text(t.knee)}, under spinal anaesthesia because of her difficult airway.",
+    )
+    c.no_known_allergies(t.cholecystitis)
+    apixaban = c.start_med(
+        "Apixaban 5 mg tablet", "10 mg orally twice daily for 7 days, then 5 mg twice daily", start=t.clot,
+        prescriber=FAMILY_DOCTOR, atc=APIXABAN, reason="Provoked deep vein thrombosis of the left leg; three months",
+    )
+    c.stop_med(apixaban, end=t.apixaban_end, reason="Three-month course for a provoked deep vein thrombosis completed")
+    c.start_med(
+        "Amlodipine 5 mg tablet", "5 mg orally once daily", start=t.hypertension, prescriber=FAMILY_DOCTOR,
+        atc=AMLODIPINE, reason="Hypertension",
+    )
+
+    history = [
+        f"Cholecystectomy for acute cholecystitis on {day_text(t.cholecystectomy)}: started laparoscopically and converted "
+        "to open through a right subcostal incision; wound infection afterwards, healed after opening the wound and "
+        "antibiotics.",
+        "Difficult airway: Cormack-Lehane grade 3 at that operation, intubated with a videolaryngoscope; airway alert since.",
+        f"Open incisional hernia repair with mesh (sublay) at the subcostal scar on {day_text(t.hernia)}; intubated with a "
+        "videolaryngoscope as planned.",
+        f"Provoked deep vein thrombosis of the left leg in {_month(t.clot)}, two weeks after the hernia repair: apixaban for "
+        f"three months, stopped in {_month(t.apixaban_end)}.",
+        f"Colonoscopy in {_month(t.colonoscopy + timedelta(days=1))}: two hyperplastic polyps removed; bleeding from the "
+        "polypectomy site the next day, settled without transfusion.",
+        f"Right total knee replacement on {day_text(t.knee)} under spinal anaesthesia, chosen because of the airway; "
+        "28 days of enoxaparin afterwards and no further clot.",
+    ]
+    medicines = "Takes amlodipine 5 mg once daily; no other regular medicines."
+    weight = rng.uniform(81, 84)
+    first, second = t.visits
+    scanned = at(workday(second - timedelta(days=12), forward=False), 11, 0)
+
+    start = s.clinic(first)
+    visit = c.visit(start, doc, "General surgery clinic", "Bulge at the right subcostal scar")
+    vitals = c.vitals(visit, sbp=rng.gauss(132, 4), dbp=rng.gauss(80, 3), hr=rng.gauss(74, 3), weight=weight)
+    ct = c.order_service(
+        "CT abdominal wall", category="imaging", ordered=start + timedelta(minutes=20), due=scanned.date(), requester=doc,
+        encounter=visit, reason="Suspected recurrent incisional hernia after a mesh repair",
+    )
+    c.note(
+        when=start + timedelta(minutes=25), author=doc, title="General surgery clinic note", encounter=visit,
+        body=sections(
+            (
+                "Subjective",
+                "Referred by her family doctor (Dr. Elif Aydın) with a bulge at the inner end of her right subcostal scar for "
+                "about six months, aching after lifting and housework. It has never become stuck or painful to push back; no "
+                f"vomiting; bowels normal. {medicines}",
+            ),
+            ("Surgical history", bullets(history)),
+            (
+                "Objective",
+                [
+                    vitals,
+                    "Healed right subcostal scar. A soft, reducible 3 cm swelling at its inner (medial) end with a cough "
+                    "impulse, beyond the edge of the previous repair; non-tender. Healed midline scar over the right knee.",
+                ],
+            ),
+            (
+                "Assessment",
+                numbered([
+                    "Suspected recurrent incisional hernia at the medial end of the right subcostal scar, after an open mesh "
+                    f"repair in {t.hernia.year}.",
+                    "Hypertension on amlodipine 5 mg once daily.",
+                ]),
+            ),
+            (
+                "Plan",
+                bullets([
+                    "CT of the abdominal wall to measure the defect and show where it lies in relation to the mesh.",
+                    "Review in this clinic with the CT result.",
+                    "Continue amlodipine 5 mg once daily.",
+                ]),
+            ),
+        ),
+    )
+
+    c.report(
+        "imaging", "CT abdominal wall", performed=scanned, issued=scanned + timedelta(hours=2), interpreter=CELIK, order=ct,
+        findings=(
+            f"Right subcostal scar, with the retromuscular mesh of the incisional hernia repair of {t.hernia.year} in place; no "
+            "fluid collection around it.\nAt the medial "
+            "(cranial) edge of the mesh, a 3.5 cm defect in the anterior abdominal wall containing omental fat; no bowel "
+            "in the sac and no sign of obstruction.\nNo other defect along the scar or elsewhere in the abdominal wall."
+        ),
+        conclusion="Recurrent incisional hernia at the medial edge of the mesh: 3.5 cm defect containing fat only.",
+    )
+
+    start = s.clinic(second)
+    visit = c.visit(start, doc, "General surgery clinic", "Recurrent incisional hernia")
+    vitals = c.vitals(visit, sbp=rng.gauss(130, 4), dbp=rng.gauss(79, 3), hr=rng.gauss(72, 3), weight=weight - 0.4)
+    c.order_many(
+        ["cbc", "bmp"], ordered=start + timedelta(minutes=20),
+        due=workday(s.appointment.date() - timedelta(days=2), forward=False), requester=doc, encounter=visit,
+        reason="Before the planned repair of a recurrent incisional hernia",
+    )
+    c.note(
+        when=start + timedelta(minutes=25), author=doc, title="General surgery clinic note", encounter=visit,
+        body=sections(
+            ("Subjective", f"The bulge is unchanged; it aches after housework and has never become stuck. {medicines}"),
+            (
+                "Objective",
+                [
+                    vitals,
+                    "Reducible 3 cm swelling at the medial end of the right subcostal scar with a cough impulse; non-tender.",
+                    f"CT abdominal wall {day_text(scanned)}: recurrent incisional hernia at the medial edge of the mesh, a "
+                    "3.5 cm defect containing fat only.",
+                ],
+            ),
+            (
+                "Assessment",
+                numbered([
+                    f"Symptomatic recurrent incisional hernia at the medial edge of the mesh placed in {t.hernia.year}; she "
+                    "agrees to an elective open repair with mesh.",
+                    "What her earlier operations mean for this one: a difficult airway (Cormack-Lehane grade 3 in "
+                    f"{t.cholecystectomy.year}; a videolaryngoscope was needed in {t.cholecystectomy.year} and "
+                    f"{t.hernia.year}; her knee was replaced under spinal anaesthesia in {t.knee.year} for that reason); a "
+                    f"provoked deep vein thrombosis after the hernia repair in {t.hernia.year}, so extended thromboprophylaxis "
+                    "after the operation; a wound infection after the first operation; bleeding after a polyp removal in "
+                    f"{(t.colonoscopy + timedelta(days=1)).year}, which settled without transfusion.",
+                    "Hypertension on amlodipine 5 mg once daily; blood pressure controlled.",
+                ]),
+            ),
+            (
+                "Plan",
+                bullets([
+                    f"Pre-operative assessment with Dr. Kerem Yalçın on {day_text(s.appointment)}, with an anaesthetic review "
+                    "of the airway plan; the date of the operation to be set there.",
+                    "Full blood count and basic metabolic panel a few days before the assessment.",
+                    "Continue amlodipine 5 mg once daily.",
+                ]),
+            ),
+        ),
+    )
+
+    c.appointment(s.appointment, doc, "Pre-operative assessment before a planned recurrent incisional hernia repair", minutes=30)
+
+
+def repeated_surgery_reports(chart: PatientChart, anchor: date, seed: int) -> list[dict]:
+    """P-2045's eight epicrisis reports, added oldest first; returns the DocumentReferences. Three unrelated admissions
+    (renal colic, gastroenteritis, vestibular neuronitis) come from the background catalogue; the rest are written for
+    her."""
+    rng = random.Random(f"epicrisis:{chart.pid}:{seed}")
+    p = Patient.of(chart, repeated_surgery.__name__, 0, False)
+    t = surgery_timeline(anchor)
+    scope = t.colonoscopy + timedelta(days=1)
+    airway = _difficult_airway(t)
+
+    cholecystectomy_line = (
+        f"Cholecystectomy for acute cholecystitis on {day_text(t.cholecystectomy)}: started laparoscopically and converted to "
+        "open through a right subcostal incision; wound infection of the incision afterwards (Staphylococcus aureus), healed "
+        "after opening the wound and antibiotics."
+    )
+    hernia_line = f"Open incisional hernia repair with mesh at the subcostal scar on {day_text(t.hernia)}."
+    clot_line = (
+        f"Provoked deep vein thrombosis of the left leg in {_month(t.clot)}, two weeks after the incisional hernia repair: "
+        f"apixaban for three months, stopped in {_month(t.apixaban_end)}."
+    )
+    colic_line = f"Renal colic from a ureteric stone in {_month(t.colic)}, passed without treatment."
+
+    def airway_line(day: date) -> str:
+        again = f"; a videolaryngoscope was needed again at the hernia repair in {_month(t.hernia)}" if day > t.hernia else ""
+        return f"Airway alert: {airway}{again}."
+
+    # The catalogue's builders name the clot and the replaced knee as history, not as discharge diagnoses, and repeat
+    # the airway alert in every past history after the first operation.
+    p.treated = {
+        "Z86.7": ("a previous provoked deep vein thrombosis", clot_line),
+        "M17.1": ("osteoarthritis of the right knee, treated by knee replacement", f"Right total knee replacement in {_month(t.knee)}."),
+    }
+    p.habits = f"Never smoked. Alcohol rarely. Airway alert: {airway}."
+
+    # Her operations, for the past history the catalogue's builders write.
+    operations = [
+        (t.cholecystectomy, "cholecystectomy, started laparoscopically and converted to open, with a wound infection afterwards"),
+        (t.hernia, "open incisional hernia repair with mesh"),
+        (t.knee, "right total knee replacement under spinal anaesthesia"),
+    ]
+
+    def ctx(day: date) -> Ctx:
+        return Ctx(p, rng, day, False, operations)
+
+    def regular(day: date) -> str:
+        medicines = [
+            f"{name_of(order).lower()} {order['dosageInstruction'][0]['text'].replace(' orally', '')}" for order in p.medicines(day)
+        ]
+        listed = f"Regular medicines: {'; '.join(medicines)}." if medicines else "No regular medicines."
+        return f"{listed} No known drug allergies."
+
+    admissions: list[Admission] = []
+
+    # 1. Acute cholecystitis: cholecystectomy converted to open; difficult intubation; wound infection.
+    c = ctx(t.cholecystitis)
+    lowest = rng.randint(92, 94)
+    intubation = (
+        "Unanticipated difficult intubation at induction: Cormack-Lehane grade 3 view on direct laryngoscopy (Macintosh 3 "
+        f"blade); two attempts failed, with face-mask ventilation between them (SpO₂ lowest {lowest}%); intubated at the third "
+        "attempt with a videolaryngoscope and a bougie (7.0 mm tube). No airway injury."
+    )
+    infection = (
+        "Wound infection of the subcostal incision from day 4 after the operation: fever 38.4 °C, spreading redness and pus "
+        "from its lateral end. Clips removed over 5 cm, pus drained and the wound packed; the swab grew methicillin-sensitive "
+        "Staphylococcus aureus. Intravenous, then oral flucloxacillin, with daily packing; afebrile from day 6."
+    )
+    admissions.append(Admission(
+        title="Acute cholecystitis: cholecystectomy converted from laparoscopic to open",
+        admitted=t.cholecystitis,
+        discharged=t.cholecystitis_home,
+        service="General Surgery",
+        doctor=YALCIN,
+        complaint=join(
+            f"{c.age}-year-old woman with three days of constant right upper abdominal pain spreading to the right shoulder,",
+            "with fever and vomiting. Two shorter attacks of pain after fatty meals in the past year.",
+        ),
+        past_history=join(
+            "No chronic illnesses. Two vaginal deliveries. No regular medicines. No known drug allergies.",
+            "Never smoked. Alcohol rarely.",
+        ),
+        examination=join(
+            c.vitals(temp=(38.0, 38.8), pulse=(98, 112)),
+            "Obese (BMI 33). Tender in the right upper quadrant with guarding and a positive Murphy's sign; no jaundice.",
+        ),
+        course=join(
+            f"WBC {rng.uniform(14.5, 17.5):.1f} ×10³/µL, CRP {rng.randint(160, 240)} mg/L, bilirubin 1.1 mg/dL, lipase normal.",
+            "Ultrasound: distended gallbladder with a 7 mm wall, a stone impacted in its neck and fluid around it; common bile",
+            "duct 5 mm. Intravenous ceftriaxone and metronidazole.",
+            f"Operation on {day_text(t.cholecystectomy)} (see the operation report): laparoscopy showed a gangrenous gallbladder",
+            "in a dense inflammatory mass, and the operation was converted to open through a right subcostal incision. At",
+            "induction the intubation was difficult (Cormack-Lehane grade 3; intubated with a videolaryngoscope; see",
+            "COMPLICATIONS DURING ADMISSION); an airway alert was recorded and explained to her.",
+            "Drain removed on day 3 after the operation. Wound infection of the subcostal incision from day 4 (see",
+            "COMPLICATIONS DURING ADMISSION), treated by opening the wound and flucloxacillin; the wound was clean and",
+            "granulating at discharge. Histology: acute gangrenous cholecystitis with gallstones; no malignancy.",
+        ),
+        admission_diagnoses=(("K81.0", "Acute cholecystitis"),),
+        discharge_diagnoses=(
+            ("K80.0", "Calculus of gallbladder with acute gangrenous cholecystitis, treated by cholecystectomy converted to open"),
+            ("T81.4", "Wound infection of the subcostal incision (methicillin-sensitive Staphylococcus aureus)"),
+            ("T88.4", "Difficult intubation (Cormack-Lehane grade 3), intubated with a videolaryngoscope: airway alert"),
+        ),
+        complications=join(intubation, infection),
+        prescription=(
+            "Flucloxacillin 500 mg orally four times daily for 5 more days",
+            "Paracetamol 1 g orally up to four times daily as needed",
+        ),
+        recommendations=join(
+            "AIRWAY ALERT: difficult intubation at this operation (Cormack-Lehane grade 3 on direct laryngoscopy; intubated",
+            "with a videolaryngoscope and a bougie). Tell the anaesthetist before any future operation or sedation; a",
+            "videolaryngoscope should be ready. An airway alert letter was given to her and sent to her family doctor.",
+            "Daily packing of the wound by the practice nurse until it has healed. Surgical clinic (Dr. Kerem Yalçın) in one",
+            "week. After a wound infection a hernia in the scar is more likely: no heavy lifting for 6 weeks, and report any",
+            "bulge at the scar. Return with fever, spreading redness or worsening pain.",
+        ),
+        outcome="Improved",
+        procedure=ProcedureReport(
+            performed=t.cholecystectomy,
+            name="Cholecystectomy, converted to open",
+            operation=True,
+            pre_diagnosis="Acute calculous cholecystitis",
+            post_diagnosis="Acute gangrenous cholecystitis with a stone impacted in the gallbladder neck; dense adhesions",
+            team=c.team(YALCIN),
+            anaesthesia=f"General anaesthesia with an endotracheal tube. {intubation} Airway alert recorded.",
+            wound_class="Contaminated (bile spilled from the gallbladder)",
+            note=join(
+                "Started laparoscopically: open (Hasson) entry at the umbilicus and three further ports. Gangrenous, distended",
+                "gallbladder wrapped in omentum and stuck to the duodenum and the liver edge. After 40 minutes Calot's",
+                "triangle could not be displayed safely, so the operation was converted to open through a right subcostal",
+                "(Kocher) incision. Fundus-first dissection; cystic artery and cystic duct identified, ligated and divided.",
+                "The thin gallbladder wall tore, spilling bile and two stones, which were retrieved; washout with warm saline.",
+                "Subhepatic drain. Fascia closed in two layers with looped absorbable sutures; port sites closed; skin clips.",
+            ),
+            blood_loss="About 200 mL",
+            drains="One subhepatic drain, removed on day 3",
+            complications=join(
+                "Difficult intubation at induction (see ANAESTHESIA), without lasting harm. Wound infection of the subcostal",
+                "incision from day 4 (see COMPLICATIONS DURING ADMISSION).",
+            ),
+            specimen="Gallbladder with stones, for histology: acute gangrenous cholecystitis, no malignancy",
+            body_site="Gallbladder",
+        ),
+    ))
+
+    # 2. Renal colic: the stone passed.
+    admissions.append(renal_colic(ctx(t.colic)))
+
+    # 3. Incisional hernia in the subcostal scar: open repair with mesh; the airway warning repeated.
+    c = ctx(t.hernia)
+    admissions.append(Admission(
+        title="Incisional hernia in the subcostal scar: open repair with mesh",
+        admitted=t.hernia,
+        discharged=t.hernia_home,
+        service="General Surgery",
+        doctor=YALCIN,
+        complaint=join(
+            f"{c.age}-year-old woman admitted electively for repair of an incisional hernia in the right subcostal scar of her",
+            f"cholecystectomy of {_month(t.cholecystectomy)}, after which the wound became infected. The bulge appeared about a",
+            "year after the operation and has grown; it aches on lifting and by the evening, and has never become stuck.",
+        ),
+        past_history=join(cholecystectomy_line, airway_line(t.hernia), colic_line, regular(t.hernia), "Never smoked. Alcohol rarely."),
+        examination=join(
+            c.vitals(),
+            "Obese (BMI 33). Reducible incisional hernia in the lateral two-thirds of the right subcostal scar, defect about",
+            "6 cm, with a cough impulse; the skin over it is healthy.",
+        ),
+        course=join(
+            f"Anaesthetic pre-assessment reviewed her airway alert: {airway}. Plan: videolaryngoscope first, with a senior",
+            "anaesthetist and the difficult-airway trolley in theatre. Intubated at the first attempt with the",
+            "videolaryngoscope, as planned.",
+            "Open repair with a retromuscular (sublay) polypropylene mesh on the day of admission (see the operation report).",
+            "Enoxaparin 40 mg daily and compression stockings while in hospital. Drain removed on day 2; wound clean and dry.",
+            "Walking and eating normally; home on day 3.",
+        ),
+        admission_diagnoses=(("K43.2", "Incisional hernia without obstruction or gangrene"),),
+        discharge_diagnoses=(("K43.2", "Incisional hernia of the right subcostal scar (6 cm defect), repaired with a sublay mesh"),),
+        prescription=(
+            "Paracetamol 1 g orally up to four times daily as needed",
+            f"{c.free('Tramadol')} 50 mg orally up to three times daily as needed for 5 days",
+        ),
+        recommendations=join(
+            "AIRWAY ALERT continues: difficult intubation (Cormack-Lehane grade 3), and a videolaryngoscope was needed again",
+            "at this operation. Tell the anaesthetist before any future operation or sedation.",
+            "Abdominal binder and no heavy lifting for 6 weeks; walk several times a day. Clips out at the family doctor's on",
+            "day 10. Surgical clinic in 6 weeks. Return with fever, redness or discharge from the wound.",
+        ),
+        outcome="Improved",
+        procedure=ProcedureReport(
+            performed=t.hernia,
+            name="Open incisional hernia repair with mesh (sublay)",
+            operation=True,
+            pre_diagnosis="Incisional hernia of the right subcostal scar",
+            post_diagnosis="Same; single 6 × 5 cm defect containing omentum",
+            team=c.team(YALCIN),
+            anaesthesia=join(
+                f"General anaesthesia. Airway alert: {airway}. Videolaryngoscope used first, as planned, with a senior",
+                "anaesthetist; grade 2 view with the videolaryngoscope; intubated at the first attempt over a bougie.",
+            ),
+            wound_class="Clean",
+            note=join(
+                "Old subcostal scar excised. Hernia sac dissected free and its omental contents reduced; a single 6 × 5 cm",
+                "fascial defect and no others along the scar. Retromuscular plane developed behind the rectus and lateral",
+                "muscles. Polypropylene mesh 15 × 15 cm placed in the sublay position with at least 5 cm overlap of the defect",
+                "and fixed with absorbable sutures. Posterior layer and anterior fascia closed over it; suction drain above the",
+                "mesh; skin clips.",
+            ),
+            blood_loss="About 100 mL",
+            drains="One suction drain, removed on day 2",
+            body_site="Abdominal wall, right subcostal scar",
+            device="Polypropylene mesh 15 × 15 cm (sublay)",
+        ),
+    ))
+
+    # 4. Deep vein thrombosis of the left leg two weeks after the hernia repair: apixaban for three months.
+    c = ctx(t.clot)
+    dose = next(order for order in p.orders if name_of(order).lower() == "apixaban")["dosageInstruction"][0]["text"]
+    admissions.append(Admission(
+        title="Deep vein thrombosis of the left leg after an incisional hernia repair",
+        admitted=t.clot,
+        discharged=t.clot_home,
+        service="Internal Medicine",
+        doctor=INTERNIST,
+        complaint=join(
+            f"{c.age}-year-old woman, 14 days after an open incisional hernia repair with mesh on {day_text(t.hernia)}, with three",
+            "days of pain and swelling of the left calf. Mostly resting at home since the operation; enoxaparin was given in",
+            "hospital only. No chest pain, breathlessness or coughing of blood.",
+        ),
+        past_history=join(
+            hernia_line, cholecystectomy_line, airway_line(t.clot), colic_line, regular(t.clot - timedelta(days=1)),
+            "No earlier clots and no family history of clots. No hormone treatment. Never smoked. Alcohol rarely.",
+        ),
+        examination=join(
+            c.vitals(pulse=(84, 96)),
+            "Left calf 4 cm larger than the right, tender along the deep veins, with pitting oedema to the knee. Chest clear.",
+            "Abdominal wound healing, no haematoma.",
+        ),
+        course=join(
+            f"D-dimer {rng.uniform(2.4, 3.6):.1f} mg/L FEU (raised). Doppler ultrasound: occlusive thrombus in the left popliteal",
+            "vein extending into the posterior tibial and peroneal veins; femoral veins clear. ECG sinus rhythm; oxygen",
+            "saturation normal and no symptoms of pulmonary embolism, so no CT pulmonary angiogram.",
+            f"Creatinine {rng.uniform(0.62, 0.78):.2f} mg/dL; platelets and clotting normal.",
+            "Apixaban 10 mg twice daily started on admission (5 mg twice daily from day 8). The clot was provoked by the",
+            "operation and the immobility after it: anticoagulation for three months, then stop; tests for a clotting",
+            "disorder are not needed. Wound reviewed by the surgical team: no bleeding. Calf pain easing and walking freely",
+            "before discharge.",
+        ),
+        admission_diagnoses=(("I80.2", "Suspected deep vein thrombosis of the left leg"),),
+        discharge_diagnoses=(
+            ("I80.2", "Deep vein thrombosis of the left popliteal and calf veins, provoked by surgery (incisional hernia repair)"),
+            ("K43.2", f"Incisional hernia, repaired with mesh on {day_text(t.hernia)}"),
+        ),
+        prescription=(
+            f"Apixaban {dose} (started on {day_text(t.clot)}): new; three months in all, stop on {day_text(t.apixaban_end)}",
+            "Paracetamol 1 g orally up to four times daily as needed",
+        ),
+        recommendations=join(
+            f"Apixaban for three months, until {day_text(t.apixaban_end)}, then stop: the clot was provoked by surgery.",
+            "Walk regularly; a compression stocking may ease the swelling. Family doctor (Dr. Elif Aydın) in 2 weeks.",
+            "Before any future operation, tell the team about this clot: extended thromboprophylaxis will be needed.",
+            "Return at once with chest pain, breathlessness, coughing blood or any bleeding.",
+        ),
+        outcome="Improved",
+    ))
+
+    # 5. Gastroenteritis.
+    admissions.append(gastroenteritis(ctx(t.gastroenteritis)))
+
+    # 6. Colonoscopy with polyp removal under sedation by an anaesthetist; bleeding the next day that settled.
+    c = ctx(t.colonoscopy)
+    discharged = scope + timedelta(days=2)
+    size = rng.randint(7, 9)
+    hb_before, hb_low = rng.uniform(13.0, 13.6), rng.uniform(11.6, 12.2)
+    anaesthetist = c.pick(*ANAESTHETISTS)
+    bleed = (
+        "Delayed bleeding from the polypectomy site the morning after the colonoscopy, about 20 hours later: three passages "
+        f"of fresh red blood, Hb {hb_before:.1f} falling to {hb_low:.1f} g/dL, pulse and blood pressure normal. It settled "
+        "with observation; no repeat colonoscopy and no transfusion."
+    )
+    admissions.append(Admission(
+        title="Colonoscopy with polyp removal; bleeding the next day that settled",
+        admitted=t.colonoscopy,
+        discharged=discharged,
+        service="Gastroenterology",
+        doctor=GASTROENTEROLOGIST,
+        complaint=join(
+            f"{c.age}-year-old woman with hypertension and a previous provoked deep vein thrombosis. Positive faecal",
+            "immunochemical test at bowel cancer screening; no symptoms, no rectal bleeding, weight steady. Admitted the day",
+            "before for supervised bowel preparation, because the colonoscopy was planned with an anaesthetist for her known",
+            "difficult airway.",
+        ),
+        past_history=join(
+            cholecystectomy_line, hernia_line, airway_line(t.colonoscopy), clot_line, colic_line,
+            f"Hypertension since {t.hypertension.year}. {regular(t.colonoscopy)}",
+            "No anticoagulant or antiplatelet medicine. Never smoked. Alcohol rarely.",
+        ),
+        examination=join(c.vitals(), "Abdomen soft, non-tender; healed subcostal scar with the repair intact. Rectal examination normal."),
+        course=join(
+            f"Bowel preparation completed overnight; colonoscopy on {day_text(scope)} with propofol sedation given by an",
+            "anaesthetist (see the procedure report): two polyps removed from the sigmoid colon.",
+            "Home was planned for the same afternoon, but the next morning she bled from the polypectomy site (see",
+            "COMPLICATIONS DURING ADMISSION). It settled with observation, without a repeat colonoscopy or a transfusion;",
+            "Hb steady on the following day. Amlodipine continued.",
+        ),
+        admission_diagnoses=(("R19.5", "Positive faecal immunochemical test"),),
+        discharge_diagnoses=(
+            ("K63.5", f"Hyperplastic polyps of the sigmoid colon (two, up to {size} mm), removed"),
+            ("T81.0", "Delayed post-polypectomy bleeding, settled without transfusion"),
+            ("I10", "Essential (primary) hypertension"),
+        ),
+        complications=bleed,
+        prescription=tuple(c.continuing(discharged)),
+        recommendations=join(
+            "Histology: two hyperplastic polyps, no dysplasia; no surveillance colonoscopy needed. Back to the national",
+            "screening programme in 10 years. No heavy lifting for a week. Return at once with further rectal bleeding,",
+            "dizziness or fainting. Airway alert unchanged: tell the team before any future sedation or anaesthetic.",
+        ),
+        outcome="Recovered",
+        procedure=ProcedureReport(
+            performed=scope,
+            name="Colonoscopy with hot snare polypectomy",
+            operation=False,
+            pre_diagnosis="Positive faecal immunochemical test",
+            post_diagnosis=f"Two sessile polyps in the sigmoid colon ({size} mm largest), removed",
+            team=f"{GASTROENTEROLOGIST} (endoscopist); {anaesthetist} (anaesthetist)",
+            anaesthesia=join(
+                f"Deep sedation with propofol given by an anaesthetist ({anaesthetist}), breathing on her own with nasal oxygen.",
+                f"Airway alert: {airway}; a videolaryngoscope was needed again in {t.hernia.year}. Videolaryngoscope and",
+                "difficult-airway trolley in the room; not needed.",
+            ),
+            wound_class="Not applicable",
+            note=join(
+                f"Bowel preparation good (Boston score {rng.randint(7, 9)}). Caecum reached, identified by the appendiceal",
+                f"orifice and the ileocaecal valve; terminal ileum normal. Two sessile polyps in the sigmoid colon, {size} mm",
+                f"and {rng.randint(4, 6)} mm, removed by hot snare and retrieved; no bleeding at the end. Remaining colon",
+                "normal. Withdrawal time 10 minutes.",
+            ),
+            blood_loss="None",
+            complications=bleed,
+            specimen="Two polyps, sigmoid colon, for histology: hyperplastic, no dysplasia",
+            body_site="Colon",
+        ),
+    ))
+
+    # 7. Vestibular neuronitis.
+    admissions.append(vertigo(ctx(t.vertigo)))
+
+    # 8. Right total knee replacement under spinal anaesthesia, because of the airway.
+    c = ctx(t.knee)
+    discharged = t.knee + timedelta(days=4)
+    admissions.append(Admission(
+        title="Osteoarthritis of the right knee: total knee replacement under spinal anaesthesia",
+        admitted=t.knee,
+        discharged=discharged,
+        service="Orthopaedics and Traumatology",
+        doctor=ORTHOPAEDICS,
+        complaint=join(
+            f"{c.age}-year-old woman with hypertension, admitted electively for a right total knee replacement. Right knee",
+            f"pain for several years; osteoarthritis diagnosed in {_month(t.osteoarthritis)}. Now pain at night and walking",
+            "limited to a few hundred metres despite painkillers, physiotherapy and a steroid injection.",
+        ),
+        past_history=join(
+            cholecystectomy_line, hernia_line, airway_line(t.knee), clot_line,
+            f"Colonoscopy in {_month(scope)}: two hyperplastic polyps removed; bleeding from the polypectomy site the next",
+            "day, settled without transfusion.", colic_line,
+            f"Hypertension since {t.hypertension.year}. {regular(t.knee)}", "Never smoked. Alcohol rarely.",
+        ),
+        examination=join(
+            c.vitals(),
+            "Right knee: varus deformity, crepitus, fixed flexion of 5°, flexion to 105°. Ligaments stable. Foot pulses",
+            "normal. No calf swelling.",
+        ),
+        course=join(
+            "X-rays: advanced osteoarthritis of the right knee with loss of the medial joint space and osteophytes.",
+            "Anaesthetic pre-assessment: because of the known difficult airway (see the past history), the operation was done",
+            "under spinal anaesthesia rather than a general anaesthetic, with a videolaryngoscope and the difficult-airway",
+            "trolley ready; they were not needed.",
+            f"Right total knee replacement on {day_text(t.knee)} under spinal anaesthesia (see the operation report).",
+            "Because of the previous provoked deep vein thrombosis: enoxaparin 40 mg daily from 12 hours after the operation,",
+            "to continue for 28 days, with compression stockings and walking from day 1; no calf swelling.",
+            "Walking with a frame on day 1 and with crutches on day 3; flexion to 90° at discharge. Wound clean and dry.",
+            "Amlodipine continued.",
+        ),
+        admission_diagnoses=(("M17.1", "Primary osteoarthritis of the right knee"),),
+        discharge_diagnoses=(
+            ("M17.1", "Primary osteoarthritis of the right knee, treated by total knee replacement"),
+            ("I10", "Essential (primary) hypertension"),
+            ("Z86.7", f"Personal history of a provoked deep vein thrombosis ({t.clot.year})"),
+        ),
+        prescription=(
+            f"Enoxaparin 40 mg subcutaneously once daily until {day_text(t.knee + timedelta(days=28))} (28 days after the "
+            "operation), because of the previous deep vein thrombosis",
+            "Paracetamol 1 g orally four times daily",
+            f"{c.free('Tramadol')} 50 mg orally up to three times daily as needed for 7 days",
+            *c.continuing(discharged),
+        ),
+        recommendations=join(
+            "Physiotherapy exercises daily; crutches for about 6 weeks. Clips out at the family doctor's on day 14.",
+            "Orthopaedic clinic in 6 weeks with an X-ray. Return with calf swelling, chest pain or breathlessness.",
+            "Airway alert unchanged: for any future operation, consider regional anaesthesia again, with a videolaryngoscope",
+            "ready.",
+        ),
+        outcome="Improved",
+        procedure=ProcedureReport(
+            performed=t.knee,
+            name="Right total knee replacement (cemented, posterior-stabilised)",
+            operation=True,
+            pre_diagnosis="Primary osteoarthritis of the right knee",
+            post_diagnosis="Same; tricompartmental osteoarthritis",
+            team=c.team(ORTHOPAEDICS),
+            anaesthesia=join(
+                "Spinal anaesthesia (hyperbaric bupivacaine) with an adductor canal block and light sedation, chosen instead",
+                f"of a general anaesthetic because of the known difficult airway: {airway}, and a videolaryngoscope needed",
+                f"again in {t.hernia.year}. Videolaryngoscope and difficult-airway trolley in theatre; not needed.",
+            ),
+            wound_class="Clean",
+            note=join(
+                "Thigh tourniquet. Midline incision and medial parapatellar arthrotomy. Bone cuts with intramedullary femoral",
+                "and extramedullary tibial guides; balanced in flexion and extension. Cemented posterior-stabilised femoral and",
+                "tibial components with a polyethylene insert; patella not resurfaced. Layered closure; skin clips. Tourniquet",
+                f"time {rng.randint(70, 90)} minutes.",
+            ),
+            blood_loss=f"About {rng.randint(3, 6) * 50} mL",
+            drains="One suction drain, removed on day 1",
+            body_site="Right knee",
+            device="Cemented total knee prosthesis",
+        ),
+    ))
 
     return [add(chart, admission) for admission in sorted(admissions, key=lambda item: item.admitted)]
