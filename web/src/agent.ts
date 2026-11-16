@@ -13,6 +13,9 @@ export interface Block {
   segments: Segment[]
   status: Status
   issues: string[]
+  /** Set on a bullet written "date · **title** · a few words": its text starts with the date and title, and the
+   *  words after them start at `skip`. The panel draws it as a row. */
+  row?: { when: string | null; title: string; skip: number }
 }
 
 export interface Step {
