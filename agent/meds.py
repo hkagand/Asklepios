@@ -282,8 +282,8 @@ async def reconcile(record: Record, reader: MedicationReader, loops: list[Loop])
 
 
 def reported(record: Record) -> list[dict]:
-    """Where what the patient said at onboarding differs from what the national record listed: another dose, or a
-    medicine they no longer take."""
+    """Where what the patient said when their history was taken differs from what the national record listed:
+    another dose, or a medicine they no longer take."""
     found = []
     for statement in record.statements:
         notes = [note.get("text", "").rstrip(".") for note in statement.get("note", [])]
@@ -293,7 +293,7 @@ def reported(record: Record) -> list[dict]:
         name = text_of(statement.get("medicationCodeableConcept")) or "Medication"
         dosage = ((statement.get("dosage") or [{}])[0].get("text") or "").strip()
         when = statement.get("dateAsserted", "")[:10]
-        said = f"at onboarding on {day_text(date.fromisoformat(when))}" if when else "at onboarding"
+        said = f"when their history was taken on {day_text(date.fromisoformat(when))}" if when else "when their history was taken"
         if statement.get("status") == "stopped":
             text = f"The patient said {said} that they no longer take it; the national record still lists {listed}"
         elif dosage and dosage not in listed:

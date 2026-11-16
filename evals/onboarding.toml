@@ -1,14 +1,14 @@
-# Expected onboarding review per national record. Check with: python -m evals --onboarding
+# Expected review per national record, for the import in agent/onboard.py. Check with: python -m evals --onboarding
 #
 # Uses the anchor and seed in gold.toml: the cohort and the national records (synthetic/national.py) are rebuilt in
 # memory. For each record:
-#   nationalId  the record in the simulated national record service
+#   nationalId  the national record (synthetic/national.py)
 #   chart       our patient id when the patient is already in the chart, "" for a new patient
 #   items       review items that must have this status: "match" is a phrase from the item's name, "section" one of
 #               allergies, medications, problems, procedures, results. "critical" and "stale" are checked when given.
 #               Every item not listed must have status "new".
-#   answers     what the patient says, used to check the import: medicines {match, taking = "yes" | "no" |
-#               "different", dose}, problems {match, current = true | false}. Unlisted medicines are answered "yes".
+# What the patient says (which medicines they take, whether an old diagnosis is current) is not here: it is settled
+# when the history is taken, and lives with each person in synthetic/national.py, where the generator reads it too.
 # Statuses: new, duplicate, differs, ask (see agent/onboard.py).
 
 [[record]]
@@ -23,10 +23,6 @@ items = [
   { section = "medications", match = "atorvastatin", status = "ask", stale = true },
   { section = "procedures", match = "cholecystectomy", status = "new" },
 ]
-answers = [
-  { match = "atorvastatin", taking = "no" },
-  { match = "asthma", current = false },
-]
 
 [[record]]
 nationalId = "00000003002"
@@ -34,9 +30,6 @@ chart = ""
 items = [
   { section = "medications", match = "ramipril", status = "ask" },
   { section = "procedures", match = "knee arthroscopy", status = "new" },
-]
-answers = [
-  { match = "ramipril", taking = "different", dose = "10 mg once daily" },
 ]
 
 [[record]]
@@ -49,4 +42,3 @@ items = [
   { section = "procedures", match = "hernia", status = "duplicate" },
   { section = "procedures", match = "caesarean", status = "new" },
 ]
-answers = []

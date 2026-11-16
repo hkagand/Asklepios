@@ -879,7 +879,15 @@ class PatientChart:
         self._add(document)
         return document
 
-    def appointment(self, start: datetime, clinician: Clinician, description: str, *, minutes: int = 20) -> dict:
+    def appointment(
+        self,
+        start: datetime,
+        clinician: Clinician,
+        description: str,
+        *,
+        minutes: int = 20,
+        kind: tuple[str, str] = ("FOLLOWUP", "A follow up visit from a previous appointment"),
+    ) -> dict:
         appointment = self._base("Appointment", "appt") | {
             "status": "booked",
             "serviceType": [{"text": clinician.specialty}],
@@ -887,8 +895,8 @@ class PatientChart:
                 "coding": [
                     {
                         "system": "http://terminology.hl7.org/CodeSystem/v2-0276",
-                        "code": "FOLLOWUP",
-                        "display": "A follow up visit from a previous appointment",
+                        "code": kind[0],
+                        "display": kind[1],
                     }
                 ]
             },

@@ -3,7 +3,7 @@ import type { SurgicalHistory as History } from '../agent.ts'
 import { OpenLoops } from '../components/OpenLoops.tsx'
 import { SurgicalHistory } from '../components/SurgicalHistory.tsx'
 import { SourceButton } from '../components/source.tsx'
-import { Badge, Card, Empty, FlagMark, valueTone, type Tone } from '../components/ui.tsx'
+import { Badge, Card, Elsewhere, Empty, FlagMark, NationalBadge, valueTone, type Tone } from '../components/ui.tsx'
 import { code, refId, text } from '../fhir.ts'
 import { daysBetween, formatDate, formatNumber, signed, todayIso, toTime } from '../format.ts'
 import {
@@ -85,6 +85,12 @@ function SinceLastVisit({ chart }: { chart: Chart }) {
             <p className="text-xs font-medium text-slate-500">
               {changes.length} new lab results · drawn {drawn.join(', ')}
               {!showAll && ` · showing ${notable.length} out of range or changed by 10% or more`}
+              {/* Results measured elsewhere are not this hospital's: say so for the list, and per row below. */}
+              {changes.every(({ change }) => isImported(change.latest.observation)) && (
+                <span className="ml-2 align-middle">
+                  <NationalBadge />
+                </span>
+              )}
             </p>
             {notable.length < changes.length && (
               <button
@@ -171,6 +177,7 @@ function ChangeRow({ id, change, percent }: { id: string; change: Change; percen
         <span className="text-xs text-slate-500">{series.unit}</span>
         <FlagMark flag={latest.flag} />
         <span className="block text-[11px] text-slate-400">{formatDate(latest.time)}</span>
+        <Elsewhere observation={latest.observation} />
       </td>
       <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums text-slate-600">
         {baseline ? (
@@ -178,6 +185,7 @@ function ChangeRow({ id, change, percent }: { id: string; change: Change; percen
             {formatNumber(baseline.value, series.decimals)}
             <FlagMark flag={baseline.flag} />
             <span className="block text-[11px] text-slate-400">{formatDate(baseline.time)}</span>
+            <Elsewhere observation={baseline.observation} />
           </>
         ) : (
           <span className="text-xs text-slate-400">first result</span>
@@ -397,15 +405,6 @@ function Medications({ chart }: { chart: Chart }) {
         </details>
       )}
     </Card>
-  )
-}
-
-/** Marks what came from the national record at onboarding; the source drawer shows its provenance. */
-function NationalBadge() {
-  return (
-    <Badge tone="violet" title="Imported from the national record (simulated) at onboarding">
-      National record
-    </Badge>
   )
 }
 

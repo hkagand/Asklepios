@@ -4,11 +4,11 @@ Off unless AGENT_DEMO_RESET=1. Refused unless every Patient on the server is mar
 touch real records. On the FHIR server:
   1. every resource the baseline bundles (synthetic/output/*.json, as synthetic/load.py loads them) do not contain is
      deleted, in one transaction: what the demo wrote, such as review and communication marks, visit Encounters,
-     signed notes and their Provenance, onboarded patients and the history imported for them
+     signed notes and their Provenance
   2. the baseline bundles are posted again (every entry a PUT), undoing any change to a resource they contain
-The agent's working state is cleared by the caller (app.py): visits, onboarding sessions, chat sessions, and the
-national record service's requests, tokens and messages. Caches of what the model read from notes are kept: they are
-keyed by the note's text, so they stay right, and reading every note again would take minutes.
+The agent's working state is cleared by the caller (app.py): visits and chat sessions. Caches of what the model read
+from notes are kept: they are keyed by the note's text, so they stay right, and reading every note again would take
+minutes.
 """
 
 from __future__ import annotations
