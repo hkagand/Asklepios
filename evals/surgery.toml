@@ -6,8 +6,10 @@
 #                implant (a phrase), only_in_notes (true when no Procedure record exists), years_differ (the years the
 #                sources give when they disagree), sources (source kinds that must all be among its sources:
 #                "procedure", "note", "report", "epicrisis"; an epicrisis is a hospital discharge report, whose operation
-#                report states the operation on its own date), no_implant and no_complication (phrases that none of its
-#                implants or complications may say: a temporary device, another operation's complication).
+#                report states the operation on its own date), complication (phrases that one of its complications
+#                must say together: a complication with the outcome a document states for it), no_implant and
+#                no_complication (phrases that none of its implants or complications may say: a temporary device,
+#                another operation's complication).
 #   none_stated  true when a note says the patient has had no operations.
 # Every listed operation that no expectation matches counts as a false alarm, so a patient with no operations
 # expected must have none listed. Planned operations ("laparoscopic cholecystectomy", "possible conversion to
@@ -146,7 +148,7 @@ operations = [
 id = "p-2043"
 # The thyroid and neck lymph node aspirations are diagnostic procedures and the radioiodine a medicine: not operations.
 operations = [
-  { match = "thyroidectomy", year = 2019, region = "head_neck", sources = ["procedure", "epicrisis"], no_implant = ["drain*"] },
+  { match = "thyroidectomy", year = 2019, region = "head_neck", sources = ["procedure", "epicrisis"], complication = ["vocal cord", "recover*"], no_implant = ["drain*"] },
   { match = "cholecystectomy", year = 2021, region = "abdomen", approach = "laparoscopic", sources = ["procedure", "epicrisis"], no_implant = ["drain*", "clip*"], no_complication = ["hypocalc*", "vocal cord*"] },
   { match = "radius", year = 2024, region = "spine_limbs", approach = "open", implant = "plate", sources = ["procedure", "epicrisis"], no_complication = ["hypocalc*", "vocal cord*"] },
 ]

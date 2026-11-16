@@ -131,7 +131,7 @@ document itself records it being done on its date; null if not stated.
 - "approach": "open", "laparoscopic", "robotic", "endoscopic" or "percutaneous" as the document says; null if not stated.
 - "side": "left", "right" or "bilateral"; null if not stated.
 - "elsewhere": true when the document says it was done at another hospital or abroad; otherwise false.
-- "complications": complications stated, as written; [] if none or not stated.
+- "complications": complications stated, as written, each with its outcome when the document states one ("wound infection, settled with antibiotics"; "foot drop, recovered by June 2020"); [] if none or not stated.
 - "implants": devices left in place, as written: mesh, prosthesis, port, stent; [] if none.
 Each clue: indirect evidence of an earlier operation that the document does not state as an operation, such as \
 surgical clips or post-surgical change on imaging, an absent organ, or healed scars: \
@@ -162,7 +162,7 @@ class DocumentSurgery:
 
 class SurgeryReader(NoteReader[DocumentSurgery]):
     prompt = PROMPT
-    version = 1
+    version = 2  # 2: a complication is returned with its outcome when the document states one
     what = "surgical history"
 
     def parse(self, reply: str, note_text: str) -> DocumentSurgery:
