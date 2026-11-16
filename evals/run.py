@@ -469,6 +469,10 @@ def select(cases: list[Case], args: argparse.Namespace) -> list[Case]:
 
 
 async def run(args: argparse.Namespace) -> int:
+    if args.layout or args.shape_of:
+        from .layout import run_layout, run_shape
+
+        return run_shape(args.shape_of) if args.shape_of else run_layout()
     anchor, seed, cases = load_gold(args.gold)
     records = cohort_records(anchor, seed)
     from .onboarding import imported_records
@@ -666,6 +670,8 @@ def main() -> None:
     parser.add_argument("--compare", action="store_true", help="with --considerations: run the agent's own model on the same visits too")
     parser.add_argument("--onboarding", action="store_true", help="check onboarding reviews and imports against onboarding.toml instead")
     parser.add_argument("--epicrisis", action="store_true", help="check epicrisis reports, and that the existing cohort is untouched, instead")
+    parser.add_argument("--layout", action="store_true", help="check the answer shape the chat panel draws as rows, instead")
+    parser.add_argument("--shape-of", type=Path, action="append", metavar="RUN", help="count the answers of a gold run that are written in that shape, instead (repeatable)")
     parser.add_argument("--fresh", action="store_true", help="with --loops, --meds or --surgery: read every note again instead of using the cache")
     parser.add_argument("--out", type=Path, default=HERE / "runs")
     raise SystemExit(asyncio.run(run(parser.parse_args())))

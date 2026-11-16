@@ -202,6 +202,22 @@ def split_blocks(text: str) -> list[Block]:
     return blocks
 
 
+# A bullet the chat panel draws as a row: an optional date (day, month word, year), then a bold title.
+ROW = re.compile(
+    r"(?:(?P<when>(?:\d{1,2}\s+)?(?:[^\W\d_]{3,10}\.?\s+)?(?:19|20)\d{2})\s*[·|:\-–—]\s*)?"
+    r"\*\*(?P<title>[^*]{2,60})\*\*\s*"
+)
+
+
+def row_of(text: str) -> dict | None:
+    """The date and title of a bullet written "date · **title** · a few words", or None when it is not written so.
+    `skip` is where the words after the title start. A bold label ("**Note:** ...") is not a title."""
+    found = ROW.match(text)
+    if not found or found["title"].strip().endswith(":"):
+        return None
+    return {"when": found["when"], "title": found["title"].strip(), "skip": found.end()}
+
+
 def segments(text: str, resolve: Callable[[str], str | None]) -> list[dict]:
     """Text pieces and citation groups, e.g. [{"text": "Hb 9.8 g/dL"}, {"cite": ["Observation/obs-1"]}]."""
     pieces: list[dict] = []
@@ -318,5 +334,8 @@ def verify(text: str, *, evidence: Evidence, resolve: Callable[[str], str | None
             status = "plain"
         for ref in known:
             sources[ref] = {"label": label(ref)}
-        blocks.append({"kind": block.kind, "level": block.level, "segments": parts, "status": status, "issues": issues})
+        entry = {"kind": block.kind, "level": block.level, "segments": parts, "status": status, "issues": issues}
+        if block.kind == "bullet" and block.level == 0 and (row := row_of(block.text)):
+            entry["row"] = row
+        blocks.append(entry)
     return {"blocks": blocks, "sources": sources}
