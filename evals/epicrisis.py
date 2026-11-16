@@ -725,6 +725,61 @@ async def check_read_once(record: Record) -> list[str]:
     return problems
 
 
+async def check_effort(record: Record, record_without: Record) -> list[str]:
+    """Through run_turn with a stub in place of the model: the model calls of a turn that answers from the epicrisis
+    reports ask for the higher reasoning effort, and no other call does. The effort is only ever raised."""
+    import tempfile
+
+    from agent.audit import AuditLog
+    from agent.chat import run_turn
+    from agent.llm import effort_for
+
+    problems = []
+    cases = [
+        (("low", "medium", True), "medium"), (("low", "medium", False), "low"), (("high", "medium", True), "high"),
+        ((None, "medium", True), None), (("low", None, True), "low"), (("medium", "medium", True), "medium"),
+        (("low", "unheard-of", True), "low"),
+    ]
+    problems += [f"effort_for{given} is {found!r}, expected {expected!r}" for given, expected in cases if (found := effort_for(*given)) != expected]
+
+    class Model:
+        """Answers at once, or calls read_epicrisis first when `reads`. Notes what each call asked for."""
+
+        model = "stub"
+
+        def __init__(self, reads: bool = False) -> None:
+            self.reads, self.asked = reads, []
+
+        async def chat(self, messages: list[dict], *, tools: list[dict], tool_choice: str, thorough: bool = False, **_: object) -> tuple[dict, dict]:
+            self.asked.append(thorough)
+            if self.reads and len(self.asked) == 1:
+                call = {"id": "call-0", "type": "function", "function": {"name": "read_epicrisis", "arguments": "{}"}}
+                return {"role": "assistant", "content": None, "tool_calls": [call]}, {}
+            return {"role": "assistant", "content": "Nothing more to add."}, {}
+
+    past, present = "Has he been admitted to hospital before, and for what?", "What does the echo show?"
+    with tempfile.TemporaryDirectory() as folder:
+        audit = AuditLog(Path(folder) / "audit.jsonl")
+
+        async def asked(session, question: str, reads: bool = False) -> list[bool]:
+            model = Model(reads)
+            async for _ in run_turn(session, question, llm=model, audit=audit, max_steps=3):
+                pass
+            return model.asked
+
+        session = start_session("check", record)
+        turns = [
+            ("a question about the past", await asked(session, past), [True]),
+            ("a second question about the past, the reports already read", await asked(session, "Any problems with anesthesia in the past?"), [True]),
+            ("a question about the present after the reports were read", await asked(session, present), [False]),
+            ("a question about the present", await asked(start_session("check", record), present), [False]),
+            ("a turn in which the model reads the reports itself", await asked(start_session("check", record), present, reads=True), [False, True]),
+            ("a question about the past for a patient without reports", await asked(start_session("check", record_without), past), [False]),
+        ]
+    problems += [f"{name}: the model calls asked for thorough={found}, expected {expected}" for name, found, expected in turns if found != expected]
+    return problems
+
+
 MICROGRAMS = ("125 μg", "125 µg", "125 ug")  # Greek mu (U+03BC), micro sign (U+00B5), plain letters
 
 
@@ -1243,6 +1298,7 @@ async def run_epicrisis(settings, records, anchor: date, seed: int, out: Path) -
         "none on file": check_none_on_file(imported_records(anchor)["p-3001"]),
         "pre-read": check_pre_read(record, imported_records(anchor)["p-3001"]),
         "read once": await check_read_once(record),
+        "effort": await check_effort(record, imported_records(anchor)["p-3001"]),
         "units": check_units(),
     }
     for name, problems in checks.items():

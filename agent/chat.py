@@ -270,15 +270,22 @@ async def run_turn(
     steps: list[dict] = []
     usage: Counter[str] = Counter()
     try:
+        # An answer that combines several reports is unreliable at a low reasoning effort, so a turn that answers
+        # from the reports asks for a higher one: from here for a question about the past with the reports in the
+        # conversation, and from the model's own read_epicrisis call otherwise.
+        thorough = epicrisis.about_the_past(question) and has_read_epicrisis(session)
         if pre_reads(session, question):
             # Read as if the model had called the tool; "by" tells the audit it was code.
             call = {"id": f"pre-read-{checkpoint}", "type": "function", "function": {"name": "read_epicrisis", "arguments": "{}"}}
             session.messages.append({"role": "assistant", "content": None, "tool_calls": [call]})
             yield "step", run_call(call, by="code")
+            thorough = True
         for step in range(max_steps):
             last = step == max_steps - 1
             try:
-                message, used = await llm.chat(session.messages, tools=session.specs, tool_choice="none" if last else "auto")
+                message, used = await llm.chat(
+                    session.messages, tools=session.specs, tool_choice="none" if last else "auto", thorough=thorough
+                )
             except LlmError as error:
                 log("error", message=str(error))
                 raise
@@ -299,6 +306,7 @@ async def run_turn(
                 session.messages.append({"role": "assistant", "content": message.get("content"), "tool_calls": calls})
                 for call in calls:
                     yield "step", run_call(call)
+                    thorough = thorough or call["function"]["name"] == "read_epicrisis"
                 continue
             text = (message.get("content") or "").strip()
             if not text:

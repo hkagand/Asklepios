@@ -207,7 +207,18 @@ The reports are generated, in English, by plain code (`synthetic/epicrisis.py`);
 
 **Semantic retrieval** (a vector database) was considered and set aside: one patient's reports fit in what the model reads, so there is nothing to search.
 
-**A measured limit.** Answers that need several reports combined are less reliable at the model's low reasoning effort. On the eleven `epicrisis` gold questions, two runs of three repeats passed 51 of 66 at the configured effort (`LLM_REASONING_EFFORT=low`) and 60 of 66 with `LLM_REASONING_EFFORT=medium`, at roughly 6 seconds per answer instead of 2.5 to 5. The setting is the operator's choice, in `agent/.env`.
+**Reasoning effort.** Answers that need several reports combined are less reliable at the model's low reasoning effort, so a turn that answers from the reports asks for a higher one: `LLM_REASONING_EFFORT_REPORTS`, default `medium`. It applies to a question about the past once the reports are in the conversation, and from the model's own `read_epicrisis` call otherwise. It only ever raises `LLM_REASONING_EFFORT`, does nothing when that is not set, and an empty value turns it off. Every other question keeps the configured effort.
+
+Measured on 16 Nov 2026 with `gpt-oss-120b` and `LLM_REASONING_EFFORT=low`, two runs of three repeats each:
+
+| | With the rule | Without it | Code before epicrisis reports |
+|---|---|---|---|
+| The eleven `epicrisis` questions | 56 of 66 | 47 of 66 | not applicable |
+| The other 68 questions | 377 of 408 | 374 of 408 | 373 of 408 |
+| Median time, a turn that reads the reports | 6.7 s | 3.4 s | not applicable |
+| Median time, other questions | 1.5 s | 1.4 s | 1.5 s |
+
+**A measured limit.** One `epicrisis` question still fails with the rule (0 of 6): asked about complications of p-2043's operations, answers name the vocal cord paresis without saying that it recovered, which only later reports and a clinic note state.
 
 ## Visits
 
