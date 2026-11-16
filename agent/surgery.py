@@ -20,9 +20,10 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import date
 
+from .epicrisis import HEADINGS as REPORT_HEADINGS
 from .llm import LlmError
 from .plans import NoteReader, plain
 from .record import Document, Record, day_text, moment, ref_of, text_of
@@ -60,7 +61,7 @@ REGION_WORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
         "head_neck",
         (
             "thyroid", "parathyroid", "tonsil", "adenoid", "sinus", "cataract", "retin", "eye", "ear ", "tympan", "crani",
-            "brain", "neck", "laryn", "parotid", "dental", "carotid",
+            "brain", "neck", "laryn", "parotid", "dental", "carotid", "septo", "nasal", "nose",
         ),
     ),
     (
@@ -87,6 +88,8 @@ FAMILIES: dict[str, tuple[str, ...]] = {
     "colectomy": ("colectom", "hemicolectom", "anterior resection", "hartmann"),
     "mastectomy": ("mastectom",),
     "coronary bypass": ("cabg", "coronary artery bypass"),
+    # Two stents a year apart stay apart by side: the right coronary artery, the left anterior descending artery.
+    "coronary stent": ("percutaneous coronary", "pci", "coronary stent", "coronary artery stent", "drug-eluting stent"),
 }
 APPROACH_WORDS = (
     ("laparoscopic", ("laparoscop",)),
@@ -128,7 +131,7 @@ document itself records it being done on its date; null if not stated.
 - "approach": "open", "laparoscopic", "robotic", "endoscopic" or "percutaneous" as the document says; null if not stated.
 - "side": "left", "right" or "bilateral"; null if not stated.
 - "elsewhere": true when the document says it was done at another hospital or abroad; otherwise false.
-- "complications": complications stated, as written; [] if none or not stated.
+- "complications": complications stated, as written, each with its outcome when the document states one ("wound infection, settled with antibiotics"; "foot drop, recovered by June 2020"); [] if none or not stated.
 - "implants": devices left in place, as written: mesh, prosthesis, port, stent; [] if none.
 Each clue: indirect evidence of an earlier operation that the document does not state as an operation, such as \
 surgical clips or post-surgical change on imaging, an absent organ, or healed scars: \
@@ -159,7 +162,7 @@ class DocumentSurgery:
 
 class SurgeryReader(NoteReader[DocumentSurgery]):
     prompt = PROMPT
-    version = 1
+    version = 2  # 2: a complication is returned with its outcome when the document states one
     what = "surgical history"
 
     def parse(self, reply: str, note_text: str) -> DocumentSurgery:
@@ -230,8 +233,14 @@ def region_of(*texts: str) -> str:
     return next((region for region, words in REGION_WORDS if any(_has(folded, word) for word in words)), "other")
 
 
+# A stent in a coronary artery, however the name is worded ("Stents to the right coronary artery", "RCA stent").
+CORONARY_ARTERY = re.compile(r"\b(?:coronary|left anterior descending|lad|right coronary|rca|circumflex|lcx|left main)\b")
+
+
 def family_of(name: str) -> str:
     folded = fold(name)
+    if _has(folded, "stent") and CORONARY_ARTERY.search(folded):
+        return "coronary stent"
     for family, words in FAMILIES.items():
         if any(_has(folded, word) for word in words):
             return family
@@ -296,6 +305,30 @@ def procedure_when(record: Record, procedure: dict) -> When:
     return parse_when(procedure.get("performedString"), record.today, born)
 
 
+# Words a name may add or leave out without being another operation, besides those family_of already ignores. "Fracture"
+# names what a fixation treats ("... of left distal radius fracture" and "... of left distal radius" are one operation).
+FILLER_WORDS = {"for", "to", "a", "an", "in", "on", "under", "fracture"}
+# Hernias differ by site: an inguinal and an incisional repair are two operations, a plain "hernia repair" fits either.
+HERNIA_SITES = ("inguinal", "incisional", "umbilic", "femoral", "ventral", "hiatus", "epigastric")
+
+
+def hernia_site(name: str) -> str | None:
+    folded = fold(name)
+    return next((site for site in HERNIA_SITES if _has(folded, site)), None)
+
+
+def same_kind(first: Mention, second: Mention) -> bool:
+    """Whether two mentions are the same kind of operation: the same family, or, when neither is a named family, one
+    name's words contain the other's and they share at least two."""
+    if first.family == second.family:
+        sites = {hernia_site(first.name), hernia_site(second.name)} - {None}
+        return not (first.family == "hernia repair" and len(sites) > 1)
+    if first.family in FAMILIES or second.family in FAMILIES:
+        return False
+    one, other = (set(family.split()) - FILLER_WORDS for family in (first.family, second.family))
+    return len(one & other) >= 2 and (one <= other or other <= one)
+
+
 @dataclass
 class Mention:
     name: str
@@ -317,13 +350,18 @@ class Entry:
 
     def fits(self, mention: Mention) -> bool:
         first = self.mentions[0]
-        if mention.family != first.family:
+        if not same_kind(first, mention):
             return False
         sides = {item.side for item in self.mentions if item.side}
         if mention.side and sides and mention.side not in sides:
             return False
         years = [item.when.year for item in self.mentions if item.when.year]
         return not mention.when.year or not years or all(abs(mention.when.year - year) <= 1 for year in years)
+
+    def distance(self, mention: Mention) -> int:
+        """Years between the mention and the entry's first dated mention; 0 when either has no year."""
+        year = next((item.when.year for item in self.mentions if item.when.year), None)
+        return abs(mention.when.year - year) if mention.when.year and year else 0
 
     def as_json(self) -> dict:
         mentions = self.mentions
@@ -402,10 +440,10 @@ def from_procedure(record: Record, procedure: dict) -> Mention:
         elsewhere=outside,
         here=not outside,
         complications=tuple(text_of(item) for item in procedure.get("complication", []) if text_of(item)),
-        implants=tuple(
+        implants=lasting(tuple(
             item.get("manipulated", {}).get("display", "") for item in procedure.get("focalDevice", [])
             if item.get("manipulated", {}).get("display")
-        ),
+        )),
         source={"ref": ref, "kind": "procedure", "label": record.label(ref), "quote": None},
     )
 
@@ -420,17 +458,97 @@ def from_document(record: Record, document: Document, operation: Operation) -> M
         family=family_of(operation.name),
         region=region_of(operation.name, operation.quote),
         approach=operation.approach or approach_of(operation.name),
-        side=operation.side,
+        # A record's side is read from its name ("right coronary artery"); a document's, when the reader gives none, too.
+        side=operation.side or next((side for side in SIDES if _has(fold(operation.name), side)), None),
         when=when,
         elsewhere=operation.elsewhere,
         here=here,
         complications=operation.complications,
-        implants=operation.implants,
+        implants=lasting(operation.implants),
         source={
             "ref": document.ref, "kind": document.kind, "label": record.label(document.ref), "quote": operation.quote,
             "date": document.when.date().isoformat(),
         },
     )
+
+
+def text_for_reading(document: Document) -> str:
+    """The text the reader is given. An epicrisis report ends before its PROCEDURE REPORT block: a diagnostic
+    procedure (endoscopy, angiography, polyp removal) is not an operation. An OPERATION REPORT block is kept. Its PAST
+    AND FAMILY HISTORY block is left out: it repeats earlier operations, which are read from their own reports (and a
+    paraphrase there would add a source, a wording or a complication that belongs to another operation)."""
+    if document.kind != "epicrisis":
+        return document.text
+    kept, skipping = [], False
+    for line in document.text.split("\n"):
+        heading = line.strip()
+        if heading == "PROCEDURE REPORT":
+            break
+        if heading in REPORT_HEADINGS:
+            skipping = heading == "PAST AND FAMILY HISTORY"
+        if not skipping:
+            kept.append(line)
+    return "\n".join(kept).rstrip() + "\n"
+
+
+# The reader is a model, and its instruction to leave out diagnostic tests, biopsies and polyp removal is not reliably
+# followed (a colonoscopy's "two polyps removed" came back as an operation). So the code drops them too: an operation
+# whose name names a diagnostic procedure and nothing operative is not an operation. Kept narrow on purpose, and what
+# is dropped is listed ("Not counted as operations"), so nothing disappears unseen.
+DIAGNOSTIC_WORDS = re.compile(
+    r"(?:colon|gastr|sigmoid|cyst|hyster|bronch)oscopy|endoscopy|biops|fine[- ]needle|angiogra|lumbar puncture|"
+    r"endoscopic (?:[a-z]+ ){0,3}(?:haem|hem)ostasis|endoscopic clipping",  # "Endoscopic duodenal ulcer hemostasis with clipping"
+    re.IGNORECASE,
+)
+# A polyp removed in the gut during a scope is part of the test; elsewhere ("Nasal polypectomy", "Hysteroscopic
+# polypectomy", "Transanal polypectomy") it is an operation. A bare "Polyp removal" is taken to be the gut's, and so is
+# one in the colon, stomach or duodenum ("Polypectomy of hyperplastic polyp of sigmoid colon").
+POLYP_WORDS = re.compile(r"polypectom\w*|polyp removal", re.IGNORECASE)
+GUT_SCOPE_WORDS = re.compile(
+    r"colonoscop|sigmoidoscop|gastroscop|endoscop|colon|sigmoid|caec|cecum|cecal|bowel|stomach|gastric|duoden", re.IGNORECASE
+)
+# Any sign of an intervention keeps the name: when in doubt an operation stays listed. A gut polyp removal is itself
+# diagnostic, so it is taken out first (otherwise "-ectomy" and "removal" would save it). An approach word ("endoscopic",
+# "percutaneous") is not a diagnostic word: only a named test or biopsy is. A sentinel node, cone or open biopsy, a
+# resection or stone treatment through a cystoscope, a D&C, a laparoscopy and a PEG are operations.
+OPERATIVE_WORDS = re.compile(
+    r"ectom|otom|ostom|(?<!hyper)plast|stent|excis|resect|repair|replace|insertion|intervention|bypass|ablat|ligat|extraction|dilat|"
+    r"embolis|emboliz|release|surger|removal|fixation|drain|clos|fusion|graft|implant|"
+    r"sentinel|\bcone\b|\bopen\b|turbt|lithotrips|\bd ?& ?c\b|curettage|\bpeg\b|laparoscop",
+    re.IGNORECASE,
+)
+
+
+# Devices that come out again (or dissolve) are not implants, though the reader lists them when a report names them
+# ("subhepatic drain; skin clips"): the drain was removed on day 3. A name with a lasting device stays ("mesh fixed with
+# tacks", "port with its catheter").
+TEMPORARY_DEVICE = re.compile(r"\b(?:drains?|clips?|sutures?|staples?|packs?|packing|catheters?)\b", re.IGNORECASE)
+LASTING_DEVICE = re.compile(r"mesh|prosthe|port|stent|plate|screw|nail|wire|pacemaker|defibrillator|valve|graft|implant|component|lens", re.IGNORECASE)
+
+
+def lasting(implants: tuple[str, ...]) -> tuple[str, ...]:
+    """The implants that stay in the body: without drains, clips, sutures, staples, packs and catheters."""
+    return tuple(item for item in implants if not TEMPORARY_DEVICE.search(item) or LASTING_DEVICE.search(item))
+
+
+def _gut_polyp(name: str) -> bool:
+    """A polyp removal in a gut scope, or with nothing else named."""
+    if not POLYP_WORDS.search(name):
+        return False
+    rest = re.findall(r"[a-z]+", fold(POLYP_WORDS.sub("", name)))
+    return bool(GUT_SCOPE_WORDS.search(name)) or not [word for word in rest if word not in ("with", "and", "of", "a", "the")]
+
+
+def is_diagnostic(name: str) -> bool:
+    """True when the name names a diagnostic procedure and nothing operative: "Polyp removal", "Colonoscopy with
+    polypectomy", "Core biopsy". False for "ERCP with sphincterotomy", "Excision biopsy of a breast lump", "Nasal
+    polypectomy", "Sentinel lymph node biopsy", and for any name that does not name a known diagnostic procedure."""
+    gut_polyp = _gut_polyp(name)
+    if not gut_polyp and POLYP_WORDS.search(name):
+        return False
+    if not gut_polyp and not DIAGNOSTIC_WORDS.search(name):
+        return False
+    return not OPERATIVE_WORDS.search(POLYP_WORDS.sub("", name))
 
 
 def mentions_surgery(document: Document) -> bool:
@@ -440,26 +558,38 @@ def mentions_surgery(document: Document) -> bool:
 async def surgical_history(record: Record, reader: SurgeryReader) -> dict:
     """Every earlier operation in the record, newest first, with sources; clues; and what was searched."""
     documents = [document for document in record.documents if document.when.date() <= record.today]
-    read = [document for document in documents if mentions_surgery(document)]
+    # The same document under its own ref, kind and label, with only the text the reader may see.
+    given = [replace(document, text=text_for_reading(document)) for document in documents]
+    read = [document for document in given if mentions_surgery(document)]
     found = await asyncio.gather(*(reader.read(document) for document in read), return_exceptions=True)
 
     mentions = [from_procedure(record, procedure) for procedure in record.procedures]
-    clues, none_stated, unread = [], [], []
+    clues, none_stated, unread, left_out = [], [], [], []
     for document, result in sorted(zip(read, found), key=lambda pair: pair[0].when):
         if isinstance(result, LlmError):
             unread.append(document.ref)
             continue
         if isinstance(result, BaseException):
             raise result
-        mentions += [from_document(record, document, operation) for operation in result.operations]
+        for operation in result.operations:
+            mention = from_document(record, document, operation)
+            if not is_diagnostic(operation.name):
+                mentions.append(mention)
+                continue
+            left_out.append({
+                "name": operation.name, "ref": document.ref, "label": record.label(document.ref),
+                "year": mention.when.year or document.when.year,
+            })
         source = {"ref": document.ref, "label": record.label(document.ref), "date": document.when.date().isoformat()}
         clues += [{**source, "quote": quote, "finding": finding} for quote, finding in result.clues]
         if result.none_stated:
-            none_stated.append({**source, "quote": result.none_stated})
+            none_stated.append({**source, "kind": document.kind, "quote": result.none_stated})
 
     entries: list[Entry] = []
     for mention in mentions:  # Procedure records first, then documents oldest first
-        entry = next((entry for entry in entries if entry.fits(mention)), None)
+        fitting = [entry for entry in entries if entry.fits(mention)]
+        # Of two that fit, the one from the mention's own year (a stent in 2018 and another in 2019).
+        entry = min(fitting, key=lambda entry: entry.distance(mention), default=None)
         if entry is None:
             entries.append(Entry([mention]))
         else:
@@ -468,6 +598,7 @@ async def surgical_history(record: Record, reader: SurgeryReader) -> dict:
 
     notes = [document for document in documents if document.kind == "note"]
     reports = [document for document in documents if document.kind == "report"]
+    epicrisis = [document for document in documents if document.kind == "epicrisis"]
     earliest = min((document.when.date() for document in documents), default=None)
     return {
         "patient": record.id,
@@ -475,16 +606,32 @@ async def surgical_history(record: Record, reader: SurgeryReader) -> dict:
         "operations": operations,
         "clues": clues,
         "noneStated": none_stated,
+        "leftOut": left_out,  # diagnostic procedures the reader returned, not counted as operations
         "regions": REGIONS,
         "searched": {
             "procedures": len(record.procedures),
             "notes": len(notes),
             "reports": len(reports),
+            "epicrisis": len(epicrisis),
             "documentsRead": len(read),
             "earliest": earliest.isoformat() if earliest else None,
         },
         "unread": unread,
     }
+
+
+KIND_LABELS = {"note": "A note", "report": "A report", "epicrisis": "An epicrisis report"}
+
+
+def newest_statements(statements: list[dict]) -> list[dict]:
+    """Each distinct statement once, from the newest document that makes it, newest first ("No previous operations."
+    in eight reports is one line)."""
+    newest: dict[str, dict] = {}
+    for item in statements:
+        key = plain(item["quote"]).strip(" .")
+        if key not in newest or item["date"] > newest[key]["date"]:
+            newest[key] = item
+    return sorted(newest.values(), key=lambda item: item["date"], reverse=True)
 
 
 def index_section(history: dict) -> str:
@@ -513,12 +660,21 @@ def index_section(history: dict) -> str:
         refs = ", ".join(dict.fromkeys(source["ref"] for source in operation["sources"]))
         lines.append("; ".join(parts) + f" [{refs}]")
     lines += [f'Sign of earlier surgery, {clue["finding"]}: "{clue["quote"]}" [{clue["ref"]}]' for clue in history["clues"]]
-    lines += [f'A note states: "{item["quote"]}" [{item["ref"]}]' for item in history["noneStated"]]
+    lines += [
+        f'{KIND_LABELS.get(item.get("kind"), "A note")} of {day_text(date.fromisoformat(item["date"]))} states: "{item["quote"]}" [{item["ref"]}]'
+        for item in newest_statements(history["noneStated"])
+    ]
     searched = history["searched"]
     since = f" since {day_text(date.fromisoformat(searched['earliest']))}" if searched["earliest"] else ""
     head = (
         "SURGICAL HISTORY: earlier operations from procedure records, notes and reports, newest first. Searched "
-        f"{searched['procedures']} procedure records, {searched['notes']} notes and {searched['reports']} reports{since}; "
+        f"{searched['procedures']} procedure records, {searched['notes']} notes, {searched['reports']} reports and "
+        f"{searched['epicrisis']} epicrisis reports{since}; "
         "operations done elsewhere may not be recorded."
     )
-    return head + "\n" + "\n".join(f"- {line}" for line in lines or ["no operations recorded"])
+    lines = lines or ["no operations recorded"]
+    # Named without their sources: with an id to cite, the model listed a colonoscopy as an "abdominal-related operation".
+    if left := history.get("leftOut"):
+        named = dict.fromkeys(f"{item['name'][:1].lower()}{item['name'][1:]} ({item['year']})" for item in left)
+        lines.append("Not counted as operations, being diagnostic procedures: " + ", ".join(named))
+    return head + "\n" + "\n".join(f"- {line}" for line in lines)

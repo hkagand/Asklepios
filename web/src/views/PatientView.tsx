@@ -209,7 +209,7 @@ function TabBar({
     ['overview', 'Overview', awaiting || undefined],
     ['labs', 'Labs & vitals', chart.labs.length],
     ['visits', 'Visits & notes', timeline(chart).length],
-    ['reports', 'Reports', chart.reports.length],
+    ['reports', 'Reports', chart.reports.length + chart.epicrisis.length],
     ['medications', 'Medications', chart.medications.filter((medication) => medication.status === 'active').length],
     ...(open ? ([['visit', 'Visit in progress', visit.jottings.length]] as [Tab, string, number][]) : []),
   ]
