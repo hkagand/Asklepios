@@ -202,6 +202,48 @@ def split_blocks(text: str) -> list[Block]:
     return blocks
 
 
+# A bullet the chat panel draws as a row: a bold title, with or without a date. The prompt asks for
+# "date · **title** · words"; the model also puts the date in the bold part ("**date** · title", "**date** · **title**",
+# "**date · title**"), in brackets at the end of the title, or straight after it.
+_DATE = r"(?:\d{1,2}\s+)?(?:[^\W\d_]{3,10}\.?\s+)?(?:19|20)\d{2}"
+# In the date's place, before the title, a period that ends in a date counts too: "25-28 Feb 2019".
+_WHEN = rf"(?:\d{{1,2}}(?:\s+[^\W\d_]{{3,10}}\.?)?(?:\s+(?:19|20)\d{{2}})?\s*(?:[-–—]|to)\s*)?{_DATE}"
+_BREAK = "·|:–—"
+ROW = re.compile(rf"(?:(?P<when>{_WHEN})\s*[{_BREAK}\-]\s*)?\*\*(?P<title>[^*]{{2,60}})\*\*")
+BOLD_DATE = re.compile(
+    rf"\*\*(?P<when>{_WHEN})\*\*\s*[{_BREAK}\-]\s*"
+    rf"(?:\*\*(?P<bold>[^*]{{2,60}})\*\*|(?P<title>[^*\[({_BREAK}]{{2,60}}?)\s*(?=[\[({_BREAK}]|\s-\s|$))"
+)
+DATE_IN_TITLE = re.compile(rf"(?P<when>{_DATE})\s*[{_BREAK}\-]\s*(?P<title>.*\S)")
+DATED_TITLE = re.compile(rf"(?P<title>.*\S)\s*\((?P<when>{_DATE})\)")
+# The date straight after the title. A dash before another number makes it a period or a range, not the row's date.
+DATE_AFTER = re.compile(rf"\s*(?:[{_BREAK}\-]\s*)?(?P<when>{_DATE})\s*(?:[;,·|:]|[–—\-](?!\s*\d))")
+# The mark between the title and the fact. A minus sign before a number belongs to the number.
+FACT_MARK = re.compile(r"\s*(?:[·|:,]|[–—\-](?!\d))\s*")
+
+
+def row_of(text: str) -> dict | None:
+    """The date and title of a bullet that starts with a bold title ("date · **title** · the fact"), or None when it
+    does not. `skip` is where the text after the date and title starts and `fact` where the fact itself starts, after
+    the mark between them. A bold label ("**Note:** ...") is not a title. A period after the title or in brackets
+    ("(2 to 5 Mar 2021)") stays where it is and the row has no date."""
+    if found := BOLD_DATE.match(text):
+        when, title, end = found["when"], (found["bold"] or found["title"]).strip(), found.end()
+    elif found := ROW.match(text):
+        when, title, end = found["when"], found["title"].strip(), found.end()
+        if title.endswith(":") or re.fullmatch(_WHEN, title):
+            return None
+        if when is None and (inside := DATE_IN_TITLE.fullmatch(title) or DATED_TITLE.fullmatch(title)):
+            when, title = inside["when"], inside["title"]
+        elif when is None and (after := DATE_AFTER.match(text, end)):
+            when, end = after["when"], after.end()
+    else:
+        return None
+    skip = len(text) - len(text[end:].lstrip())
+    mark = FACT_MARK.match(text, skip)
+    return {"when": when, "title": title, "skip": skip, "fact": mark.end() if mark else skip}
+
+
 def segments(text: str, resolve: Callable[[str], str | None]) -> list[dict]:
     """Text pieces and citation groups, e.g. [{"text": "Hb 9.8 g/dL"}, {"cite": ["Observation/obs-1"]}]."""
     pieces: list[dict] = []
@@ -318,5 +360,8 @@ def verify(text: str, *, evidence: Evidence, resolve: Callable[[str], str | None
             status = "plain"
         for ref in known:
             sources[ref] = {"label": label(ref)}
-        blocks.append({"kind": block.kind, "level": block.level, "segments": parts, "status": status, "issues": issues})
+        entry = {"kind": block.kind, "level": block.level, "segments": parts, "status": status, "issues": issues}
+        if block.kind == "bullet" and block.level == 0 and (row := row_of(block.text)):
+            entry["row"] = row
+        blocks.append(entry)
     return {"blocks": blocks, "sources": sources}

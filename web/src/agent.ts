@@ -13,6 +13,10 @@ export interface Block {
   segments: Segment[]
   status: Status
   issues: string[]
+  /** Set on a bullet that starts with a bold title ("date · **title** · the fact"). Its text starts with the date
+   *  and title; what follows them starts at `skip`, and the fact itself, after the mark between them, at `fact`.
+   *  The panel draws it as a row. */
+  row?: { when: string | null; title: string; skip: number; fact: number }
 }
 
 export interface Step {

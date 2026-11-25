@@ -7,7 +7,7 @@ This repository is a synthetic demo. Every patient is invented. Do not load real
 ## What it is
 
 - **Chart viewer** (`web/`): a clinician's day, the appointment list, then a patient page with overview, labs, visits, reports and medications. Built with React, Vite and Tailwind. Talks to HAPI FHIR through a Vite proxy.
-- **ASKlepios** (`agent/`): a FastAPI service that answers questions about the patient whose chart is open. The model never sees raw FHIR JSON. It gets a compact chart index plus six read-only tools (`read_documents`, `lab_series`, `medication_history`, `order_history`, `search_record`, `read_epicrisis`). Citations are checked before they reach the panel.
+- **ASKlepios** (`agent/`): a FastAPI service that answers questions about the patient whose chart is open. The model never sees raw FHIR JSON. It gets a compact chart index plus six read-only tools (`read_documents`, `lab_series`, `medication_history`, `order_history`, `search_record`, `read_epicrisis`). Citations are checked before they reach the panel, which shows each fact as a one-line row that opens to the whole fact and its sources. See [How an answer is shown](#how-an-answer-is-shown).
 - **Open loops** (`agent/plans.py`, `agent/loops.py`): what each clinician's latest note planned, open orders and new results, tracked from order to result, review and telling the patient. See [Open loops](#open-loops).
 - **Medication reconciliation** (`agent/meds.py`): the medication orders against what the notes say, with a timeline per drug. See [Medications](#medications).
 - **Surgical history** (`agent/surgery.py`): every earlier operation, merged from Procedure records, notes, reports and epicrisis reports, by body region. See [Surgical history](#surgical-history).
@@ -220,6 +220,22 @@ Measured on 16 Nov 2026 with `gpt-oss-120b` and `LLM_REASONING_EFFORT=low`, two 
 
 **A measured limit.** One `epicrisis` question failed every time in that measurement: asked about complications of p-2043's operations, answers named the vocal cord paresis without saying that it recovered, which only later reports and a clinic note state. Surgical history now lists a complication with its outcome when a document states one ("right vocal cord paresis with a hoarse voice, recovered by Apr 2019"), read from the patient's own note. Measured the same way afterwards, that question passes 3 of 6, the eleven `epicrisis` questions 59 of 66 and the other 68 questions 374 of 408. It is still the one question under 4 of 6: about half the answers leave the outcome out.
 
+## How an answer is shown
+
+An ASKlepios answer used to be a block of bullets that a doctor had to read through. Now each bullet that starts with a bold title is drawn as a **row** that can be scanned and opened.
+
+- **Folded**, a row is one line: the date when the fact has one, the bold title, and the start of the fact, cut with an ellipsis. A "Complication" badge (the row cites an epicrisis report that records one) and the "check" or "no source" marker stay visible beside it.
+- **Opened**, it shows the fact in full, each source beside the statement it supports, then any indented lines under it.
+- **Rows that start open:** when an answer has only one or two rows, since they are the answer itself; and a row with indented lines under it, which is usually a list the row introduces.
+- **The prepared pre-visit brief** keeps plain bullets: a briefing is read whole.
+- Everything else (the lead sentence, headings, a bullet without a bold title) is drawn as before, and the footer says how many sources the answer cites.
+
+**The model does not shorten anything.** The system prompt asks only for a bold title of two to four words at the start of each bullet, with the date before it; the bullet then says what it would have said anyway. `row_of` in `agent/citations.py` recognises such a bullet and `verify` adds a `row` field (date, title, and where the text after them and the fact itself start) to the block the panel receives. The block's text is unchanged, so citation checking and the gold scoring see what they saw before. The model does not hold one form at low reasoning effort, so the date is also accepted in the bold part, in brackets at the end of the title, straight after the title, or, before the title, as a period ("25-28 Feb 2019"). A period after the title stays in the fact, and a minus sign before a number is never taken for a separator.
+
+**Measured** on 25 Nov 2026 with `gpt-oss-120b`, two runs of three repeats each: the 79 gold questions pass 448 of 474 with the title in the prompt and 435 of 474 on the code before it; no category is more than 2 under. 419 of the 435 answers with bullets had every top-level bullet drawn as a row.
+
+Two wordings that asked the model itself to write short rows were measured first and dropped: both lost facts (a ferritin date without its value, a ramipril order without the note that says 5 mg). `docs/superpowers/specs/2026-11-16-answer-layout-design.md` has the numbers.
+
 ## Visits
 
 **Start visit** on a patient's page opens a FHIR Encounter (in progress) for the clinician viewing, linked to today's appointment if there is one, and a **Visit in progress** tab:
@@ -318,6 +334,8 @@ Other options:
 - `--onboarding`: checks the import of a national summary against `evals/onboarding.toml`: each record's review statuses; that the import writes only what can be settled, as the patient answered, with the day the history was taken and one Provenance naming the hospital; that an import nobody watches skips what it cannot settle; and the two patients as the generator writes them. No model calls apart from cached surgical history.
 - `--epicrisis`: checks epicrisis reports without calling the model, and exits 1 on any problem: that the original 21 patients' resources are untouched, the background and showcase reports, the tool and its size limit, the surgical history readers (diagnostic procedures dropped, stents grouped, hernias separated, mentions merged), what ASKlepios says when none is on file, and that past questions pre-read the reports once.
 - `--epicrisis-in-prompt`: runs the gold questions with every report in the prompt and without `read_epicrisis`, for comparison only; the tools check is skipped.
+- `--layout`: checks, without calling the model, which answer bullets are recognised as rows (every form of date the model writes, in English and Turkish, and sentences that must not become rows), that an answer written the old way gives the blocks it gave before, and that the prompt's own example bullets are rows.
+- `--shape-of RUN` (repeatable): counts, for a finished gold run, the answers whose top-level bullets are all rows.
 - `--surgery`: checks surgical history against `evals/surgery.toml`: each expected operation with its year, region, approach, implant and sources, a complication it must list with its outcome, implants and complications it must not list, and no others.
 - `--fresh` (with `--loops`, `--meds` or `--surgery`): reads every note again instead of using the cache. With `--repeats 3`, it shows how much extraction varies.
 
