@@ -13,6 +13,10 @@ export interface Block {
   segments: Segment[]
   status: Status
   issues: string[]
+  /** Set on a bullet that starts with a bold title ("date · **title** · the fact"). Its text starts with the date
+   *  and title; what follows them starts at `skip`, and the fact itself, after the mark between them, at `fact`.
+   *  The panel draws it as a row. */
+  row?: { when: string | null; title: string; skip: number; fact: number }
 }
 
 export interface Step {
@@ -261,7 +265,7 @@ export type SurgeryRegion = 'abdomen' | 'chest' | 'head_neck' | 'spine_limbs' | 
 
 export interface SurgerySource {
   ref: string
-  kind: 'procedure' | 'note' | 'report'
+  kind: 'procedure' | 'note' | 'report' | 'epicrisis'
   label: string
   quote: string | null
   date?: string
@@ -300,8 +304,10 @@ export interface SurgicalHistory {
   operations: Operation[]
   clues: (SurgeryStatement & { finding: string })[]
   noneStated: SurgeryStatement[]
+  /** Diagnostic procedures the reader returned, not counted as operations. */
+  leftOut: { name: string; ref: string; label: string; year: number }[]
   regions: Record<SurgeryRegion, string>
-  searched: { procedures: number; notes: number; reports: number; documentsRead: number; earliest: string | null }
+  searched: { procedures: number; notes: number; reports: number; epicrisis: number; documentsRead: number; earliest: string | null }
   unread: string[]
 }
 

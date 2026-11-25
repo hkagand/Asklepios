@@ -9,7 +9,7 @@ from collections import Counter
 from collections.abc import AsyncIterator, Iterable
 from dataclasses import dataclass, field
 
-from . import tools
+from . import epicrisis, tools
 from .audit import AuditLog
 from .citations import Evidence, verify
 from .fhir import FhirClient
@@ -36,7 +36,7 @@ reports say beyond that, read all of them with read_documents (up to 4 per call)
 does not contain unless you have read it.
 - Tools: read_documents for full notes and reports, lab_series for trends with computed changes, medication_history \
 for drug changes and their reasons, order_history for what was ordered and whether it was done, search_record to \
-find where something is mentioned.
+find where something is mentioned, read_epicrisis for the full epicrisis reports of earlier hospital admissions.
 - OPEN LOOPS lists what each clinician's latest note planned and whether the record shows it was done. Report those \
 statuses as given. "No record to confirm it" means the record cannot show it either way, not that it was missed.
 - MEDICATION RECONCILIATION lists where the notes and the medication orders disagree. For any question about a \
@@ -52,6 +52,18 @@ never had surgery.
 is the surgeon's decision, then list every operation in SURGICAL HISTORY with its date, approach, body region, \
 implants and complications, citing each. Do not assess fitness from results or vital signs, and do not say whether \
 anything rules the operation in or out.
+- EPICRISIS REPORTS lists the reports written at the end of each hospital admission: the discharge summary and, when \
+there was one, the operation or procedure report. Its lines are only summaries: the hospital course, findings, \
+biopsies, anaesthesia, the details and outcome of complications and the discharge advice are only in the full reports. \
+So for any question about the patient's past (earlier admissions, procedures that are not operations, findings, \
+complications, anaesthesia, "has he ever ...", "anything I should know about ..."), first call read_epicrisis, unless \
+the reports are already in this conversation or given in full in the section, even when the summary lines, notes or \
+problem list seem to answer it; read_documents and search_record do not replace it. Only which operations the patient \
+has had is answered from SURGICAL HISTORY; what a surgical team or consultation said, advised or planned is in the \
+notes, read with read_documents. Use every report that bears on the question, including the biopsies and other \
+procedures that led to an operation, and cite each one you use. If none does, say how many reports you read, the \
+period they cover, and that none of them mentions it. If the section says none are on file, say that no epicrisis \
+reports are on file. Do not read them for questions about current results, medicines or orders.
 - Lines that start "From the national record (simulated)" were imported from records kept elsewhere, before the \
 patient's first visit here: whenever you use one, say it comes from the national record, with the facility and date \
 the line gives.
@@ -69,6 +81,10 @@ the values, or use the changes reported by the index and lab_series.
 
 Style
 - Lead with the direct answer, then short "-" bullets. No tables. Write dates like "15 Oct 2026".
+- Start each bullet with a bold title of two to four words that names the fact, and put its date before the title \
+when it has one: "- 3 Mar 2021 · **Chest X-ray** · no consolidation [DiagnosticReport/dr-4]", or without a date \
+"- **Paracetamol 500 mg** · as needed [MedicationRequest/med-4]". The title is only a label: after it, the bullet says \
+everything it would have said without one.
 - Do not recommend treatments, doses, tests or diagnoses, and do not predict what will happen. You may point out what \
 is abnormal, changed, pending, overdue or documented as planned.
 - If asked whether to do something (start, restart, stop, increase, order), do not answer yes or no: say that the \
@@ -129,6 +145,7 @@ class Session:
     record: Record
     evidence: Evidence
     messages: list[dict]
+    specs: list[dict]
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     used: float = field(default_factory=time.monotonic)
 
@@ -145,14 +162,21 @@ async def sections(record: Record, plans: PlanExtractor, medicines: MedicationRe
     return f"{loops_section(loops, unread)}\n\n{medication_section(picture)}\n\n{surgery_section(history)}"
 
 
-def start_session(session_id: str, record: Record, extra: str | None = None) -> Session:
-    """`extra` is appended to the chart index: the sections computed from the notes (sections())."""
-    index = record.index() + (f"\n\n{extra}" if extra else "")
+def start_session(session_id: str, record: Record, extra: str | None = None, *, epicrisis_in_prompt: bool = False) -> Session:
+    """The chart index gets the EPICRISIS REPORTS section, then `extra`: the sections computed from the notes
+    (sections()). With `epicrisis_in_prompt` that section gives the reports in full and read_epicrisis is not offered."""
+    reports = epicrisis.index_section(record, full=epicrisis_in_prompt)
+    index = record.index() + f"\n\n{reports}" + (f"\n\n{extra}" if extra else "")
     evidence = Evidence()
     for line in index.splitlines():
         evidence.add(line)
+    if epicrisis_in_prompt:
+        # A report's facts are on its own lines, not on the line with its id: add each report whole.
+        for block in epicrisis.read_all(record)[1:]:
+            evidence.add(block)
     prompt = SYSTEM_PROMPT.format(today=today_text(record.today), index=index)
-    return Session(session_id, record, evidence, [{"role": "system", "content": prompt}])
+    specs = [spec for spec in tools.SPECS if not (epicrisis_in_prompt and spec["function"]["name"] == "read_epicrisis")]
+    return Session(session_id, record, evidence, [{"role": "system", "content": prompt}], specs)
 
 
 class Sessions:
@@ -195,6 +219,32 @@ class Sessions:
             del self._items[key]
 
 
+def has_read_epicrisis(session: Session) -> bool:
+    """Whether the conversation already holds a read_epicrisis result, made by the model or in code."""
+    calls = {
+        call["id"]
+        for message in session.messages
+        if message["role"] == "assistant"
+        for call in message.get("tool_calls") or []
+        if call["function"]["name"] == "read_epicrisis"
+    }
+    return any(message["role"] == "tool" and message.get("tool_call_id") in calls for message in session.messages)
+
+
+def pre_reads(session: Session, question: str) -> bool:
+    """Whether the epicrisis reports are read in code before the model's first step: the question is about the
+    patient's past, the patient has reports, the session offers read_epicrisis (not when they are in the prompt), and
+    the conversation does not already hold them. Left to itself, the model often answers such questions from the index
+    lines without reading the reports."""
+    offered = any(spec["function"]["name"] == "read_epicrisis" for spec in session.specs)
+    return (
+        offered
+        and epicrisis.about_the_past(question)
+        and bool(epicrisis.reports(session.record))
+        and not has_read_epicrisis(session)
+    )
+
+
 async def run_turn(
     session: Session, question: str, *, llm: LlmClient, audit: AuditLog, max_steps: int, user: str | None = None
 ) -> AsyncIterator[tuple[str, dict]]:
@@ -204,6 +254,18 @@ async def run_turn(
     def log(event: str, **fields: object) -> None:
         audit.write(session=session.id, patient=session.patient_id, event=event, user=user, **fields)
 
+    def run_call(call: dict, **extra: object) -> dict:
+        """Runs one tool call already in the conversation, adds its result and evidence, and logs it."""
+        name, arguments = call["function"]["name"], call["function"]["arguments"]
+        result = tools.run(session.record, name, arguments)
+        for block in result.blocks:
+            session.evidence.add(block)
+        session.messages.append({"role": "tool", "tool_call_id": call["id"], "content": result.text})
+        step = {"tool": name, "label": result.label}
+        steps.append(step)
+        log("tool", name=name, arguments=arguments, label=result.label, characters=len(result.text), **extra)
+        return step
+
     log("question", text=question)
     # A turn that does not finish is taken back out, so the next question starts from a clean history.
     checkpoint = len(session.messages)
@@ -212,10 +274,22 @@ async def run_turn(
     steps: list[dict] = []
     usage: Counter[str] = Counter()
     try:
+        # An answer that combines several reports is unreliable at a low reasoning effort, so a turn that answers
+        # from the reports asks for a higher one: from here for a question about the past with the reports in the
+        # conversation, and from the model's own read_epicrisis call otherwise.
+        thorough = epicrisis.about_the_past(question) and has_read_epicrisis(session)
+        if pre_reads(session, question):
+            # Read as if the model had called the tool; "by" tells the audit it was code.
+            call = {"id": f"pre-read-{checkpoint}", "type": "function", "function": {"name": "read_epicrisis", "arguments": "{}"}}
+            session.messages.append({"role": "assistant", "content": None, "tool_calls": [call]})
+            yield "step", run_call(call, by="code")
+            thorough = True
         for step in range(max_steps):
             last = step == max_steps - 1
             try:
-                message, used = await llm.chat(session.messages, tools=tools.SPECS, tool_choice="none" if last else "auto")
+                message, used = await llm.chat(
+                    session.messages, tools=session.specs, tool_choice="none" if last else "auto", thorough=thorough
+                )
             except LlmError as error:
                 log("error", message=str(error))
                 raise
@@ -235,14 +309,8 @@ async def run_turn(
                 ]
                 session.messages.append({"role": "assistant", "content": message.get("content"), "tool_calls": calls})
                 for call in calls:
-                    name, arguments = call["function"]["name"], call["function"]["arguments"]
-                    result = tools.run(session.record, name, arguments)
-                    for block in result.blocks:
-                        session.evidence.add(block)
-                    session.messages.append({"role": "tool", "tool_call_id": call["id"], "content": result.text})
-                    steps.append({"tool": name, "label": result.label})
-                    log("tool", name=name, arguments=arguments, label=result.label, characters=len(result.text))
-                    yield "step", {"tool": name, "label": result.label}
+                    yield "step", run_call(call)
+                    thorough = thorough or call["function"]["name"] == "read_epicrisis"
                 continue
             text = (message.get("content") or "").strip()
             if not text:

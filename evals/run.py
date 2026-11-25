@@ -5,6 +5,7 @@
     python -m evals --case p2041 --repeats 3         cases whose id contains "p2041", three times each
     python -m evals --judge                          also grade each answer against its reference with a model
     python -m evals --baseline evals/runs/<run>      compare with an earlier run
+    python -m evals --category epicrisis --epicrisis-in-prompt   every epicrisis report in the prompt, no read_epicrisis
 
 Charts are rebuilt in memory from the synthetic generator with the anchor and seed in gold.toml, and "today" is the
 anchor, so a case means the same thing on any day and the FHIR server is not needed. --fhir reads the charts from
@@ -39,14 +40,14 @@ from agent.meds import MedicationReader
 from agent.plans import PlanExtractor
 from agent.record import Record
 from agent.surgery import SurgeryReader
-from agent.tools import fold
+from agent.tools import HANDLERS, fold
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 LANGUAGES = {"en": "English", "tr": "Turkish"}
 CATEGORIES = (
     "lookup", "medication", "labs", "pending", "documents", "compare", "briefing", "absent", "safety", "followup",
-    "isolation", "loops", "medications", "surgery", "onboarding",
+    "isolation", "loops", "medications", "surgery", "onboarding", "epicrisis",
 )
 FLAGGED = ("check", "unsourced", "unsupported")
 
@@ -64,6 +65,8 @@ class Case:
     avoid: tuple[str, ...]
     language: str | None
     source_labels: tuple[str, ...] = ()
+    tools: tuple[str, ...] = ()  # each must have been called for the answer
+    no_tools: tuple[str, ...] = ()  # none may have been
 
     @property
     def expected_language(self) -> str | None:
@@ -88,6 +91,8 @@ def load_gold(path: Path) -> tuple[date, int, list[Case]]:
             cites=_groups(item.get("cites", [])),
             avoid=tuple(item.get("avoid", [])),
             source_labels=tuple(item.get("source_labels", [])),
+            tools=tuple(item.get("tools", [])),
+            no_tools=tuple(item.get("no_tools", [])),
             language=item.get("language"),
         )
         for item in gold.get("case", [])
@@ -160,9 +165,18 @@ def answer_language(text: str) -> str | None:
     return None
 
 
-def score(case: Case, text: str, cited: set[str], labels: dict[str, str] | None = None) -> dict[str, list[str]]:
-    """Failed checks by kind; empty when the answer passes. `labels` are the cited sources' chip labels."""
+def score(
+    case: Case, text: str, cited: set[str], labels: dict[str, str] | None = None, called: Iterable[str] | None = None
+) -> dict[str, list[str]]:
+    """Failed checks by kind; empty when the answer passes. `labels` are the cited sources' chip labels, `called` the
+    names of the tools called for the answer (None skips the tools check)."""
     failures: dict[str, list[str]] = {}
+    if called is not None:
+        names = set(called)
+        wrong = [f"{name} not called" for name in case.tools if name not in names]
+        wrong += [f"{name} called" for name in case.no_tools if name in names]
+        if wrong:
+            failures["tools"] = wrong
     shown = [label for ref, label in (labels or {}).items() if ref in cited]
     if unlabelled := [phrase for phrase in case.source_labels if not any(says(label, phrase) for label in shown)]:
         failures["source_labels"] = unlabelled
@@ -203,9 +217,21 @@ async def ask(session, question: str, *, llm: LlmClient, audit: AuditLog, max_st
 
 
 async def run_case(
-    case: Case, repeat: int, record: Record, loops: str | None, *, llm: LlmClient, audit: CapturingAudit, max_steps: int
+    case: Case,
+    repeat: int,
+    record: Record,
+    loops: str | None,
+    *,
+    llm: LlmClient,
+    audit: CapturingAudit,
+    max_steps: int,
+    epicrisis_in_prompt: bool = False,
 ) -> dict:
-    session = start_session(f"eval-{case.id}-{repeat}-{uuid.uuid4().hex[:8]}", record, loops)
+    """With `epicrisis_in_prompt` the session has every epicrisis report in its prompt and no read_epicrisis, and the
+    tools check is skipped."""
+    session = start_session(
+        f"eval-{case.id}-{repeat}-{uuid.uuid4().hex[:8]}", record, loops, epicrisis_in_prompt=epicrisis_in_prompt
+    )
     row: dict = {"case": case.id, "repeat": repeat, "patient": case.patient, "category": case.category, "question": case.question}
     try:
         for question in case.history:
@@ -218,7 +244,8 @@ async def run_case(
     final = next(event for event in reversed(events) if event["event"] == "answer")
     asked_at = max(index for index, event in enumerate(events) if event["event"] == "question")
     labels = {ref: answer["sources"][ref]["label"] for ref in cited}
-    failures = score(case, text, cited, labels)
+    tools = [{"name": event["name"], "arguments": event["arguments"]} for event in events[asked_at:] if event["event"] == "tool"]
+    failures = score(case, text, cited, labels, None if epicrisis_in_prompt else [tool["name"] for tool in tools])
     return row | {
         "passed": not failures,
         "failures": failures,
@@ -227,7 +254,7 @@ async def run_case(
         "cited": sorted(cited),
         "labels": labels,
         "statuses": dict(Counter(block["status"] for block in answer["blocks"])),
-        "tools": [{"name": event["name"], "arguments": event["arguments"]} for event in events[asked_at:] if event["event"] == "tool"],
+        "tools": tools,
         "elapsed_ms": answer["elapsedMs"],
         "usage": final.get("usage", {}),
     }
@@ -339,7 +366,9 @@ def report(summary: dict, rows: list[dict], meta: dict, baseline: dict | None) -
         f"# ASKlepios eval: {meta['started']}",
         "",
         f"Model `{meta['model']}` · cohort anchor {meta['anchor']}, seed {meta['seed']} · charts from {meta['source']} · "
-        f"note sections (open loops, medications, surgical history) {'in' if meta.get('loops') else 'not in'} the index · {meta['cases']} cases × {meta['repeats']}",
+        f"note sections (open loops, medications, surgical history) {'in' if meta.get('loops') else 'not in'} the index · "
+        f"epicrisis reports {'in full in the prompt, no read_epicrisis' if meta.get('epicrisis_in_prompt') else 'read with read_epicrisis'} · "
+        f"{meta['cases']} cases × {meta['repeats']}",
         "",
         f"**Passed {share({'passed': summary['passed'], 'runs': summary['runs']})}**"
         + (f" · {summary['errors']} errors" if summary["errors"] else ""),
@@ -423,6 +452,7 @@ def lint(cases: list[Case], records: dict[str, Record]) -> list[str]:
         resources = records[case.patient].resources
         problems += [f"{where} {ref} is not in {case.patient}'s record" for group in case.cites for ref in group if ref not in resources]
         problems += [f"{where} empty phrase" for group in case.mentions for phrase in group if not phrase.strip("* ")]
+        problems += [f"{where} unknown tool {name!r}" for name in (*case.tools, *case.no_tools) if name not in HANDLERS]
     return problems
 
 
@@ -439,6 +469,10 @@ def select(cases: list[Case], args: argparse.Namespace) -> list[Case]:
 
 
 async def run(args: argparse.Namespace) -> int:
+    if args.layout or args.shape_of:
+        from .layout import run_layout, run_shape
+
+        return run_shape(args.shape_of) if args.shape_of else run_layout()
     anchor, seed, cases = load_gold(args.gold)
     records = cohort_records(anchor, seed)
     from .onboarding import imported_records
@@ -465,6 +499,10 @@ async def run(args: argparse.Namespace) -> int:
         from .onboarding import run_onboarding
 
         return await run_onboarding(load_settings(), records, anchor, seed, HERE / "onboarding.toml", args.out)
+    if args.epicrisis:
+        from .epicrisis import run_epicrisis
+
+        return await run_epicrisis(load_settings(), records, anchor, seed, args.out)
     if args.surgery:
         from .surgery import run_surgery
 
@@ -517,7 +555,14 @@ async def run(args: argparse.Namespace) -> int:
     async def one(case: Case, repeat: int) -> None:
         async with gate:
             row = await run_case(
-                case, repeat, records[case.patient], sections[case.patient], llm=llm, audit=audit, max_steps=settings.max_steps
+                case,
+                repeat,
+                records[case.patient],
+                sections[case.patient],
+                llm=llm,
+                audit=audit,
+                max_steps=settings.max_steps,
+                epicrisis_in_prompt=args.epicrisis_in_prompt,
             )
             if grader and "answer" in row:
                 row["judge"] = await judge(case, row, grader)
@@ -544,6 +589,7 @@ async def run(args: argparse.Namespace) -> int:
         "seed": seed,
         "source": source,
         "loops": not args.no_loops,
+        "epicrisis_in_prompt": args.epicrisis_in_prompt,
         "cases": len(chosen),
         "repeats": args.repeats,
     }
@@ -568,7 +614,8 @@ async def rescore(args: argparse.Namespace, chosen: list[Case]) -> int:
         if "answer" not in row:
             return
         case = lookup[row["case"]]
-        row["failures"] = score(case, row["answer"], set(row["cited"]), row.get("labels"))
+        called = None if meta.get("epicrisis_in_prompt") else [tool["name"] for tool in row.get("tools", [])]
+        row["failures"] = score(case, row["answer"], set(row["cited"]), row.get("labels"), called)
         row["passed"] = not row["failures"]
         if grader:
             async with gate:
@@ -614,6 +661,7 @@ def main() -> None:
     parser.add_argument("--fhir", action="store_true", help="read charts from the FHIR server instead of the generator")
     parser.add_argument("--rescore", type=Path, help="score an earlier run's answers again instead of asking the agent")
     parser.add_argument("--no-loops", action="store_true", help="leave the sections computed from notes (open loops, medications, surgical history) out of the chart index")
+    parser.add_argument("--epicrisis-in-prompt", action="store_true", help="give every epicrisis report in full in the prompt and leave out read_epicrisis, for comparison (skips the tools check)")
     parser.add_argument("--loops", action="store_true", help="check open loops against loops.toml instead of the questions")
     parser.add_argument("--meds", action="store_true", help="check medication reconciliation against meds.toml instead")
     parser.add_argument("--surgery", action="store_true", help="check surgical history against surgery.toml instead")
@@ -621,6 +669,9 @@ def main() -> None:
     parser.add_argument("--considerations", action="store_true", help="check clinical considerations from the second model against considerations.toml instead")
     parser.add_argument("--compare", action="store_true", help="with --considerations: run the agent's own model on the same visits too")
     parser.add_argument("--onboarding", action="store_true", help="check onboarding reviews and imports against onboarding.toml instead")
+    parser.add_argument("--epicrisis", action="store_true", help="check epicrisis reports, and that the existing cohort is untouched, instead")
+    parser.add_argument("--layout", action="store_true", help="check the answer shape the chat panel draws as rows, instead")
+    parser.add_argument("--shape-of", type=Path, action="append", metavar="RUN", help="count the answers of a gold run that are written in that shape, instead (repeatable)")
     parser.add_argument("--fresh", action="store_true", help="with --loops, --meds or --surgery: read every note again instead of using the cache")
     parser.add_argument("--out", type=Path, default=HERE / "runs")
     raise SystemExit(asyncio.run(run(parser.parse_args())))
