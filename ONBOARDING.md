@@ -3,12 +3,11 @@
 A step-by-step setup for a new teammate's laptop. It takes about 30–45 minutes, most of it downloads. Everything in this
 repository runs on **synthetic data only**: never load real patient records.
 
-You will run five things on your laptop:
+You will run four things on your laptop:
 
 | What | Port | Started with |
 |---|---|---|
 | HAPI FHIR server (the patient records) | 8080 | Docker |
-| National record service (simulated, for onboarding) | 8090 | `python -m national` |
 | ASKlepios agent (the API and the model calls) | 8000 | `python -m agent` |
 | Web app (what you open in the browser) | 5173 | `npm run dev` |
 | Ollama with MedGemma (optional) | 11434 | Ollama app |
@@ -140,28 +139,22 @@ generate again).
 
 ## 7. Start the services
 
-Use three terminals, each in the repository root with the virtual environment activated (step 3).
+Use two terminals, each in the repository root with the virtual environment activated (step 3).
 
-Terminal 1, the simulated national record service:
-
-```bash
-python -m national
-```
-
-Terminal 2, the agent:
+Terminal 1, the agent:
 
 ```bash
 python -m agent
 ```
 
-Terminal 3, the web app:
+Terminal 2, the web app:
 
 ```bash
 cd web
 npm run dev
 ```
 
-Leave all three running.
+Leave both running.
 
 ## 8. Check that it works
 
@@ -179,7 +172,7 @@ If all of that works, you are set up. The [README](README.md) explains each feat
 
 1. Start Docker Desktop, then `docker compose up -d`.
 2. If the computer or Docker restarted since last time, reload the data: `python synthetic/load.py`.
-3. Start the three services (step 7).
+3. Start the two services (step 7).
 4. After a demo, click **Reset demo** at the top to start clean.
 
 ## 10. Optional: MedGemma for clinical considerations
@@ -215,11 +208,10 @@ Without these lines the panel simply does not appear.
 | You see | Usually means | Do this |
 |---|---|---|
 | "Could not load data from the FHIR server" | HAPI is not running or has no data | Check Docker Desktop, run `docker compose up -d`, then `python synthetic/load.py` |
-| "The agent service is not reachable" | The agent is not running, or it hit an error | Look at terminal 2: start `python -m agent`, or read the error there |
+| "The agent service is not reachable" | The agent is not running, or it hit an error | Look at terminal 1: start `python -m agent`, or read the error there |
 | `python -m agent` stops with "Set LLM_BASE_URL and LLM_MODEL" | `agent/.env` is missing or incomplete | Redo step 4 |
 | ASKlepios answers with a connection error | The model endpoint is unreachable or the key is wrong | Check the values from step 0 and your network or VPN |
 | `python -m agent` says port 8000 is in use | Another program has port 8000 | Start the agent on 8001 and point the web app at it (below) |
-| New patient: "national record service is not reachable" | Terminal 1 is not running | Start `python -m national` |
 | Everyone's name differs from a teammate's screen | A different `--anchor` | See step 6 |
 
 Running the agent on another port, e.g. 8001:

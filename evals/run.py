@@ -441,11 +441,11 @@ def select(cases: list[Case], args: argparse.Namespace) -> list[Case]:
 async def run(args: argparse.Namespace) -> int:
     anchor, seed, cases = load_gold(args.gold)
     records = cohort_records(anchor, seed)
-    from .onboarding import onboarded_records
+    from .onboarding import imported_records
 
-    # Patients onboarded from the national record (onboarding.toml), for questions only: the loops, meds and surgery
-    # checks cover the cohort.
-    question_records = records | onboarded_records(anchor, HERE / "onboarding.toml")
+    # The two patients whose history was imported from the national record (synthetic/national.py), for questions
+    # only: the loops, meds and surgery checks cover the rest of the cohort.
+    question_records = records | imported_records(anchor)
     if problems := lint(cases, question_records):
         print("gold.toml has problems:\n" + "\n".join(f"  {problem}" for problem in problems))
         return 1
@@ -464,7 +464,7 @@ async def run(args: argparse.Namespace) -> int:
     if args.onboarding:
         from .onboarding import run_onboarding
 
-        return await run_onboarding(load_settings(), records, anchor, HERE / "onboarding.toml", args.out)
+        return await run_onboarding(load_settings(), records, anchor, seed, HERE / "onboarding.toml", args.out)
     if args.surgery:
         from .surgery import run_surgery
 

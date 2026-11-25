@@ -27,7 +27,7 @@ export interface Chart {
   patient: fhir4.Patient
   conditions: fhir4.Condition[]
   medications: fhir4.MedicationRequest[]
-  /** What the patient says they take, recorded at onboarding: not orders. */
+  /** What the patient says they take, recorded when their history was taken: not orders. */
   statements: fhir4.MedicationStatement[]
   allergies: fhir4.AllergyIntolerance[]
   encounters: fhir4.Encounter[]
@@ -202,9 +202,16 @@ function sortConditions(conditions: fhir4.Condition[]): fhir4.Condition[] {
   )
 }
 
-/** Imported from the national record (simulated) at onboarding. */
+/** Imported from the national record (simulated) before the patient's first visit. */
 export const isImported = (resource: { meta?: fhir4.Meta }): boolean =>
   resource.meta?.tag?.some((tag) => tag.code === 'national-import') ?? false
+
+/** Where an imported result was measured, e.g. "Demo State Hospital"; undefined for a result taken here. */
+export function measuredElsewhere(observation: fhir4.Observation): string | undefined {
+  if (!isImported(observation)) return undefined
+  const performer = observation.performer?.find((item) => item.display)?.display
+  return performer?.replace(/ laboratory$/, '') ?? 'another facility'
+}
 
 export const isActive = (condition: fhir4.Condition): boolean => code(condition.clinicalStatus) === 'active'
 

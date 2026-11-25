@@ -7,7 +7,6 @@ import { formatDate, formatWeekday, now, setClinicToday } from './format.ts'
 import { useRoute } from './route.ts'
 import { PatientView } from './views/PatientView.tsx'
 import { MyDay } from './views/MyDay.tsx'
-import { Onboard } from './views/Onboard.tsx'
 import { Worklist } from './views/Worklist.tsx'
 
 export default function App() {
@@ -27,8 +26,6 @@ export default function App() {
           <PatientView key={route.id} id={route.id} tab={route.tab} item={route.item} />
         ) : route.page === 'day' ? (
           <MyDay day={route.day} />
-        ) : route.page === 'onboard' ? (
-          <Onboard />
         ) : (
           <Worklist />
         )}
@@ -68,9 +65,8 @@ function ResetDemo() {
   const [busy, setBusy] = useState(false)
   const reset = async () => {
     const sure = window.confirm(
-      'Reset the demo?\n\nEverything done since the synthetic data was loaded is removed: onboarded patients and their ' +
-        'imported history, visits and signed notes, review and "patient told" marks, and the national record ' +
-        "service's consent codes. Every chart goes back to how it was loaded.",
+      'Reset the demo?\n\nEverything done since the synthetic data was loaded is removed: visits and signed notes, ' +
+        'and review and "patient told" marks. Every chart goes back to how it was loaded.',
     )
     if (!sure) return
     setBusy(true)
@@ -160,7 +156,6 @@ function TopBar({ page, fixedDay, canReset }: { page: string; fixedDay?: string;
         <nav className="flex items-center gap-4" aria-label="Pages">
           {link('#/day', 'My day', page === 'day')}
           {link('#/', 'All appointments', page === 'worklist')}
-          {link('#/onboard', 'New patient', page === 'onboard')}
         </nav>
         <div className="ml-auto flex items-center gap-4">
           <span className="hidden text-[13px] text-slate-500 xl:block">

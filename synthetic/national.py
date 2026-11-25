@@ -1,32 +1,40 @@
-"""Synthetic national health records: what a national record service (simulated) holds for a few patients.
+"""Synthetic national health records: what a national record (simulated) holds for a few patients, and the two
+patients whose history was imported from it before their first visit here.
 
 Each record is an International Patient Summary (IPS): a document Bundle whose Composition lists allergies,
-medications, problems, procedures and results gathered from every integrated facility, ours included. None of it is
-loaded into HAPI. The mock service in national/ serves it once the patient consents, and onboarding imports what a
-clinician accepts. National ids start with 0, which no real Turkish identity number does.
+medications, problems, procedures and results gathered from every integrated facility, ours included. No service
+serves them: they are the input of the import in agent/onboard.py. National ids start with 0, which no real Turkish
+identity number does.
 
-Each record holds something worth catching at onboarding:
+Each record holds something worth catching:
   p-3001 (new)       a penicillin allergy, a statin not prescribed for two years that still reads as active, and a
                      childhood asthma diagnosis still listed as active
-  p-3002 (new)       ramipril 5 mg, which the patient may report differently
+  p-3002 (new)       ramipril 5 mg, which the patient reports differently
   p-2042 (in chart)  a caesarean section recorded at another hospital, which our chart has only in notes, next to
                      operations our chart already has
+
+The two new patients are in the generated cohort already imported (imported_charts): their history was taken the
+working day before the anchor, with the answers each Person carries, and each has a first appointment. p-2042's
+record is not imported; the evals review it against her chart.
 """
 
 from __future__ import annotations
 
 import hashlib
-from datetime import date, timedelta
+import sys
+from datetime import date, datetime, timedelta
+from pathlib import Path
 
 from catalog import Clinician
-from chart import NATIONAL_ID, ORGANIZATION_NAME, SYNTHETIC_META, PatientChart, at, instant, workday
-from cohort import AMLODIPINE, APPENDICECTOMY, ATORVASTATIN, METFORMIN, RAMIPRIL
+from chart import NATIONAL_ID, ORGANIZATION_NAME, SYNTHETIC_META, PatientChart, add_workdays, at, instant, workday
+from cohort import AMLODIPINE, APPENDICECTOMY, ATORVASTATIN, AYDIN, METFORMIN, RAMIPRIL
 
 LOINC = "http://loinc.org"
 SERVICE = "National record service (simulated)"
 BASE_URL = "https://national-record.demo/fhir"
 STATE = "Demo State Hospital"
 UNIVERSITY = "Demo University Hospital"
+FIRST_VISIT = "New patient: first visit"
 
 # Section codes and titles from the IPS implementation guide; the resource type each section lists.
 SECTIONS = (
@@ -46,10 +54,23 @@ ACAR = Clinician("ext-acar", "Deniz", "Acar", "Orthopaedics")
 
 
 class Person:
-    def __init__(self, chart: PatientChart, national_id: str, phone: str) -> None:
+    def __init__(
+        self,
+        chart: PatientChart,
+        national_id: str,
+        phone: str,
+        answers: tuple[dict, ...] = (),
+        visit: tuple[int, int, int] | None = None,
+    ) -> None:
         self.chart = chart
         self.national_id = national_id
         self.phone = phone
+        # What was settled with the patient when their history was taken: {"match", "taking", "dose"} for a medicine
+        # they take differently or not at all, {"match", "current"} for an old diagnosis (see agent/onboard.py).
+        self.answers = answers
+        # A new patient's first appointment here: working days after the anchor, hour, minute. None for a patient
+        # already in the chart, whose record is not imported.
+        self.visit = visit
 
 
 def _at(resource: dict, facility: str) -> None:
@@ -100,7 +121,11 @@ def gulay_kaplan(anchor: date) -> Person:
     for resource in c.resources:
         if resource["resourceType"] == "Observation":
             _at(resource, STATE)
-    return Person(c, "00000003001", "+90 500 000 30 01")
+    return Person(
+        c, "00000003001", "+90 500 000 30 01",
+        answers=({"match": "atorvastatin", "taking": "no"}, {"match": "asthma", "current": False}),
+        visit=(0, 15, 30),
+    )
 
 
 def murat_ozdemir(anchor: date) -> Person:
@@ -128,7 +153,11 @@ def murat_ozdemir(anchor: date) -> Person:
     for resource in c.resources:
         if resource["resourceType"] == "Observation":
             _at(resource, STATE)
-    return Person(c, "00000003002", "+90 500 000 30 02")
+    return Person(
+        c, "00000003002", "+90 500 000 30 02",
+        answers=({"match": "ramipril", "taking": "different", "dose": "10 mg once daily"},),
+        visit=(1, 15, 30),
+    )
 
 
 def nermin_aktas(anchor: date) -> Person:
@@ -161,6 +190,15 @@ def nermin_aktas(anchor: date) -> Person:
 
 
 PEOPLE = (gulay_kaplan, murat_ozdemir, nermin_aktas)
+
+
+def people(anchor: date) -> list[Person]:
+    return [make(anchor) for make in PEOPLE]
+
+
+def history_taken(anchor: date) -> datetime:
+    """When the new patients' history was taken and settled with them: the working day before the anchor."""
+    return at(workday(anchor - timedelta(days=1), forward=False), 9, 0)
 
 
 # ------------------------------------------------------------------- the IPS document
@@ -231,4 +269,25 @@ def summary(person: Person, anchor: date) -> dict:
 
 
 def national_records(anchor: date) -> list[dict]:
-    return [summary(make(anchor), anchor) for make in PEOPLE]
+    return [summary(person, anchor) for person in people(anchor)]
+
+
+def imported_charts(anchor: date) -> dict[str, list[dict]]:
+    """The new patients as they are in our chart: patient id -> the Patient, the history imported from the national
+    record with the patient's answers, its Provenance, and a first appointment. The import is the agent's
+    (agent/onboard.py), so this is the one part of the generator that needs the agent's packages."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from agent.onboard import settled_import
+
+    charts = {}
+    for person in people(anchor):
+        if person.visit is None:
+            continue
+        transaction = settled_import(summary(person, anchor), list(person.answers), taken=history_taken(anchor)).transaction
+        days, hour, minute = person.visit
+        appointment = person.chart.appointment(
+            at(add_workdays(anchor, days), hour, minute), AYDIN, FIRST_VISIT,
+            kind=("ROUTINE", "Routine appointment - default if not valued"),
+        )
+        charts[person.chart.pid] = [*(entry["resource"] for entry in transaction["entry"]), appointment]
+    return charts
