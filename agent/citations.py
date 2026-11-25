@@ -202,20 +202,40 @@ def split_blocks(text: str) -> list[Block]:
     return blocks
 
 
-# A bullet the chat panel draws as a row: an optional date (day, month word, year), then a bold title.
-ROW = re.compile(
-    r"(?:(?P<when>(?:\d{1,2}\s+)?(?:[^\W\d_]{3,10}\.?\s+)?(?:19|20)\d{2})\s*[·|:\-–—]\s*)?"
-    r"\*\*(?P<title>[^*]{2,60})\*\*\s*"
+# A bullet the chat panel draws as a row: a bold title, with or without a date. The prompt asks for
+# "date · **title** · words"; the model also puts the date in the bold part ("**date** · title", "**date** · **title**",
+# "**date · title**"), in brackets at the end of the title, or straight after it.
+_DATE = r"(?:\d{1,2}\s+)?(?:[^\W\d_]{3,10}\.?\s+)?(?:19|20)\d{2}"
+# In the date's place, before the title, a period that ends in a date counts too: "25-28 Feb 2019".
+_WHEN = rf"(?:\d{{1,2}}(?:\s+[^\W\d_]{{3,10}}\.?)?(?:\s+(?:19|20)\d{{2}})?\s*(?:[-–—]|to)\s*)?{_DATE}"
+_BREAK = "·|:–—"
+ROW = re.compile(rf"(?:(?P<when>{_WHEN})\s*[{_BREAK}\-]\s*)?\*\*(?P<title>[^*]{{2,60}})\*\*")
+BOLD_DATE = re.compile(
+    rf"\*\*(?P<when>{_WHEN})\*\*\s*[{_BREAK}\-]\s*"
+    rf"(?:\*\*(?P<bold>[^*]{{2,60}})\*\*|(?P<title>[^*\[({_BREAK}]{{2,60}}?)\s*(?=[\[({_BREAK}]|\s-\s|$))"
 )
+DATE_IN_TITLE = re.compile(rf"(?P<when>{_DATE})\s*[{_BREAK}\-]\s*(?P<title>.*\S)")
+DATED_TITLE = re.compile(rf"(?P<title>.*\S)\s*\((?P<when>{_DATE})\)")
+DATE_AFTER = re.compile(rf"\s*[{_BREAK}\-]?\s*(?P<when>{_DATE})\s*[;,{_BREAK}\-]")
 
 
 def row_of(text: str) -> dict | None:
     """The date and title of a bullet written "date · **title** · a few words", or None when it is not written so.
-    `skip` is where the words after the title start. A bold label ("**Note:** ...") is not a title."""
-    found = ROW.match(text)
-    if not found or found["title"].strip().endswith(":"):
+    `skip` is where the words after the date and title start. A bold label ("**Note:** ...") is not a title. A
+    period after the title or in brackets ("(2 to 5 Mar 2021)") stays where it is and the row has no date."""
+    if found := BOLD_DATE.match(text):
+        when, title, end = found["when"], (found["bold"] or found["title"]).strip(), found.end()
+    elif found := ROW.match(text):
+        when, title, end = found["when"], found["title"].strip(), found.end()
+        if title.endswith(":") or re.fullmatch(_WHEN, title):
+            return None
+        if when is None and (inside := DATE_IN_TITLE.fullmatch(title) or DATED_TITLE.fullmatch(title)):
+            when, title = inside["when"], inside["title"]
+        elif when is None and (after := DATE_AFTER.match(text, end)):
+            when, end = after["when"], after.end()
+    else:
         return None
-    return {"when": found["when"], "title": found["title"].strip(), "skip": found.end()}
+    return {"when": when, "title": title, "skip": len(text) - len(text[end:].lstrip())}
 
 
 def segments(text: str, resolve: Callable[[str], str | None]) -> list[dict]:

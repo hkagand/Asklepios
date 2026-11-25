@@ -26,6 +26,41 @@ ROWS = {  # text -> (when, title, what follows the title)
     "28 Oca 2019 · **Total tiroidektomi** · ses kısıklığı düzeldi [DocumentReference/epi-1]":
         ("28 Oca 2019", "Total tiroidektomi", "· ses kısıklığı düzeldi [DocumentReference/epi-1]"),
     "Ocak 2019: **Total tiroidektomi** [DocumentReference/epi-1]": ("Ocak 2019", "Total tiroidektomi", "[DocumentReference/epi-1]"),
+    # Two ways the model writes the date instead: in brackets at the end of the title, or as the bold part itself.
+    "**Total thyroidectomy (2 Jan 2019)** · open neck surgery [DocumentReference/epi-1]":
+        ("2 Jan 2019", "Total thyroidectomy", "· open neck surgery [DocumentReference/epi-1]"),
+    "**Airway alert – difficult intubation (2017)** – Cormack-Lehane grade 3 [DocumentReference/epi-1]":
+        ("2017", "Airway alert – difficult intubation", "– Cormack-Lehane grade 3 [DocumentReference/epi-1]"),
+    # A period is not one date: the title keeps it and the row has no date.
+    "**Radioiodine remnant ablation (30 Jan 2019–2 Feb 2019)** · hypothyroidism confirmed [DocumentReference/epi-2]":
+        (None, "Radioiodine remnant ablation (30 Jan 2019–2 Feb 2019)", "· hypothyroidism confirmed [DocumentReference/epi-2]"),
+    "**23 Oct 2026** · Klinik değerlendirme (CT ve kan sonuçları ile) – randevu alınmış [Appointment/appt-1]":
+        ("23 Oct 2026", "Klinik değerlendirme", "(CT ve kan sonuçları ile) – randevu alınmış [Appointment/appt-1]"),
+    "**23 Oct 2026** · Tümör kuruluna yeniden sunum – plan var [DocumentReference/doc-1]":
+        ("23 Oct 2026", "Tümör kuruluna yeniden sunum", "– plan var [DocumentReference/doc-1]"),
+    "**1 Oct 2026**: Restaging CT - ordered, no result on file [ServiceRequest/sr-1]":
+        ("1 Oct 2026", "Restaging CT", "- ordered, no result on file [ServiceRequest/sr-1]"),
+    # Three more: the date and the title each in bold, both in one bold, and the date straight after the title.
+    "**7 May 2017** · **Difficult intubation** – Cormack-Lehane grade 3 [DocumentReference/epi-1]":
+        ("7 May 2017", "Difficult intubation", "– Cormack-Lehane grade 3 [DocumentReference/epi-1]"),
+    "**7 May 2017 · Difficult intubation** – Cormack-Lehane grade 3 [DocumentReference/epi-1]":
+        ("7 May 2017", "Difficult intubation", "– Cormack-Lehane grade 3 [DocumentReference/epi-1]"),
+    "**Total thyroidectomy** 28 Jan 2019; open neck surgery [DocumentReference/epi-1]":
+        ("28 Jan 2019", "Total thyroidectomy", "open neck surgery [DocumentReference/epi-1]"),
+    "**Neck ultrasound** · 10 Oct 2025 · no recurrence [DiagnosticReport/dr-1]":
+        ("10 Oct 2025", "Neck ultrasound", "no recurrence [DiagnosticReport/dr-1]"),
+    # A period in the date's place, before the title, is the row's date.
+    "25-28 Feb 2019 · **Radioiodine ablation** – after thyroidectomy [DocumentReference/epi-2]":
+        ("25-28 Feb 2019", "Radioiodine ablation", "– after thyroidectomy [DocumentReference/epi-2]"),
+    "30 Jan 2019 – 2 Feb 2019 · **Radioiodine ablation** · levothyroxine restarted [DocumentReference/epi-2]":
+        ("30 Jan 2019 – 2 Feb 2019", "Radioiodine ablation", "· levothyroxine restarted [DocumentReference/epi-2]"),
+    "**19 Aug 2025 – 24 Aug 2025** · **Community-acquired pneumonia** – no stroke diagnosis [DocumentReference/epi-8]":
+        ("19 Aug 2025 – 24 Aug 2025", "Community-acquired pneumonia", "– no stroke diagnosis [DocumentReference/epi-8]"),
+    # A date later in the words is not the row's date, and neither is a period after the title.
+    "**Ramipril 10 mg** – ordered from 5 Nov 2025 for hypertension [MedicationRequest/med-1]":
+        (None, "Ramipril 10 mg", "– ordered from 5 Nov 2025 for hypertension [MedicationRequest/med-1]"),
+    "**Radioiodine ablation** 25–28 Feb 2019; levothyroxine restarted [DocumentReference/epi-2]":
+        (None, "Radioiodine ablation", "25–28 Feb 2019; levothyroxine restarted [DocumentReference/epi-2]"),
 }
 NOT_ROWS = (
     "In 2019 she had **a total thyroidectomy** with a vocal cord paresis [DocumentReference/epi-1]",
@@ -33,6 +68,8 @@ NOT_ROWS = (
     "A neck ultrasound showed **no sonographic evidence of recurrence** [DiagnosticReport/dr-1]",
     "Restaging CT chest, abdomen and pelvis: ordered 1 Oct 2026, no result on file [ServiceRequest/sr-1]",
     "**Note:** the record does not say why [DocumentReference/doc-1]",
+    "**2019** was the year of her operation [DocumentReference/epi-1]",
+    "**23 Oct 2026** · " + "a title that goes on and on without any break " * 2 + "[DocumentReference/doc-1]",
 )
 
 THYROID = """\
@@ -133,8 +170,29 @@ def check_old_style() -> list[str]:
     return problems
 
 
+def check_prompt() -> list[str]:
+    """The system prompt asks for a bold title at the start of each bullet with example bullets, and each example is a
+    row: one with a date, one without."""
+    import re
+
+    from agent.chat import SYSTEM_PROMPT
+
+    examples = [row_of(example[2:]) for example in re.findall(r'"(- [^"]*\*\*[^"]*)"', SYSTEM_PROMPT)]
+    problems = []
+    if not examples:
+        problems.append("the prompt gives no example bullet with a bold title")
+    if None in examples:
+        problems.append("an example bullet in the prompt is not a row")
+    if examples and None not in examples and {bool(row["when"]) for row in examples} != {True, False}:
+        problems.append("the prompt needs one example with a date and one without")
+    return problems
+
+
 def run_layout() -> int:
-    checks = {"rows": check_rows(), "not rows": check_not_rows(), "answer": check_answer(), "old style": check_old_style()}
+    checks = {
+        "rows": check_rows(), "not rows": check_not_rows(), "answer": check_answer(), "old style": check_old_style(),
+        "prompt": check_prompt(),
+    }
     for name, problems in checks.items():
         print(f"{name}: " + ("OK" if not problems else "; ".join(problems)))
     return 1 if any(checks.values()) else 0
