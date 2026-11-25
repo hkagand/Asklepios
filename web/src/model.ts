@@ -1,4 +1,4 @@
-import { code, read, refId, search, text, type Resource } from './fhir.ts'
+import { attachmentText, code, read, refId, search, text, type Resource } from './fhir.ts'
 import { isoDay, now as clockNow, todayIso, toTime } from './format.ts'
 
 export type Flag = 'H' | 'L'
@@ -31,7 +31,10 @@ export interface Chart {
   statements: fhir4.MedicationStatement[]
   allergies: fhir4.AllergyIntolerance[]
   encounters: fhir4.Encounter[]
+  /** Notes only: epicrisis reports (hospital discharge reports) are kept apart in `epicrisis`. */
   notes: fhir4.DocumentReference[]
+  /** Epicrisis reports, newest discharge first. */
+  epicrisis: fhir4.DocumentReference[]
   labReports: fhir4.DiagnosticReport[]
   reports: fhir4.DiagnosticReport[]
   orders: fhir4.ServiceRequest[]
@@ -71,6 +74,7 @@ export function resourceIndex(chart: Chart): Map<string, Resource> {
     ...chart.allergies,
     ...chart.encounters,
     ...chart.notes,
+    ...chart.epicrisis,
     ...chart.labReports,
     ...chart.reports,
     ...chart.orders,
@@ -127,7 +131,8 @@ export async function loadChart(id: string, signal: AbortSignal): Promise<Chart>
     statements: statements.sort(newestFirst((statement) => toTime(statement.dateAsserted))),
     allergies,
     encounters: encounters.sort(newestFirst(encounterStart)),
-    notes: notes.sort(newestFirst((note) => toTime(note.date))),
+    notes: notes.filter((note) => !isEpicrisis(note)).sort(newestFirst((note) => toTime(note.date))),
+    epicrisis: notes.filter(isEpicrisis).sort(newestFirst((report) => toTime(report.date))),
     labReports: diagnosticReports.filter(isLab).sort(newestFirst(reportTime)),
     reports: diagnosticReports.filter((report) => !isLab(report)).sort(newestFirst(reportTime)),
     orders,
@@ -205,6 +210,89 @@ function sortConditions(conditions: fhir4.Condition[]): fhir4.Condition[] {
 /** Imported from the national record (simulated) before the patient's first visit. */
 export const isImported = (resource: { meta?: fhir4.Meta }): boolean =>
   resource.meta?.tag?.some((tag) => tag.code === 'national-import') ?? false
+
+/** A hospital discharge (epicrisis) report: a DocumentReference carrying the `epicrisis` tag. */
+export const isEpicrisis = (resource: { meta?: fhir4.Meta }): boolean =>
+  resource.meta?.tag?.some((tag) => tag.system === 'urn:demo:asklepios' && tag.code === 'epicrisis') ?? false
+
+export interface EpicrisisFacts {
+  /** Admission and discharge days as written in the report, e.g. "12 Mar 2019". */
+  admitted?: string
+  discharged?: string
+  service?: string
+  /** Discharge diagnoses, e.g. "(J18.9) Community-acquired pneumonia". */
+  diagnoses: string[]
+  /** What was done, when the report carries an operation or procedure report. */
+  procedure?: string
+  /** Each distinct complication, whether of the admission or of the procedure. */
+  complications: string[]
+}
+
+const EPICRISIS_HEADINGS = new Set([
+  'EPICRISIS REPORT',
+  'ADMISSION AND DISCHARGE',
+  'COMPLAINT AND HISTORY',
+  'PAST AND FAMILY HISTORY',
+  'EXAMINATION ON ADMISSION',
+  'HOSPITAL COURSE',
+  'ADMISSION DIAGNOSES',
+  'DISCHARGE DIAGNOSES',
+  'COMPLICATIONS DURING ADMISSION',
+  'DISCHARGE PRESCRIPTION',
+  'DISCHARGE RECOMMENDATIONS AND FOLLOW-UP',
+  'CONDITION AT DISCHARGE',
+  'OPERATION REPORT',
+  'PROCEDURE REPORT',
+  'DATE OF PROCEDURE',
+  'PRE-PROCEDURE DIAGNOSIS',
+  'POST-PROCEDURE DIAGNOSIS',
+  'PROCEDURE PERFORMED',
+  'TEAM',
+  'ANAESTHESIA',
+  'WOUND CLASS',
+  'OPERATION NOTE',
+  'ESTIMATED BLOOD LOSS',
+  'DRAINS',
+  'COMPLICATIONS',
+  'PATHOLOGY SPECIMEN',
+])
+
+/** The report text as heading -> content lines (a blank line inside a block stays in that block). */
+function epicrisisSections(report: string): Map<string, string[]> {
+  const sections = new Map<string, string[]>()
+  let lines: string[] | undefined
+  for (const block of report.split(/\r?\n\r?\n/)) {
+    const [heading, ...rest] = block.split(/\r?\n/)
+    if (EPICRISIS_HEADINGS.has(heading.trim())) {
+      lines = rest.map((line) => line.trim()).filter(Boolean)
+      sections.set(heading.trim(), lines)
+    } else if (lines) {
+      lines.push(...block.split(/\r?\n/).map((line) => line.trim()).filter(Boolean))
+    }
+  }
+  return sections
+}
+
+const meaningful = (lines: string[] | undefined): string[] => (lines ?? []).filter((line) => line !== 'None')
+
+/** The facts a list row shows, read from the headings of the report text. */
+export function epicrisisFacts(report: fhir4.DocumentReference): EpicrisisFacts {
+  const sections = epicrisisSections(attachmentText(report.content.map((content) => content.attachment)) ?? '')
+  const [admitted, discharged] = (sections.get('ADMISSION AND DISCHARGE')?.[0] ?? '').split(' to ')
+  const service = sections.get('EPICRISIS REPORT')?.find((line) => line.startsWith('Report no.'))?.split(' · ')[2]
+  const procedure = meaningful(sections.get('PROCEDURE PERFORMED'))[0]
+  const complications = [
+    ...new Set([...meaningful(sections.get('COMPLICATIONS DURING ADMISSION')), ...meaningful(sections.get('COMPLICATIONS'))]),
+  ]
+  return {
+    admitted: admitted || undefined,
+    discharged: discharged || undefined,
+    service: service || undefined,
+    diagnoses: meaningful(sections.get('DISCHARGE DIAGNOSES')),
+    procedure,
+    complications,
+  }
+}
 
 /** Where an imported result was measured, e.g. "Demo State Hospital"; undefined for a result taken here. */
 export function measuredElsewhere(observation: fhir4.Observation): string | undefined {

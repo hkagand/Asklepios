@@ -40,6 +40,15 @@ QUANTITY = re.compile(
     r"(?<![\w.])(\d+(?:\.\d+)?)\s?(%s)(?![\w/])" % "|".join(map(re.escape, sorted(UNITS, key=len, reverse=True))),
     re.IGNORECASE,
 )
+GREEK_MU, MICRO_SIGN = "μ", "µ"
+
+
+def unit_of(text: str) -> str:
+    """The one way a unit is written: "μg" (Greek mu), "µg" (micro sign) and "ug" are all "µg". A unit not in UNITS
+    (a case-insensitive match can find one) is kept as written."""
+    return UNITS.get(text.lower().replace(GREEK_MU, MICRO_SIGN), text)
+
+
 TIME = re.compile(r"\b([01]?\d|2[0-3]):([0-5]\d)\b")
 MONTHS = {
     "Jan": ("January", "Ocak", "Oca"),
@@ -96,7 +105,7 @@ def facts_in(text: str) -> list[str]:
     text = DATE.sub(date, text)
     text = TIME.sub(lambda match: take(f"{int(match[1])}:{match[2]}"), text)
     text = PERCENT.sub(lambda match: take(_number(match[1] or match[2]) + "%"), text)
-    text = QUANTITY.sub(lambda match: take(f"{_number(match[1])} {UNITS[match[2].lower()]}"), text)
+    text = QUANTITY.sub(lambda match: take(f"{_number(match[1])} {unit_of(match[2])}"), text)
     facts += [_number(number) for number in NUMBER.findall(text)]
     return list(dict.fromkeys(facts))
 

@@ -9,6 +9,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date
 
+from . import epicrisis
 from .record import ORDER_KINDS, Record, Series, code_of, day_text, moment, text_of
 
 MAX_DOCUMENTS = 4
@@ -130,6 +131,22 @@ SPECS = [
                     "status": {"type": "string", "enum": ["open", "completed", "all"], "description": "Default: all"},
                 },
             },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "read_epicrisis",
+            "description": (
+                "Read every epicrisis report of this patient in full: one per hospital admission, with the discharge "
+                "summary and, when there was one, the operation or procedure report. The chart index has only a summary "
+                "line per report: the course, findings, anaesthesia, complication details and discharge advice are only "
+                "here. Call it before answering anything about the patient's past: earlier admissions, procedures "
+                "that are not operations, findings, complications, anaesthesia, or anything to know about an organ or "
+                "a problem. Which operations the patient has had is answered from SURGICAL HISTORY, not from these "
+                "reports. Not for current results, medicines or orders."
+            ),
+            "parameters": {"type": "object", "properties": {}},
         },
     },
 ]
@@ -471,10 +488,19 @@ def _reason(order: dict) -> str:
     return text_of((order.get("reasonCode") or [{}])[0])
 
 
+def read_epicrisis(record: Record, arguments: dict) -> ToolResult:
+    blocks = epicrisis.read_all(record)
+    given = sum(block.startswith("[DocumentReference/") for block in blocks)
+    if not given:
+        return ToolResult(blocks, "Found no epicrisis reports")
+    return ToolResult(blocks, f"Read {given} epicrisis report{'' if given == 1 else 's'}")
+
+
 HANDLERS: dict[str, Callable[[Record, dict], ToolResult]] = {
     "read_documents": read_documents,
     "search_record": search_record,
     "lab_series": lab_series,
     "medication_history": medication_history,
     "order_history": order_history,
+    "read_epicrisis": read_epicrisis,
 }

@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
 import { attachmentText, code, refId, resourceUrl, type Resource } from '../fhir.ts'
+import { isEpicrisis } from '../model.ts'
 import { patientHref } from '../route.ts'
 
 const SourceContext = createContext<(resource: Resource) => void>(() => {})
@@ -64,6 +65,7 @@ function chartLink(resource: Resource): string | undefined {
     }
     case 'DocumentReference': {
       const patient = refId(resource.subject)
+      if (isEpicrisis(resource)) return patient && resource.id ? patientHref(patient, 'reports', resource.id) : undefined
       const visit = refId(resource.context?.encounter?.[0]) ?? resource.id
       return patient && visit ? patientHref(patient, 'visits', visit) : undefined
     }

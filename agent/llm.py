@@ -13,6 +13,18 @@ class LlmError(Exception):
     pass
 
 
+EFFORTS = ("minimal", "low", "medium", "high")
+
+
+def effort_for(configured: str | None, reports: str | None, thorough: bool) -> str | None:
+    """The reasoning effort of one request: the configured one, raised to the one set for answers from the epicrisis
+    reports when `thorough`. It is never lowered, and none is sent when none is configured (a model that does not
+    take the parameter)."""
+    if thorough and configured in EFFORTS and reports in EFFORTS and EFFORTS.index(reports) > EFFORTS.index(configured):
+        return reports
+    return configured
+
+
 class LlmClient:
     def __init__(self, settings: Settings) -> None:
         self.model = settings.llm_model
@@ -21,9 +33,7 @@ class LlmClient:
         headers = {"Authorization": f"Bearer {settings.llm_api_key}"} if settings.llm_api_key else {}
         self._client = httpx.AsyncClient(timeout=httpx.Timeout(180, connect=10), headers=headers)
         self._options: dict = {"max_tokens": 4096}
-        if settings.reasoning_effort:
-            # A LiteLLM proxy rejects reasoning_effort for OpenAI-compatible backends unless it is allowed per request.
-            self._options |= {"reasoning_effort": settings.reasoning_effort, "allowed_openai_params": ["reasoning_effort"]}
+        self._effort, self._reports_effort = settings.reasoning_effort, settings.reports_reasoning_effort
         if settings.temperature is not None:
             self._options["temperature"] = settings.temperature
 
@@ -31,10 +41,21 @@ class LlmClient:
         await self._client.aclose()
 
     async def chat(
-        self, messages: list[dict], *, tools: list[dict], tool_choice: str, json_mode: bool = False, max_tokens: int | None = None,
+        self,
+        messages: list[dict],
+        *,
+        tools: list[dict],
+        tool_choice: str,
+        json_mode: bool = False,
+        max_tokens: int | None = None,
+        thorough: bool = False,
     ) -> tuple[dict, dict]:
-        """Returns the assistant message and the token usage. `json_mode` asks the server for a JSON object only."""
+        """Returns the assistant message and the token usage. `json_mode` asks the server for a JSON object only;
+        `thorough` asks for the reasoning effort set for answers from the epicrisis reports."""
         body = {"model": self.model, "messages": messages, **self._options}
+        if effort := effort_for(self._effort, self._reports_effort, thorough):
+            # A LiteLLM proxy rejects reasoning_effort for OpenAI-compatible backends unless it is allowed per request.
+            body |= {"reasoning_effort": effort, "allowed_openai_params": ["reasoning_effort"]}
         if max_tokens:
             body["max_tokens"] = max_tokens
         if tools:

@@ -261,7 +261,7 @@ export type SurgeryRegion = 'abdomen' | 'chest' | 'head_neck' | 'spine_limbs' | 
 
 export interface SurgerySource {
   ref: string
-  kind: 'procedure' | 'note' | 'report'
+  kind: 'procedure' | 'note' | 'report' | 'epicrisis'
   label: string
   quote: string | null
   date?: string
@@ -300,8 +300,10 @@ export interface SurgicalHistory {
   operations: Operation[]
   clues: (SurgeryStatement & { finding: string })[]
   noneStated: SurgeryStatement[]
+  /** Diagnostic procedures the reader returned, not counted as operations. */
+  leftOut: { name: string; ref: string; label: string; year: number }[]
   regions: Record<SurgeryRegion, string>
-  searched: { procedures: number; notes: number; reports: number; documentsRead: number; earliest: string | null }
+  searched: { procedures: number; notes: number; reports: number; epicrisis: number; documentsRead: number; earliest: string | null }
   unread: string[]
 }
 
