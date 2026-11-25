@@ -25,7 +25,7 @@ Measured on 25 Nov 2026 (two runs of three repeats, same-day control on the code
 
 ## What the doctor sees
 
-For the question "Any prior things I need to know about her thyroid?":
+The sketch below is from the approved design and shows the idea; in what was built the text after each title is the model's full sentence, cut off while the row is folded. For the question "Any prior things I need to know about her thyroid?":
 
 ```
 Thyroid cancer treated in 2019, no sign of recurrence. Total thyroidectomy
@@ -46,7 +46,8 @@ Jul 2026   TSH 1.37, free T4 1.36 · in range                          ›
 
 - **Lead:** the direct answer, as the model has always written it.
 - **Rows:** one per bullet that starts with a bold title. Folded, a row is one line: the date when the fact has one, the bold title, and the start of the fact, cut with an ellipsis. Rows start folded.
-- **Opening a row** shows the fact in full with its source chips, then any indented detail lines under it.
+- **Opening a row** shows the fact in full, each source chip beside the statement it supports, then any indented lines under it.
+- **Rows that start open:** every row when the answer has only one or two, and a row with indented lines under it (found in review: a folded "**Surgical history** includes:" hid the five operations listed under it).
 - **Markers:** a row shows "check" or "no source" when the row or its detail has that status, folded or open, so a flagged statement is never hidden. "Unverified" statements stay hidden behind the existing "Show N unverified statements" link.
 - **Complication badge:** shown on a row when the row or its detail cites an epicrisis report that records a complication (the flag the Reports tab already uses). There is no "resolved" badge: only the model's wording says that, and it stays in the text.
 - **Footer:** the number of distinct sources next to the existing lookups and time.
@@ -61,7 +62,7 @@ Jul 2026   TSH 1.37, free T4 1.36 · in range                          ›
 
 - A timeline or status badges (mockups B and C).
 - Structured (JSON) answers from the model.
-- The prepared pre-visit brief card, which has its own layout. A briefing asked in the chat keeps its four bold labels; bullets under them are drawn as rows when they have the shape.
+- The prepared pre-visit brief card: it is drawn through the same component, so it is told to draw plain bullets (`rows={false}`). A briefing asked in the chat keeps its four bold labels; bullets under them are drawn as rows when they start with a bold title.
 - Any change to what is cited or how citations are verified.
 
 ## What would make it a failure
@@ -99,7 +100,7 @@ The user picked 1 ("Go recommended").
 
 ## Checks and measurement
 
-- **Deterministic check first** (a new check in `evals/`, written before the code): the thyroid answer above, as text, parses into a lead and six rows with the right dates, titles and detail; a row with a flagged detail reports the flag; an old-style answer (plain bullets, a table, a briefing with labels) parses exactly as it does today.
+- **Deterministic check first** (`python -m evals --layout`, written before the code): every form of row the model writes gives the right date, title and fact, in English and Turkish; sentences, labels, periods and number ranges are not mistaken for a row or a date; a minus sign stays with its number; a very long line is handled at once; the thyroid answer, as text, parses into a lead and six rows with its detail line; an old-style answer (plain bullets, a table, a briefing with labels) parses exactly as before; and the prompt's own examples are rows. The panel has no automated test: what it draws was checked by eye with fixture answers and live answers.
 - **Web build:** `npm --prefix web run build`.
 - **Browser:** the thyroid, anaesthesia, stroke and "none on file" questions, a medicine question and a Turkish question, checked by eye in the panel, with a screenshot of each.
 - **Gold set:** two runs of three repeats on the new prompt and two on the code before it, same day. Kept only if the 79 questions lose at most 6 of 474 against that control and no category is more than 2 under it. The gold checks read the whole answer text, folded or not, so they need no change.

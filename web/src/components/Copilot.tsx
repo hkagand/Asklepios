@@ -179,7 +179,7 @@ function PreparedBriefView({ brief, resources }: { brief: NonNullable<PreparedBr
       )}
       {open && (
         <div className="mt-2">
-          <AnswerView answer={brief.answer} resources={resources} />
+          <AnswerView answer={brief.answer} resources={resources} rows={false} />
         </div>
       )}
     </section>
@@ -252,7 +252,8 @@ function Progress({ steps }: { steps: Step[] }) {
   )
 }
 
-function AnswerView({ answer, resources }: { answer: Answer; resources: Map<string, Resource> }) {
+/** `rows` false draws every bullet plainly, as the prepared brief does: a briefing is read whole, not opened row by row. */
+function AnswerView({ answer, resources, rows = true }: { answer: Answer; resources: Map<string, Resource>; rows?: boolean }) {
   const [showHidden, setShowHidden] = useState(false)
   const [showSteps, setShowSteps] = useState(false)
   const hidden = answer.blocks.filter((block) => block.status === 'unsupported').length
@@ -263,7 +264,7 @@ function AnswerView({ answer, resources }: { answer: Answer; resources: Map<stri
       <div className="space-y-2 text-[14px] leading-relaxed text-slate-800">
         {group(answer.blocks).map((item, index) =>
           Array.isArray(item) ? (
-            <BulletList key={index} entries={item} shown={shown} answer={answer} resources={resources} />
+            <BulletList key={index} entries={item} rows={rows} shown={shown} answer={answer} resources={resources} />
           ) : !shown(item) ? null : item.kind === 'heading' ? (
             <p key={index} className="pt-1.5 text-[13px] font-bold text-slate-900">
               <BlockContent block={item} answer={answer} resources={resources} />
@@ -325,19 +326,24 @@ function group(blocks: Block[]): (Block | Entry[])[] {
 
 function BulletList({
   entries,
+  rows,
   shown,
   answer,
   resources,
 }: {
   entries: Entry[]
+  rows: boolean
   shown: (block: Block) => boolean
   answer: Answer
   resources: Map<string, Resource>
 }) {
-  const dated = entries.some((entry) => entry.block.row?.when)
+  const isRow = (entry: Entry) => rows && entry.block.row !== undefined && shown(entry.block)
+  const dated = entries.some((entry) => isRow(entry) && entry.block.row?.when)
+  // Folding is for long answers: one or two rows are the answer itself and start open.
+  const folded = entries.filter(isRow).length >= 3
   const items = entries.flatMap((entry, index): ReactNode[] => {
-    if (entry.block.row && shown(entry.block)) {
-      return [<Row key={index} entry={entry} dated={dated} shown={shown} answer={answer} resources={resources} />]
+    if (isRow(entry)) {
+      return [<Row key={index} entry={entry} dated={dated} folded={folded} shown={shown} answer={answer} resources={resources} />]
     }
     // A plain bullet; or, for a row that is hidden as unverified, the details under it.
     return [entry.block, ...entry.details].filter(shown).map((block, position) => (
@@ -359,17 +365,21 @@ function BulletList({
 function Row({
   entry,
   dated,
+  folded,
   shown,
   answer,
   resources,
 }: {
   entry: Entry
   dated: boolean
+  folded: boolean
   shown: (block: Block) => boolean
   answer: Answer
   resources: Map<string, Resource>
 }) {
-  const [open, setOpen] = useState(false)
+  // A row with lines under it starts open: such lines are usually a list the row introduces, and a folded row
+  // would give no hint of it.
+  const [open, setOpen] = useState(!folded || entry.details.length > 0)
   const { block } = entry
   const row = block.row!
   const details = entry.details.filter(shown)
@@ -381,9 +391,14 @@ function Row({
     .join('')
     .trim()
   const cited = (list: Block[]) => [...new Set(list.flatMap((item) => item.segments.flatMap((segment) => segment.cite ?? [])))]
-  // The fact in full, as the row shows it when open, with the row's own sources after it.
-  const whole = words.replace(/^[·|:–—-]\s*/, '')
-  const own = cited([block])
+  // The fact as an opened row shows it: the block from where the fact starts, each source beside what it supports.
+  const first = block.segments.findIndex((segment) => segment.text !== undefined)
+  const fact: Block = {
+    ...block,
+    segments: block.segments
+      .map((segment, index) => (index === first ? { text: (segment.text ?? '').slice(row.fact) } : segment))
+      .filter((segment) => segment.cite || segment.text?.trim()),
+  }
   // A flag on the row or on a detail under it shows while the row is folded.
   const status = (['unsupported', 'check', 'unsourced'] as const).find((value) => blocks.some((item) => item.status === value))
   const marker = status && MARKERS[status]
@@ -432,16 +447,11 @@ function Row({
           {open ? '⌄' : '›'}
         </span>
       </button>
-      {open && (
+      {open && (fact.segments.length > 0 || details.length > 0) && (
         <div className={`mb-1.5 space-y-1 rounded-r border-l-2 border-slate-300 bg-slate-50 py-1.5 pl-2.5 pr-2 text-[13px] ${dated ? 'ml-[5.1rem]' : 'ml-1'}`}>
-          {(whole || own.length > 0) && (
+          {fact.segments.length > 0 && (
             <p className="break-words">
-              <span className={struck}>
-                <Inline text={whole} />
-              </span>
-              {own.map((ref) => (
-                <Citation key={ref} reference={ref} label={answer.sources[ref]?.label} resource={resources.get(ref)} />
-              ))}
+              <BlockContent block={fact} answer={answer} resources={resources} />
             </p>
           )}
           {details.map((detail, index) => (

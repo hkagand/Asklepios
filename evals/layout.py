@@ -1,8 +1,9 @@
 """Checks the shape of an answer that the chat panel draws as rows: python -m evals --layout
 
-An answer is a short lead and then one bullet per fact, written "date · **title** · a few words [ids]", with an
-indented bullet under it for a sentence of detail. agent/citations.py marks such a bullet as a row; every other block
-is as it was. With --shape-of RUN the share of a gold run's answers that are written this way is counted instead.
+An answer bullet that starts with a bold title, with or without a date, is a row: agent/citations.py marks it and
+says where its date, title and fact are, and the panel folds it to one line. Indented bullets under a row are its
+details. Every other block is as it was. With --shape-of RUN the answers of a gold run whose top-level bullets are all
+rows are counted instead.
 """
 
 from __future__ import annotations
@@ -61,6 +62,24 @@ ROWS = {  # text -> (when, title, what follows the title)
         (None, "Ramipril 10 mg", "– ordered from 5 Nov 2025 for hypertension [MedicationRequest/med-1]"),
     "**Radioiodine ablation** 25–28 Feb 2019; levothyroxine restarted [DocumentReference/epi-2]":
         (None, "Radioiodine ablation", "25–28 Feb 2019; levothyroxine restarted [DocumentReference/epi-2]"),
+    "**Radyoiyot tedavisi** · 30 Ocak 2019-2 Şubat 2019 arasında yapıldı [DocumentReference/epi-2]":
+        (None, "Radyoiyot tedavisi", "· 30 Ocak 2019-2 Şubat 2019 arasında yapıldı [DocumentReference/epi-2]"),
+    "**Admission** 28 Jan 2019 – 2 Feb 2019 for pneumonia [DocumentReference/epi-2]":
+        (None, "Admission", "28 Jan 2019 – 2 Feb 2019 for pneumonia [DocumentReference/epi-2]"),
+    # A range of numbers that look like years is not a date either.
+    "**Calcium** 1950-2000 mg daily [MedicationRequest/med-1]": (None, "Calcium", "1950-2000 mg daily [MedicationRequest/med-1]"),
+}
+
+# text -> the fact as an opened row shows it: what follows the date, the title and the mark between title and fact.
+# A minus sign before a number belongs to the number.
+FACTS = {
+    "28 Jan 2019 · **Total thyroidectomy** · open neck surgery [DocumentReference/epi-1]": "open neck surgery [DocumentReference/epi-1]",
+    "**CEA** – 4.9 ng/mL on 15 Sep 2026 [Observation/obs-1]": "4.9 ng/mL on 15 Sep 2026 [Observation/obs-1]",
+    "**Change** -1.6 g/dL (-14 %) over 30 days [Observation/obs-1]": "-1.6 g/dL (-14 %) over 30 days [Observation/obs-1]",
+    "**Base excess** – -4 mmol/L [Observation/obs-1]": "-4 mmol/L [Observation/obs-1]",
+    "**TSH 1.37 mIU/L**, free T4 1.36 ng/dL: in range [Observation/obs-1]": "free T4 1.36 ng/dL: in range [Observation/obs-1]",
+    "**No known allergies** [AllergyIntolerance/alg-1]": "[AllergyIntolerance/alg-1]",
+    "**Total thyroidectomy** 28 Jan 2019; open neck surgery [DocumentReference/epi-1]": "open neck surgery [DocumentReference/epi-1]",
 }
 NOT_ROWS = (
     "In 2019 she had **a total thyroidectomy** with a vocal cord paresis [DocumentReference/epi-1]",
@@ -131,6 +150,29 @@ def check_rows() -> list[str]:
     return problems
 
 
+def check_facts() -> list[str]:
+    problems = []
+    for text, fact in FACTS.items():
+        row = row_of(text)
+        if row is None or text[row.get("fact", 0):] != fact:
+            problems.append(f"{text!r} gives the fact {None if row is None else text[row.get('fact', 0):]!r}, expected {fact!r}")
+    return problems
+
+
+def check_speed() -> list[str]:
+    """A bullet with a very long run of spaces or dashes after its title is still recognised at once."""
+    import time
+
+    problems = []
+    for name, filler in (("spaces", " " * 20000), ("dashes", "- " * 10000), ("digits", "20 " * 7000)):
+        started = time.perf_counter()
+        row_of("**Title**" + filler + "x")
+        row_of("**12 Jan 2020**" + filler + "x")
+        if (taken := time.perf_counter() - started) > 0.5:
+            problems.append(f"{name}: {taken:.1f} s")
+    return problems
+
+
 def check_not_rows() -> list[str]:
     return [f"a row: {text!r} gives {row}" for text in NOT_ROWS if (row := row_of(text)) is not None]
 
@@ -190,8 +232,8 @@ def check_prompt() -> list[str]:
 
 def run_layout() -> int:
     checks = {
-        "rows": check_rows(), "not rows": check_not_rows(), "answer": check_answer(), "old style": check_old_style(),
-        "prompt": check_prompt(),
+        "rows": check_rows(), "not rows": check_not_rows(), "facts": check_facts(), "speed": check_speed(),
+        "answer": check_answer(), "old style": check_old_style(), "prompt": check_prompt(),
     }
     for name, problems in checks.items():
         print(f"{name}: " + ("OK" if not problems else "; ".join(problems)))

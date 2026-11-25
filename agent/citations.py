@@ -216,13 +216,17 @@ BOLD_DATE = re.compile(
 )
 DATE_IN_TITLE = re.compile(rf"(?P<when>{_DATE})\s*[{_BREAK}\-]\s*(?P<title>.*\S)")
 DATED_TITLE = re.compile(rf"(?P<title>.*\S)\s*\((?P<when>{_DATE})\)")
-DATE_AFTER = re.compile(rf"\s*[{_BREAK}\-]?\s*(?P<when>{_DATE})\s*[;,{_BREAK}\-]")
+# The date straight after the title. A dash before another number makes it a period or a range, not the row's date.
+DATE_AFTER = re.compile(rf"\s*(?:[{_BREAK}\-]\s*)?(?P<when>{_DATE})\s*(?:[;,·|:]|[–—\-](?!\s*\d))")
+# The mark between the title and the fact. A minus sign before a number belongs to the number.
+FACT_MARK = re.compile(r"\s*(?:[·|:,]|[–—\-](?!\d))\s*")
 
 
 def row_of(text: str) -> dict | None:
-    """The date and title of a bullet written "date · **title** · a few words", or None when it is not written so.
-    `skip` is where the words after the date and title start. A bold label ("**Note:** ...") is not a title. A
-    period after the title or in brackets ("(2 to 5 Mar 2021)") stays where it is and the row has no date."""
+    """The date and title of a bullet that starts with a bold title ("date · **title** · the fact"), or None when it
+    does not. `skip` is where the text after the date and title starts and `fact` where the fact itself starts, after
+    the mark between them. A bold label ("**Note:** ...") is not a title. A period after the title or in brackets
+    ("(2 to 5 Mar 2021)") stays where it is and the row has no date."""
     if found := BOLD_DATE.match(text):
         when, title, end = found["when"], (found["bold"] or found["title"]).strip(), found.end()
     elif found := ROW.match(text):
@@ -235,7 +239,9 @@ def row_of(text: str) -> dict | None:
             when, end = after["when"], after.end()
     else:
         return None
-    return {"when": when, "title": title, "skip": len(text) - len(text[end:].lstrip())}
+    skip = len(text) - len(text[end:].lstrip())
+    mark = FACT_MARK.match(text, skip)
+    return {"when": when, "title": title, "skip": skip, "fact": mark.end() if mark else skip}
 
 
 def segments(text: str, resolve: Callable[[str], str | None]) -> list[dict]:
