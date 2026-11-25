@@ -354,7 +354,8 @@ function BulletList({
   return items.length > 0 ? <ul className="space-y-1.5">{items}</ul> : null
 }
 
-/** One fact of an answer: its date, title and a few words. It opens to its details and its sources. */
+/** One fact of an answer. Folded, it is one line: its date, its title and the start of the fact. Open, it shows the
+ *  fact in full with its sources, and the details under it. */
 function Row({
   entry,
   dated,
@@ -380,8 +381,9 @@ function Row({
     .join('')
     .trim()
   const cited = (list: Block[]) => [...new Set(list.flatMap((item) => item.segments.flatMap((segment) => segment.cite ?? [])))]
-  // The row's own sources, shown under its details unless a detail already shows them.
-  const own = cited([block]).filter((ref) => !cited(details).includes(ref))
+  // The fact in full, as the row shows it when open, with the row's own sources after it.
+  const whole = words.replace(/^[·|:–—-]\s*/, '')
+  const own = cited([block])
   // A flag on the row or on a detail under it shows while the row is folded.
   const status = (['unsupported', 'check', 'unsourced'] as const).find((value) => blocks.some((item) => item.status === value))
   const marker = status && MARKERS[status]
@@ -389,6 +391,7 @@ function Row({
     const resource = resources.get(ref)
     return resource?.resourceType === 'DocumentReference' && isEpicrisis(resource) ? epicrisisFacts(resource).complications : []
   })
+  const struck = block.status === 'unsupported' ? 'text-rose-800 line-through decoration-rose-300' : ''
   return (
     <li className="border-t border-slate-100 first:border-t-0">
       <button
@@ -396,29 +399,30 @@ function Row({
         aria-expanded={open}
         onClick={() => setOpen(!open)}
         className={`grid w-full items-baseline gap-x-2 rounded-sm py-1 text-left hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-teal-600 ${
-          dated ? 'grid-cols-[4.6rem_minmax(0,1fr)_auto]' : 'grid-cols-[minmax(0,1fr)_auto]'
+          dated ? 'grid-cols-[4.6rem_minmax(0,1fr)_auto_auto]' : 'grid-cols-[minmax(0,1fr)_auto_auto]'
         }`}
       >
-        {dated && <span className="text-xs tabular-nums text-slate-500">{row.when}</span>}
-        <span className={`break-words ${block.status === 'unsupported' ? 'text-rose-800 line-through decoration-rose-300' : ''}`}>
+        {dated && <span className={`text-xs tabular-nums text-slate-500 ${open ? '' : 'truncate'}`}>{row.when}</span>}
+        {/* Folded: the title and as much of the fact as fits on one line. Open: the title; the fact is below, whole. */}
+        <span className={`block ${open ? 'break-words' : 'truncate'} ${struck}`}>
           <strong className="font-semibold text-slate-900">{row.title}</strong>
-          {words && (
+          {!open && words && (
             <>
               {' '}
               <Inline text={words} />
             </>
           )}
+        </span>
+        <span className="flex shrink-0 items-center gap-1.5">
           {complications.length > 0 && (
-            <span className="ml-1.5 inline-block align-[1px]">
-              <Badge tone="rose" title={[...new Set(complications)].join('; ')}>
-                Complication
-              </Badge>
-            </span>
+            <Badge tone="rose" title={[...new Set(complications)].join('; ')}>
+              Complication
+            </Badge>
           )}
           {marker && (
             <span
               title={blocks.filter((item) => item.status === status).flatMap((item) => item.issues).join('\n')}
-              className={`ml-1.5 inline-block cursor-help rounded px-1 align-[1px] text-[10px] font-semibold leading-4 ${marker.className}`}
+              className={`inline-block cursor-help rounded px-1 text-[10px] font-semibold leading-4 ${marker.className}`}
             >
               {marker.label}
             </span>
@@ -430,18 +434,21 @@ function Row({
       </button>
       {open && (
         <div className={`mb-1.5 space-y-1 rounded-r border-l-2 border-slate-300 bg-slate-50 py-1.5 pl-2.5 pr-2 text-[13px] ${dated ? 'ml-[5.1rem]' : 'ml-1'}`}>
-          {details.map((detail, index) => (
-            <p key={index}>
-              <BlockContent block={detail} answer={answer} resources={resources} />
-            </p>
-          ))}
-          {own.length > 0 && (
-            <p>
+          {(whole || own.length > 0) && (
+            <p className="break-words">
+              <span className={struck}>
+                <Inline text={whole} />
+              </span>
               {own.map((ref) => (
                 <Citation key={ref} reference={ref} label={answer.sources[ref]?.label} resource={resources.get(ref)} />
               ))}
             </p>
           )}
+          {details.map((detail, index) => (
+            <p key={index}>
+              <BlockContent block={detail} answer={answer} resources={resources} />
+            </p>
+          ))}
         </div>
       )}
     </li>
